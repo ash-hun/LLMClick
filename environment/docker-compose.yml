@@ -1,0 +1,33 @@
+services:
+  llmclick:
+    build:
+      context: ..
+      dockerfile: environment/Dockerfile
+    # tag by commit: IMAGE_TAG=$(git rev-parse --short HEAD) docker compose -f environment/docker-compose.yml up -d
+    image: llmclick:${IMAGE_TAG:?set IMAGE_TAG to the git commit}
+    container_name: llmclick
+    env_file:
+      - .env
+    volumes:
+      - ../configs:/app/configs
+      - ../data:/app/data
+      - ../output:/app/output
+      - llmclick-hf-cache:/root/.cache/huggingface
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+volumes:
+  llmclick-hf-cache:

@@ -1,0 +1,12 @@
+# Evaluate an existing checkpoint (for example a downloaded Jeff release) on the frozen benchmarks; no training.
+pipeline:
+  name: eval-jeff-0.8b
+  output_dir: ./output
+
+checkpoint: checkpoints/jeff-0.8b     # uv run hf download mstrasser/Jeff-Qwen3.5-0.8B --local-dir checkpoints/jeff-0.8b
+
+evaluation:
+  benchmarks:
+    - name: jeff_panel
+    - name: jeff_jevbench_hard
+  batch_size: 16
