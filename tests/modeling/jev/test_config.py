@@ -7,7 +7,7 @@ from pydantic import ValidationError
 from core.config.experiment import config_hash
 from core import pipeline
 
-CONFIGS = sorted(Path("configs").glob("*.yaml"))
+CONFIGS = sorted(Path("configs/jev").glob("*.yaml"))
 
 
 def changed(config: dict[str, Any], section: str, **keys: Any) -> dict[str, Any]:

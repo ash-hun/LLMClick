@@ -1,0 +1,24 @@
+# Supervised fine-tuning on conversations: the loss is on every assistant turn.
+# As shipped this is a minutes-long pilot on the sample rows; point `data.sources` at your rows and drop `max_steps`.
+pipeline:
+  recipe: llm_sft
+  name: sft-qwen3.5-0.8b
+  seed: 20260920
+  output_dir: ./output
+  # stages: [data]                  # default: data, train, validate
+
+model:
+  architecture: hybrid              # Qwen3.5: linear-attention + full-attention layers, vision tower frozen
+  name: Qwen/Qwen3.5-0.8B           # or Qwen/Qwen3.5-2B @ 15852e8c16360a2fea060d615a32b45270f8a8fc
+  revision: 2fc06364715b967f1860aea9cf38778875588b17
+
+data:
+  sources:
+    - name: local_jsonl
+      path: samples/llm_sft.jsonl   # rows: {"messages": [{"role": ..., "content": ...}, ...]}
+  validation: 0.1
+
+training: {epochs: 1, lr: 1.0e-5, batch_size: 4, accumulation: 2, max_length: 512, max_steps: 4}
+
+validation:
+  max: {loss: 5.0}                # the validate stage fails the run above this held-out loss

@@ -1,0 +1,30 @@
+# Instruction tuning: instruction/input/output records; the loss is on the output only.
+pipeline:
+  recipe: llm_instruction
+  name: instruction-qwen3.5-0.8b
+  seed: 20260920
+  output_dir: ./output
+
+model:
+  architecture: hybrid              # Qwen3.5: linear-attention + full-attention layers, vision tower frozen
+  name: Qwen/Qwen3.5-0.8B           # or Qwen/Qwen3.5-2B @ 15852e8c16360a2fea060d615a32b45270f8a8fc
+  revision: 2fc06364715b967f1860aea9cf38778875588b17
+
+data:
+  sources:
+    - name: local_jsonl
+      path: samples/llm_instruction.jsonl   # rows: {"instruction": ..., "input"?: ..., "output": ...}
+    # - name: huggingface                   # any Hub dataset; `fields` maps our keys to its columns
+    #   dataset: owner/dataset
+    #   revision: <40-character commit>
+    #   split: train
+    #   fields: {instruction: question, output: answer}
+  validation: 0.1
+
+method:
+  system: "You are a careful calculator."   # optional system prompt in front of every instruction
+
+training: {epochs: 1, lr: 1.0e-5, batch_size: 4, accumulation: 2, max_length: 512, max_steps: 4}
+
+validation:
+  max: {loss: 5.0}

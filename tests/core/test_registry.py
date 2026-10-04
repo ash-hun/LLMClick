@@ -19,4 +19,7 @@ def test_unknown_key_lists_alternatives() -> None:
 
 
 def test_catalogue_lists_every_recipe_with_its_stages() -> None:
-    assert catalogue()["jev"]["stages"] == ["data", "benchmarks", "synthetic", "mix", "train", "validate", "evaluate"]
+    recipes = catalogue()
+    assert recipes["jev"]["stages"] == ["data", "benchmarks", "synthetic", "mix", "train", "validate", "evaluate"]
+    assert {"llm_sft", "llm_instruction", "llm_dpo", "llm_grpo", "embedding_contrastive"} <= set(recipes)
+    assert recipes["llm_dpo"]["stages"] == ["data", "train", "validate"]

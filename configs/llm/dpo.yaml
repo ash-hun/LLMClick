@@ -1,0 +1,25 @@
+# Direct Preference Optimization: prefer `chosen` over `rejected` more than the base model does.
+pipeline:
+  recipe: llm_dpo
+  name: dpo-qwen3.5-0.8b
+  seed: 20260920
+  output_dir: ./output
+
+model:
+  architecture: hybrid              # Qwen3.5: linear-attention + full-attention layers, vision tower frozen
+  name: Qwen/Qwen3.5-0.8B           # or Qwen/Qwen3.5-2B @ 15852e8c16360a2fea060d615a32b45270f8a8fc
+  revision: 2fc06364715b967f1860aea9cf38778875588b17
+
+data:
+  sources:
+    - name: local_jsonl
+      path: samples/llm_dpo.jsonl   # rows: {"prompt": str | messages, "chosen": ..., "rejected": ...}
+  validation: 0.1
+
+method:
+  beta: 0.1                         # smaller lets the policy move further from the base model
+
+training: {epochs: 1, lr: 5.0e-6, batch_size: 4, accumulation: 2, max_length: 512, max_steps: 4}
+
+validation:
+  min: {accuracy: 0.5}            # share of held-out pairs where chosen is more likely than rejected

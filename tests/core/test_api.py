@@ -21,7 +21,7 @@ def test_validate_and_load(local_config: dict) -> None:
     bad = {**local_config, "model": {**local_config["model"], "backbone": "nope"}}
     assert client.post("/api/config/validate", json=bad).status_code == 422
     assert client.post("/api/config/validate", json={"pipeline": {"name": "x"}}).status_code == 422
-    loaded = client.post("/api/config/load", params={"config_path": "configs/jeff_public_only.yaml"})
+    loaded = client.post("/api/config/load", params={"config_path": "configs/jev/jeff_public_only.yaml"})
     assert loaded.status_code == 200 and loaded.json()["recipe"] == "jev"
     assert client.post("/api/config/load", params={"config_path": "configs/none.yaml"}).status_code == 404
 
