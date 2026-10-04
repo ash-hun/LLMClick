@@ -1,16 +1,18 @@
 # Reproduce jeff's public-only arm on Qwen3.5-0.8B: no teacher needed.
 pipeline:
+  recipe: jev
   name: jeff-0.8b-public
   seed: 20260920
   output_dir: ./output
   device: null            # cuda | mps | cpu ; null = auto
+  # stages: [data, benchmarks, mix]   # run only these (plus what they read); default all. train always brings validate
 
 data:
   builders:
     - name: jeff_extra     # jeff's 27 public datasets converted into decisions (docs/data-sources.md)
     - name: jeff_probability
       count: 3000
-  folds: {dev: 1500, temperature: 1000}
+  folds: {dev: 1500, temperature: 1000, validation: 1000}
   synthetic: {enabled: false}
   mix: {size: 50000, sweep_size: 10000, panel_layout: true, escape: true, adversarial: true}
 
@@ -31,6 +33,12 @@ training:
   eval_every: 40
   resume_every: 50
   cpu_threads: 16
+
+# The trained model must meet these on the validation fold, or the pipeline stops before evaluate.
+validation:
+  min: {accuracy: 0.5}
+  max: {ece: 0.15}
+  batch_size: 16
 
 tracker: {enabled: false, project: llmclick, tags: [jeff, 0.8b, public-only]}
 

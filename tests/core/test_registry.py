@@ -18,10 +18,5 @@ def test_unknown_key_lists_alternatives() -> None:
         registry.get("zzz")
 
 
-def test_builtin_catalogue() -> None:
-    names = catalogue()
-    assert {"local_jsonl", "huggingface", "jeff_extra", "jeff_probability"} <= set(names["builder"])
-    assert {"example", "classification", "boolean"} <= set(names["converter"])
-    assert {"qwen3_5", "gemma4", "modernbert"} <= set(names["backbone"])
-    assert "openai_compatible" in names["teacher"]
-    assert {"local_jsonl", "huggingface", "jeff_panel", "jeff_jevbench_hard"} <= set(names["benchmark"])
+def test_catalogue_lists_every_recipe_with_its_stages() -> None:
+    assert catalogue()["jev"]["stages"] == ["data", "benchmarks", "synthetic", "mix", "train", "validate", "evaluate"]

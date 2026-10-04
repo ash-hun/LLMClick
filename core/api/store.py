@@ -1,8 +1,9 @@
-"""In-memory job store: the job id is the experiment key plus the requested stages, so resubmitting is a lookup."""
+"""In-memory job store: the job id is the experiment key plus the stage plan, so resubmitting is a lookup."""
 
 import threading
 import traceback
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from core.utils.files import sha256_json
@@ -10,14 +11,16 @@ from core.utils.files import sha256_json
 # ponytail: one process, jobs vanish on restart; move to a table when several API replicas share work.
 _jobs: dict[str, dict[str, Any]] = {}
 _lock = threading.Lock()
+# ponytail: one worker, so two trainings never share the accelerator; a per-device queue when a server has several.
+_worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="job")
 
 
-def job_id(experiment_key: str, stages: list[str] | None) -> str:
-    return f"{experiment_key}-{sha256_json(stages or 'all')[:6]}"
+def job_id(experiment_key: str, stages: list[str]) -> str:
+    return f"{experiment_key}-{sha256_json(stages)[:6]}"
 
 
 def submit(identifier: str, work: Callable[[], Any], detail: dict[str, Any]) -> dict[str, Any]:
-    """Start `work` in a thread unless a job with this id is pending, running or done; then return the existing one."""
+    """Queue `work` unless a job with this id is pending, running or done; then return the existing one."""
     with _lock:
         existing = _jobs.get(identifier)
         if existing and existing["status"] in {"pending", "running", "done"}:
@@ -34,7 +37,7 @@ def submit(identifier: str, work: Callable[[], Any], detail: dict[str, Any]) -> 
             job["error"] = f"{error}\n{traceback.format_exc()}"
             job["status"] = "failed"
 
-    threading.Thread(target=target, name=identifier, daemon=True).start()
+    _worker.submit(target)
     return job
 
 

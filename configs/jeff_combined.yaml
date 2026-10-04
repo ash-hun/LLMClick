@@ -1,5 +1,6 @@
 # jeff's combined arm: public data plus synthetic questions from a local OpenAI-compatible teacher (TEACHER_URL).
 pipeline:
+  recipe: jev
   name: jeff-2b-combined
   seed: 20260920
   output_dir: ./output
@@ -9,7 +10,7 @@ data:
     - name: jeff_extra
     - name: jeff_probability
       count: 3000
-  folds: {dev: 1500, temperature: 1000}
+  folds: {dev: 1500, temperature: 1000, validation: 1000}
   synthetic:
     enabled: true
     teacher: {name: openai_compatible}   # url: http://my-server:8888/v1 overrides TEACHER_URL

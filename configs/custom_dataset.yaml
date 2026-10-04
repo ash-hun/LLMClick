@@ -1,6 +1,7 @@
 # Your own data, no jeff sources: a Hugging Face classification set through the YAML-only `classification` converter,
 # a local Example JSONL, and a local benchmark. Swap dataset ids, fields and criteria; no code needed.
 pipeline:
+  recipe: jev
   name: custom-0.8b
   seed: 20260920
   output_dir: ./output
@@ -24,7 +25,7 @@ data:
         neutral: "The premise shows neither."
     - name: local_jsonl
       path: data/custom/train.jsonl          # rows already in jeff Example shape
-  folds: {dev: 800, temperature: 500}
+  folds: {dev: 800, temperature: 500, validation: 500}
   mix: {size: 20000, sweep_size: 2000, panel_layout: false, escape: true, adversarial: true}
 
 model:

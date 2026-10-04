@@ -1,5 +1,6 @@
 # Evaluate an existing checkpoint (for example a downloaded Jeff release) on the frozen benchmarks; no training.
 pipeline:
+  recipe: jev
   name: eval-jeff-0.8b
   output_dir: ./output
 

@@ -1,9 +1,9 @@
 """Converters turn one raw dataset row into a jeff Example; `classification` and `boolean` need no code, only YAML."""
 
-from typing import Any
+from typing import Any, cast
 
 from jeff.types import Example
-from core.registry import CONVERTERS
+from modeling.jev.registry import CONVERTERS
 
 Converter = Any  # (raw: dict, index: int, params: dict) -> Example | None
 
@@ -56,9 +56,9 @@ def boolean(raw: dict[str, Any], index: int, params: dict[str, Any]) -> Example 
     question: dict[str, Any] = {"type": "noul", "instructions": params.get("instructions")}
     if params.get("criteria"):
         question["criteria"] = dict(params["criteria"])
-    return {
+    return cast(Example, {
         "id": identifier, "suite": suite, "family": str(raw.get(params.get("family_field", ""), identifier)),
         "state": state_text(raw, params["text_fields"]), "question": question,
         "label": label, "target": label,
         "source": {"dataset": params.get("dataset", suite), "converter": "boolean", "index": index},
-    }
+    })

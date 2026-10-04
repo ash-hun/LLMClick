@@ -1,6 +1,7 @@
 # Apple silicon pilot: no downloads except the 0.8B base, code-built data, a handful of updates on MPS.
 # Proves data -> mix -> train -> evaluate end to end on a Mac in minutes; not a model worth keeping.
 pipeline:
+  recipe: jev
   name: mac-smoke
   seed: 20260920
   output_dir: ./output
@@ -10,7 +11,7 @@ data:
   builders:
     - name: jeff_probability
       count: 400
-  folds: {dev: 40, temperature: 24}
+  folds: {dev: 40, temperature: 24, validation: 40}
   mix: {size: 1000, sweep_size: 50, panel_layout: false, escape: true, adversarial: true}
 
 model:

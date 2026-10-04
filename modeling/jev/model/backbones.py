@@ -1,7 +1,7 @@
 """Backbone families jeff can train; the entry says which jeff architecture loads it and which options it takes."""
 
-from core.config.schema import ModelConfig
-from core.registry import BACKBONES
+from modeling.jev.config import ModelConfig
+from modeling.jev.registry import BACKBONES
 
 BACKBONES.register("qwen3_5")({"architecture": "qwen", "supports_prompt_layout": True, "suggested_lr": 5e-6,
                                "example": "Qwen/Qwen3.5-0.8B"})

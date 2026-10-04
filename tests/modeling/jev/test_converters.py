@@ -1,4 +1,4 @@
-from core.modules.data.materialize import convert_rows
+from modeling.jev.data.materialize import convert_rows
 
 PARAMS = {"suite": "s", "text_fields": ["premise", "hypothesis"], "label_field": "label",
           "label_map": {"0": "yes", "1": "no"}, "criteria": {"yes": "Yes.", "no": "No."}, "instructions": "Q?"}

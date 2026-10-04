@@ -1,18 +1,12 @@
-"""System Channel: what this server can run (registries) and in which order (stages)."""
+"""System Channel: what this server can build (recipes, their stages and registry keys)."""
 
 from fastapi import APIRouter
 
-from core.config.schema import STAGES
 from core.registry import catalogue
 
 system_channel_router = APIRouter(prefix="/api/system", tags=["System Channel"])
 
 
-@system_channel_router.get("/registries")
-def registries() -> dict[str, list[str]]:
+@system_channel_router.get("/recipes")
+def recipes() -> dict[str, dict[str, list[str]]]:
     return catalogue()
-
-
-@system_channel_router.get("/stages")
-def stages() -> list[str]:
-    return list(STAGES)

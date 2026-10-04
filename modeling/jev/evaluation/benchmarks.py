@@ -4,8 +4,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from core.modules.data.materialize import from_huggingface, from_local
-from core.registry import BENCHMARKS
+from modeling.jev.data.materialize import from_huggingface, from_local
+from modeling.jev.registry import BENCHMARKS
 from core.utils.proc import run_module
 
 JEVBENCH_REPOSITORY = "https://github.com/fstandhartinger/jevbench"

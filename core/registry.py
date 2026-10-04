@@ -1,7 +1,10 @@
-"""Named registries: every external dependency is a string key in the YAML config that resolves here."""
+"""Named registries: a string key in the YAML config resolves to an implementation here."""
 
+import importlib
 from collections.abc import Callable
 from typing import Any
+
+CHANNELS = ("modeling",)  # packages whose import registers their recipes; Data and Evaluation join here
 
 
 class Registry:
@@ -31,14 +34,15 @@ class Registry:
         return name in self._items
 
 
-BUILDERS = Registry("builder")        # data builders: params -> Example JSONL
-CONVERTERS = Registry("converter")    # raw dataset row -> Example
-BACKBONES = Registry("backbone")      # model family -> jeff-train arguments
-TEACHERS = Registry("teacher")        # synthetic-data teacher -> environment for jeff-generate
-BENCHMARKS = Registry("benchmark")    # frozen evaluation sets: params -> Example JSONL
-ALL = {r.kind: r for r in (BUILDERS, CONVERTERS, BACKBONES, TEACHERS, BENCHMARKS)}
+RECIPES = Registry("recipe")  # `pipeline.recipe` in the YAML -> Pipeline subclass
 
 
-def catalogue() -> dict[str, list[str]]:
-    from core import modules  # noqa: F401  (importing fills the registries)
-    return {kind: registry.names() for kind, registry in ALL.items()}
+def load_channels() -> None:
+    for channel in CHANNELS:
+        importlib.import_module(channel)
+
+
+def catalogue() -> dict[str, dict[str, list[str]]]:
+    """Per recipe: its stages and the keys its own registries accept."""
+    load_channels()
+    return {name: RECIPES.get(name).catalogue() for name in RECIPES.names()}

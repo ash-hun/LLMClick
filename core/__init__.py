@@ -1,1 +1,1 @@
-"""LLMClick: config-driven orchestration around the vendored jeff recipe."""
+"""LLMClick framework: stages, pipelines, experiments and progress shared by every channel."""

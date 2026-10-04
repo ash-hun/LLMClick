@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from core.config.schema import MixConfig
+from modeling.jev.config import MixConfig
 from jeff import adversarial, escape, layout
 from jeff.data import write_rows
 from jeff.mix import build, build_public, read
@@ -26,7 +26,8 @@ def run(public: Path, dev: Path, calibration: Path, protected: list[Path], synth
         seed: int, out: Path) -> dict[str, Any]:
     report_path = out / "report.json"
     if report_path.exists():
-        return json.loads(report_path.read_text())
+        cached: dict[str, Any] = json.loads(report_path.read_text())
+        return cached
     panel = [row for path in protected for row in read(path)]
     public_rows, public_report = dress(read(public), config, seed)
     if synthetic is None:
