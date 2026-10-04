@@ -29,7 +29,7 @@ class LLMBackbone(Backbone):
         self.device = device
 
     def save(self, path: Path) -> None:
-        self.model.save_pretrained(path)
+        self.exported().save_pretrained(path)
         self.tokenizer.save_pretrained(path)
 
     def render(self, messages: list[Message], generation_prompt: bool) -> list[int]:

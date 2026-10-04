@@ -2,9 +2,9 @@
 
 import string
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from modeling.config import Keyed, ModelingConfig, ValidationConfig
 from core.registry import Registry
@@ -34,6 +34,16 @@ class DataConfig(BaseModel):
     validation: float = Field(default=0.1, gt=0, lt=1, description="Share of rows held out for the validate stage")
 
 
+class AdapterConfig(BaseModel):
+    """Train small low-rank matrices next to the frozen weights instead of the weights themselves."""
+    model_config = ConfigDict(extra="forbid")
+    name: Literal["lora"] = "lora"
+    r: int = Field(default=16, ge=1, description="Rank of the update matrices")
+    alpha: int = Field(default=32, ge=1, description="Update scale; the effective factor is alpha / r")
+    dropout: float = Field(default=0.0, ge=0, lt=1)
+    targets: list[str] | None = Field(default=None, description="Layer names to adapt; default: the architecture's")
+
+
 class TrainingConfig(BaseModel):
     epochs: int = Field(default=1, ge=1)
     lr: float = Field(default=1e-5, gt=0)
@@ -45,6 +55,7 @@ class TrainingConfig(BaseModel):
     max_length: int = Field(default=1024, ge=8, description="Tokens per sequence; longer ones are cut")
     max_steps: int | None = Field(default=None, ge=1, description="Pilot: stop after this many optimizer steps")
     resume_every: int | None = Field(default=200, ge=1, description="Steps between resume snapshots; null disables them")
+    adapter: AdapterConfig | None = Field(default=None, description="null trains every weight; set it to train LoRA")
 
 
 class TuningValidationConfig(ValidationConfig):

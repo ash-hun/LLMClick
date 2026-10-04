@@ -9,9 +9,9 @@ import pytest
 import torch
 
 from modeling.embedding.models.bi_encoder import BiEncoder
-from modeling.llm.methods.grpo import contains, exact_match
+from modeling.llm.methods.grpo import contains, exact_match, last_number_match
 from modeling.llm.models.transformer import TransformerBackbone
-from modeling.tuning.config import BackboneConfig, TrainingConfig
+from modeling.tuning.config import AdapterConfig, BackboneConfig, TrainingConfig
 from modeling.tuning.loop import fit, learning_rate, schedule
 from modeling.llm.methods.dpo import DPO
 from modeling.llm.methods.sft import SFT
@@ -51,12 +51,15 @@ def test_learning_rate_warms_up_then_decays() -> None:
     assert rates[:2] == [0.5, 1.0] and rates[2] == 1.0 and rates[-1] == pytest.approx(1 / 8) and rates[2:] == sorted(rates[2:], reverse=True)
 
 
-def test_interrupted_training_resumes_and_matches_an_uninterrupted_run(tiny_model: Path, tmp_path: Path) -> None:
-    training = TrainingConfig(lr=1e-3, batch_size=4, max_length=64, resume_every=1)
+@pytest.mark.parametrize("adapter", [None, AdapterConfig(r=4, targets=["c_attn"])], ids=["full", "lora"])
+def test_interrupted_training_resumes_and_matches_an_uninterrupted_run(adapter: AdapterConfig | None, tiny_model: Path,
+                                                                        tmp_path: Path) -> None:
+    training = TrainingConfig(lr=1e-3, batch_size=4, max_length=64, resume_every=1, adapter=adapter)
 
     def run(workdir: Path, fail_at: int | None) -> list[dict[str, Any]]:
         loaded = TransformerBackbone(BackboneConfig(architecture="transformer", name=str(tiny_model)))
         loaded.load("cpu")
+        loaded.adapt(adapter)
         method = SFT(SFT.Config(), training)
         calls, original = {"n": 0}, method.loss
 
@@ -74,7 +77,8 @@ def test_interrupted_training_resumes_and_matches_an_uninterrupted_run(tiny_mode
     whole = run(tmp_path / "whole", None)
     with pytest.raises(KeyboardInterrupt):
         run(tmp_path / "broken", 3)
-    assert (tmp_path / "broken" / "resume.pt").exists()
+    snapshot = torch.load(tmp_path / "broken" / "resume.pt", weights_only=True)["model"]
+    assert snapshot and all(("lora_" in name) == (adapter is not None) for name in snapshot)  # only what trains
     resumed = run(tmp_path / "broken", None)
     assert [event["step"] for event in resumed] == [1, 2, 3] and not (tmp_path / "broken" / "resume.pt").exists()
     assert [event["loss"] for event in resumed] == pytest.approx([event["loss"] for event in whole], rel=1e-4)
@@ -102,3 +106,9 @@ def test_rewards() -> None:
     row = {"answer": "12"}
     assert exact_match(" 12 ", row, {}) == 1.0 and exact_match("12 .", row, {}) == 0.0
     assert contains("It is 12 .", row, {}) == 1.0 and contains("13", row, {}) == 0.0
+    worked = {"answer": "She sells 16 - 7 = 9 eggs for 9 * 2 = $18.\n#### 1,018"}
+    assert last_number_match("So 9 * 2 gives 1018.", worked, {}) == 1.0
+    assert last_number_match("The answer is 1018 eggs, not 9", worked, {}) == 0.0
+    assert last_number_match("no digits here", worked, {}) == 0.0
+    with pytest.raises(ValueError, match="no number"):
+        last_number_match("3", {"answer": "unknown"}, {})

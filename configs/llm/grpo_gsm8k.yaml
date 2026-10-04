@@ -1,0 +1,34 @@
+# GRPO on real word problems (GSM8K, MIT): a 0.8B model solves only some of them, so completions sampled for one
+# prompt earn different rewards and the group-relative advantage has something to push on.
+pipeline:
+  recipe: llm_grpo
+  name: grpo-gsm8k-qwen3.5-0.8b
+  seed: 20260920
+  output_dir: ./output
+
+model:
+  architecture: hybrid
+  name: Qwen/Qwen3.5-0.8B
+  revision: 2fc06364715b967f1860aea9cf38778875588b17
+
+data:
+  sources:
+    - name: huggingface
+      dataset: openai/gsm8k
+      subset: main
+      revision: 740312add88f781978c0658806c59bc2815b9866
+      split: train
+      limit: 40                     # pilot size; raise for a real run
+      fields: {prompt: question}    # `answer` ends with "#### <number>", which the reward reads
+  validation: 0.2
+
+method:
+  group_size: 4
+  max_new_tokens: 256               # the model works step by step; at 128 it is cut off before the result
+  temperature: 1.0
+  reward: {name: last_number}
+
+training: {epochs: 1, lr: 2.0e-6, batch_size: 2, max_length: 512, max_steps: 6}
+
+validation:
+  min: {reward: 0.0}

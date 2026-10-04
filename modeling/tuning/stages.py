@@ -72,6 +72,7 @@ class TuneStage(TrainStage[TuningConfig]):
             backbone.load(resolve_device(self.config.device))
             try:
                 rows = method.prepare(backbone, read_rows(Path(inputs["data"]["train"])), workdir)
+                backbone.adapt(self.config.training.adapter)
                 fit(backbone, method, rows, self.config.training, workdir, self.config.seed, self.progress)
             finally:
                 backbone.release()

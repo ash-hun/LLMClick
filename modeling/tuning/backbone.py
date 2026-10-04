@@ -2,12 +2,12 @@
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import torch
 from transformers.utils import logging as transformers_logging
 
-from modeling.tuning.config import BackboneConfig
+from modeling.tuning.config import AdapterConfig, BackboneConfig
 from core.utils.device import Device
 
 # transformers' weight-loading bars would draw over the pipeline's own
@@ -15,6 +15,8 @@ transformers_logging.disable_progress_bar()  # type: ignore[no-untyped-call]
 
 
 class Backbone(ABC):
+    # Layers LoRA adapts unless the config names others: the attention projections of a standard transformer block.
+    adapter_targets: ClassVar[tuple[str, ...]] = ("q_proj", "k_proj", "v_proj", "o_proj")
     model: Any
     tokenizer: Any
     device: Device
@@ -35,6 +37,19 @@ class Backbone(ABC):
     @abstractmethod
     def save(self, path: Path) -> None:
         """Write everything `load(checkpoint=path)` needs."""
+
+    def adapt(self, adapter: AdapterConfig | None) -> None:
+        """Wrap the loaded model so that only adapter weights train; without an adapter every weight trains."""
+        if adapter is None:
+            return
+        from peft import LoraConfig, get_peft_model
+        self.model = get_peft_model(self.model, LoraConfig(
+            r=adapter.r, lora_alpha=adapter.alpha, lora_dropout=adapter.dropout,
+            target_modules=list(adapter.targets or self.adapter_targets)))
+
+    def exported(self) -> Any:
+        """The model to save: adapter weights folded into the base, so a checkpoint loads like any other model."""
+        return self.model.merge_and_unload() if hasattr(self.model, "merge_and_unload") else self.model
 
     def trainable(self) -> list[torch.nn.Parameter]:
         return [parameter for parameter in self.model.parameters() if parameter.requires_grad]

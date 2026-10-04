@@ -42,6 +42,33 @@ def test_recipe_trains_validates_and_reruns_from_cache(recipe: str, tiny_model: 
     assert progress.snapshot()["stages"] == {"data": "cached", "train": "cached", "validate": "cached"}
 
 
+@pytest.mark.parametrize("recipe", ["llm_sft", "llm_dpo", "embedding_contrastive"])
+def test_lora_trains_only_the_adapter_and_saves_a_merged_checkpoint(recipe: str, tiny_model: Path, tmp_path: Path) -> None:
+    from safetensors.torch import load_file
+    adapter = {"name": "lora", "r": 4, "alpha": 8, "targets": ["c_attn"]}  # GPT-2 names its attention projection c_attn
+    result = pipeline.build(raw(recipe, tiny_model, tmp_path, adapter=adapter)).run()
+    assert result["stages"]["validate"]["passed"] is True
+    base = load_file(tiny_model / "model.safetensors")
+    tuned = load_file(Path(result["stages"]["train"]["checkpoint"]) / "model.safetensors")
+
+    def key(name: str) -> str:  # the base file is a causal LM; the embedding checkpoint is the bare transformer
+        return name if name in tuned else name.removeprefix("transformer.")
+
+    assert not any("lora" in name for name in tuned)  # merged: loads without peft
+    changed = {name for name in base if key(name) in tuned and not bool((base[name] == tuned[key(name)]).all())}
+    assert changed and all("c_attn.weight" in name for name in changed)
+
+
+def test_adapter_config_rules(tiny_model: Path, tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="Extra inputs"):
+        pipeline.build(raw("llm_sft", tiny_model, tmp_path, adapter={"rank": 4}))
+    full = pipeline.build(raw("llm_sft", tiny_model, tmp_path))
+    lora = pipeline.build(raw("llm_sft", tiny_model, tmp_path, adapter={"targets": ["c_attn"]}))
+    assert full.fingerprint("train") != lora.fingerprint("train") and full.fingerprint("data") == lora.fingerprint("data")
+    with pytest.raises(ValueError, match="Target modules"):
+        pipeline.build(raw("llm_sft", tiny_model, tmp_path, adapter={})).run()  # GPT-2 has no q_proj
+
+
 def test_sft_learns_the_sample_rows(tiny_model: Path, tmp_path: Path) -> None:
     config = raw("llm_sft", tiny_model, tmp_path, max_steps=None, epochs=3, lr=3e-3)
     result = pipeline.build(config).run()

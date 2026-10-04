@@ -20,7 +20,7 @@ class EmbeddingBackbone(Backbone):
         self.device = device
 
     def save(self, path: Path) -> None:
-        self.model.save_pretrained(path)
+        self.exported().save_pretrained(path)
         self.tokenizer.save_pretrained(path)
 
     @abstractmethod

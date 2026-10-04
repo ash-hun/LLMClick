@@ -54,7 +54,7 @@ def fit(backbone: Backbone, method: TrainingMethod[Any], rows: list[Row], traini
     resume = workdir / RESUME
     if resume.exists():
         state = torch.load(resume, map_location=backbone.device, weights_only=True)
-        backbone.model.load_state_dict(state["model"])
+        backbone.model.load_state_dict(state["model"], strict=False)  # the snapshot holds only what trains
         optimizer.load_state_dict(state["optimizer"])
         start = int(state["step"])
         events = [event for event in history(workdir) if event["step"] <= start]
@@ -85,8 +85,8 @@ def fit(backbone: Backbone, method: TrainingMethod[Any], rows: list[Row], traini
         progress.update(index + 1, len(steps), ", ".join(f"{k} {v:.4f}" for k, v in event.items() if k not in {"step", "lr"}))
         if training.resume_every and (index + 1) % training.resume_every == 0 and index + 1 < len(steps):
             temporary = resume.with_suffix(".tmp")
-            torch.save({"step": index + 1, "model": backbone.model.state_dict(), "optimizer": optimizer.state_dict()},
-                       temporary)
+            weights = {name: parameter for name, parameter in backbone.model.named_parameters() if parameter.requires_grad}
+            torch.save({"step": index + 1, "model": weights, "optimizer": optimizer.state_dict()}, temporary)
             temporary.replace(resume)
     backbone.model.eval()
     backbone.save(workdir / CHECKPOINT)

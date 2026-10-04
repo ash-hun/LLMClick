@@ -1,0 +1,35 @@
+# SFT with LoRA: the base weights stay frozen and small low-rank matrices are trained instead.
+# `training.adapter` works the same way in every llm_* and embedding_* recipe.
+pipeline:
+  recipe: llm_sft
+  name: sft-lora-qwen3.5-0.8b
+  seed: 20260920
+  output_dir: ./output
+
+model:
+  architecture: hybrid
+  name: Qwen/Qwen3.5-0.8B
+  revision: 2fc06364715b967f1860aea9cf38778875588b17
+
+data:
+  sources:
+    - name: local_jsonl
+      path: samples/llm_sft.jsonl
+  validation: 0.1
+
+training:
+  epochs: 1
+  lr: 2.0e-4                        # adapters take a much higher rate than full fine-tuning
+  batch_size: 4
+  accumulation: 2
+  max_length: 512
+  max_steps: 4
+  adapter:
+    name: lora
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    # targets: [q_proj, v_proj]     # default: the architecture's attention projections
+
+validation:
+  max: {loss: 5.0}

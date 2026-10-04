@@ -112,8 +112,18 @@ pipeline:
 | `llm_grpo` | `prompt` + what the reward reads (`answer`) | `reward` (greedy completion) |
 | `embedding_contrastive` | `query`, `positive`, `negative`? | `accuracy` (positive ranked first), `mrr` |
 
-Weights are trained in full (no adapters) in FP32. The checkpoint is a plain `save_pretrained` directory at
-`output/<experiment>/train/checkpoint/`.
+By default every weight is trained, in FP32. `training.adapter` switches any of these recipes to LoRA:
+
+```yaml
+training:
+  adapter: {name: lora, r: 16, alpha: 32, dropout: 0.05}   # omit to train every weight
+```
+
+The base weights stay frozen and only the adapter trains, so the resume snapshot holds just the adapter. Which
+layers are adapted comes from the architecture (`transformer`, `bi_encoder`: the attention projections; `hybrid`:
+those plus the linear-attention projections) unless `targets` names others. The adapter is folded into the base
+weights when the checkpoint is written, so a LoRA checkpoint and a fully trained one load the same way: a plain
+`save_pretrained` directory at `output/<experiment>/train/checkpoint/`.
 
 ### Stages of `jev`
 
@@ -148,7 +158,9 @@ curl -X POST localhost:8000/api/jobs -H 'content-type: application/json' \
 | `llm/sft_transformer.yaml` | the same recipe on Qwen3-0.6B (transformer) |
 | `llm/instruction.yaml` | instruction tuning of Qwen3.5-0.8B |
 | `llm/dpo.yaml` | DPO of Qwen3.5-0.8B on preference pairs |
+| `llm/sft_lora.yaml` | the SFT recipe with a LoRA adapter instead of full fine-tuning |
 | `llm/grpo.yaml` | GRPO of Qwen3.5-0.8B with the `exact_match` reward |
+| `llm/grpo_gsm8k.yaml` | GRPO on GSM8K word problems from the Hub with the `last_number` reward |
 | `embedding/contrastive.yaml` | contrastive learning of Qwen3-Embedding-0.6B |
 | `jev/jeff_public_only.yaml` | jeff's public-only arm (no teacher) |
 | `jev/jeff_combined.yaml` | public + synthetic data from a local teacher |
@@ -200,6 +212,7 @@ Subclass the family's backbone and register it; every recipe of the family can t
 class MoEBackbone(LLMBackbone):
     loader = AutoModelForCausalLM               # the transformers class that builds it
     frozen = ("router",)                        # parameter-name fragments training must not update
+    adapter_targets = ("q_proj", "v_proj")      # layers LoRA adapts by default
 ```
 
 An embedding architecture (for example a cross-encoder) subclasses `EmbeddingBackbone` the same way and overrides
