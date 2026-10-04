@@ -89,7 +89,13 @@ pipeline:
 - **Identity.** The experiment directory is `<name>-<hash>`; `stages`, `output_dir` and `tracker` are not part of
   the hash, because they say how to run, not what to build.
 - **Progress.** The CLI shows two bars (stages, and steps inside the running stage); API jobs report the same
-  state in `progress`.
+  state in `progress`. Every long phase names itself there: loading the model, checking lengths, a method's
+  preparation (reference margins, reasoning chains), the steps, fitting the temperature, saving.
+- **Lengths.** Before the first training step every training and held-out row is measured against
+  `training.max_length`, including the tokens a method adds later (generated completions, reasoning chains).
+  A row that does not fit stops the run there (`training.overflow: error`, the default) or is left out
+  (`overflow: skip`); nothing is cut silently and nothing fails hours into training. Embedding texts are the
+  exception: they are truncated, as usual for retrieval.
 - **Validation.** In the Modeling channel `validate` follows `train` and cannot be left out. It measures the
   trained model on data training never saw and checks `validation.min` / `validation.max`; a miss, or a metric
   that is not a finite number, stops the pipeline. A later stage reads the checkpoint from `validate`, never from

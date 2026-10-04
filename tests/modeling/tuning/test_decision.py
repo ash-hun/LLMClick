@@ -101,6 +101,24 @@ def test_reasoning_chains_are_sampled_once_and_reused(tiny_model: Path, tmp_path
     assert 0.2 * questions < len(chains) < 0.6 * questions and all(len(chain) <= 6 for chain in chains.values())
 
 
+def test_decision_phases_report_progress_and_count_reasoning_in_the_length(tiny_model: Path, tmp_path: Path) -> None:
+    from core.progress import Progress
+
+    class Notes(Progress):
+        def __init__(self) -> None:
+            self.seen: set[str] = set()
+
+        def update(self, done: int, total: int | None = None, note: str = "") -> None:
+            self.seen.add(note)
+
+    notes = Notes()
+    pipeline.build(raw("llm_decision_sft", tiny_model, tmp_path, "pointer", {"think_fraction": 0.5}), notes).run()
+    assert {"sampling reasoning chains", "fitting temperature", "checking training lengths"} <= notes.seen
+    tight = raw("llm_decision_sft", tiny_model, tmp_path, "pointer", {"think_fraction": 0.5, "max_think": 200})
+    with pytest.raises(ValueError, match="need more than training.max_length=250"):
+        pipeline.build(tight).run()  # the prompt fits, prompt plus 200 reasoning tokens does not
+
+
 def test_cispo_continues_from_an_sft_checkpoint(tiny_model: Path, tmp_path: Path) -> None:
     first = pipeline.build(raw("llm_decision_sft", tiny_model, tmp_path, "pointer")).run()
     checkpoint = first["stages"]["train"]["checkpoint"]

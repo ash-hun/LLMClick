@@ -26,6 +26,9 @@ class SFT(LLMMethod):
         if any(message["role"] not in ROLES or not isinstance(message["content"], str) for message in messages):
             raise ValueError(f"every message needs a role in {sorted(ROLES)} and a string content")
 
+    def lengths(self, backbone: LLMBackbone, row: Row) -> list[int]:
+        return [len(backbone.render(self.messages(row), False))]
+
     def totals(self, backbone: LLMBackbone, rows: list[Row]) -> tuple[torch.Tensor, torch.Tensor]:
         scores, counts = self.log_probabilities(backbone, [self.encode(backbone, self.messages(row)) for row in rows])
         return -scores.sum(), counts.sum()

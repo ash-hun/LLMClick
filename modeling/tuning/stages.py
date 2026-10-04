@@ -9,7 +9,7 @@ from modeling.tuning.loop import CHECKPOINT, SUMMARY, fit, history
 from modeling.stages import TrainStage, ValidateStage
 from modeling.tuning.sources import SOURCES
 from modeling.tuning.config import TuningConfig
-from modeling.tuning.method import Row
+from modeling.tuning.method import Row, fitting
 from modeling.config import keyed_identity
 from core.utils.device import resolve_device
 from core.utils.files import directory_signature, read_json
@@ -76,12 +76,16 @@ class TuneStage(TrainStage[TuningConfig]):
     def train(self, workdir: Path, inputs: dict[str, Outputs]) -> Outputs:
         checkpoint, summary = workdir / CHECKPOINT, workdir / SUMMARY
         if not (summary.exists() and checkpoint.is_dir()):
-            backbone, method = self.config.build_backbone(), self.config.build_method()
+            backbone, method, training = self.config.build_backbone(), self.config.build_method(), self.config.training
+            self.progress.update(0, None, "loading model")
             backbone.load(resolve_device(self.config.device))
             try:
-                rows = method.prepare(backbone, read_rows(Path(inputs["data"]["train"])), workdir)
-                backbone.adapt(self.config.training.adapter)
-                fit(backbone, method, rows, self.config.training, workdir, self.config.seed, self.progress)
+                # Both folds are checked now: a held-out row that does not fit would otherwise fail after training.
+                fitting(backbone, method, read_rows(Path(inputs["data"]["validation"])), training, self.progress, "validation")
+                rows = fitting(backbone, method, read_rows(Path(inputs["data"]["train"])), training, self.progress, "training")
+                rows = method.prepare(backbone, rows, workdir, self.progress)
+                backbone.adapt(training.adapter)
+                fit(backbone, method, rows, training, workdir, self.config.seed, self.progress)
             finally:
                 backbone.release()
         return {"checkpoint": str(checkpoint), "run": str(workdir), **read_json(summary)}
@@ -96,11 +100,17 @@ class MeasureStage(ValidateStage[TuningConfig]):
     requires: ClassVar[tuple[str, ...]] = ("train", "data")
     sections: ClassVar[tuple[str, ...]] = ("validation", "device")
 
+    def identity(self) -> Any:
+        training = self.config.training  # which held-out rows are measured depends on the length rule
+        return [super().identity(), training.max_length, training.overflow]
+
     def measure(self, workdir: Path, inputs: dict[str, Outputs]) -> dict[str, float]:
         backbone, method = self.config.build_backbone(), self.config.build_method()
+        self.progress.update(0, None, "loading checkpoint")
         backbone.load(resolve_device(self.config.device), Path(inputs["train"]["checkpoint"]))
         try:
-            return method.evaluate(backbone, read_rows(Path(inputs["data"]["validation"])),
-                                   self.config.validation.batch_size, self.progress)
+            rows = fitting(backbone, method, read_rows(Path(inputs["data"]["validation"])), self.config.training,
+                           self.progress, "validation")
+            return method.evaluate(backbone, rows, self.config.validation.batch_size, self.progress)
         finally:
             backbone.release()

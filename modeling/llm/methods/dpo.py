@@ -28,6 +28,10 @@ class DPO(LLMMethod):
         if row["chosen"] == row["rejected"] or not isinstance(row["prompt"], (str, list)):
             raise ValueError("prompt must be a string or messages, and chosen must differ from rejected")
 
+    def lengths(self, backbone: LLMBackbone, row: Row) -> list[int]:
+        return [len(backbone.render([*conversation(row["prompt"]), {"role": "assistant", "content": row[key]}], False))
+                for key in ("chosen", "rejected")]
+
     def margins(self, backbone: LLMBackbone, rows: list[Row]) -> torch.Tensor:
         """log p(chosen | prompt) - log p(rejected | prompt), one value per row."""
         encoded = [self.encode(backbone, [*conversation(row["prompt"]), {"role": "assistant", "content": row[key]}],
@@ -36,13 +40,17 @@ class DPO(LLMMethod):
         return scores[0::2] - scores[1::2]
 
     @torch.no_grad()
-    def prepare(self, backbone: LLMBackbone, rows: list[Row], workdir: Path) -> list[Row]:
+    def prepare(self, backbone: LLMBackbone, rows: list[Row], workdir: Path, progress: Progress) -> list[Row]:
         """The reference model is the base model, so its margins are computed once here and no second model is kept
         in memory while training. Cached: a resumed run must not recompute them with partly trained weights."""
         cache = workdir / REFERENCE
         if not cache.exists():
             backbone.model.eval()
-            values = [float(v) for batch in chunks(rows, self.training.batch_size) for v in self.margins(backbone, batch)]
+            values: list[float] = []
+            batches = chunks(rows, self.training.batch_size)
+            for index, batch in enumerate(batches):
+                progress.update(index, len(batches), "reference margins")
+                values += [float(v) for v in self.margins(backbone, batch)]
             write_json(cache, values)
         return [{**row, "_reference": value} for row, value in zip(rows, json.loads(cache.read_text()), strict=True)]
 
