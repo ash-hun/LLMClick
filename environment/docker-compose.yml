@@ -10,7 +10,6 @@ services:
       - .env
     volumes:
       - ../configs:/app/configs
-      - ../data:/app/data
       - ../output:/app/output
       - llmclick-hf-cache:/root/.cache/huggingface
     ports:

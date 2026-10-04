@@ -58,6 +58,8 @@ LLMClick/
 │       ├── models/               #     Model Catalog: base.py (EmbeddingBackbone), bi_encoder.py
 │       ├── methods/              #     Training Method: contrastive.py
 │       └── config.py pipeline.py
+├── data/                         # Data channel (planned): README only
+├── evaluation/                   # Evaluation channel (planned): README only
 ├── tests/core/  tests/modeling/
 ├── docs/                         # api-spec.md, screen-spec.md
 ├── environment/                  # Dockerfile, docker-compose.yml, .env.sample
@@ -66,9 +68,10 @@ LLMClick/
     └── <name>-<hash>/                   # one experiment: config.yaml, manifest.json, pipeline.log, links to its stages
 ```
 
-Two more channels are planned next to `modeling/`: Data (training and synthetic data pipelines) and Evaluation
-(custom and benchmark evaluation with reports). A channel is a package that registers recipes; it joins by adding
-its name to `CHANNELS` in `core/registry.py` and reuses `Stage`, `Pipeline`, `Progress` and `Experiment` as they are.
+Two more channels are planned next to `modeling/`: `data/` (training and synthetic data pipelines) and
+`evaluation/` (custom and benchmark evaluation with reports). Each has a README that states its scope; neither has
+code yet. A channel is a package that registers recipes; it joins by adding its name to `CHANNELS` in
+`core/registry.py` and reuses `Stage`, `Pipeline`, `Progress` and `Experiment` as they are.
 
 ## 02. How a run works
 
