@@ -4,13 +4,15 @@ import os
 import math
 import logging
 from abc import abstractmethod
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, ClassVar, TypeVar
 
 from core.stage import Outputs, Stage
 from core.utils.files import write_json
 from modeling.config import ModelingConfig, ValidationConfig
-from modeling.tracker import History
+from modeling.tracker import History, Tracker
 
 ModelingConfigT = TypeVar("ModelingConfigT", bound=ModelingConfig)
 logger = logging.getLogger(__name__)
@@ -31,6 +33,19 @@ class TrainStage(Stage[ModelingConfigT]):
 
     def history(self, outputs: Outputs) -> History:
         return []
+
+    @contextmanager
+    def tracking(self, workdir: Path) -> Iterator[Callable[[int, dict[str, float]], None]]:
+        """A function that sends one step's metrics to the tracker while training runs. The run is marked as sent
+        only if the block ends normally; after a crash the rerun continues the same tracked run."""
+        tracker = Tracker(self.config.tracker)
+        tracker.open(workdir, self.config.name, self.config.model_dump(mode="json"))
+        complete = False
+        try:
+            yield tracker.log
+            complete = True
+        finally:
+            tracker.close(workdir, complete)
 
     def run(self, workdir: Path, inputs: dict[str, Outputs]) -> Outputs:
         return self.train(workdir, inputs)

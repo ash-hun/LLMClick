@@ -1,8 +1,11 @@
 """Shared by the LLM methods: turning a conversation into token ids with the positions the model is graded on."""
 
+from collections.abc import Callable
+from typing import Any
+
 import torch
 
-from modeling.tuning.method import TrainingMethod
+from modeling.tuning.method import Row, TrainingMethod
 from modeling.llm.models.base import LLMBackbone, Message
 
 Encoded = tuple[list[int], list[bool]]  # token ids, and which of them are targets
@@ -39,3 +42,24 @@ class LLMMethod(TrainingMethod[LLMBackbone]):
         graded = targets * mask
         scores = backbone.next_token_log_probabilities(hidden, ids, graded, temperature)
         return scores.sum(dim=1), graded[:, 1:].sum(dim=1).float()
+
+
+class Reuse:
+    """What a method sampled for a batch, kept until that batch has been trained on `times` times. The loop presents
+    a batch `times` times in a row (`TrainingMethod.repeats`); after a resume the samples are simply drawn again."""
+
+    def __init__(self, times: int) -> None:
+        self.times = times
+        self.kept: dict[tuple[int, ...], list[Any]] = {}
+
+    def get(self, rows: list[Row], sample: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+        """The batch's samples: drawn by `sample` on the first visit, the same object on the following ones."""
+        key = tuple(id(row) for row in rows)
+        if key not in self.kept:
+            self.kept[key] = [0, sample()]
+        entry = self.kept[key]
+        entry[0] += 1
+        if entry[0] >= self.times:
+            del self.kept[key]
+        samples: dict[str, Any] = entry[1]
+        return samples

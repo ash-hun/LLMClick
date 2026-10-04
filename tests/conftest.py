@@ -25,7 +25,9 @@ def tiny_model(tmp_path_factory: pytest.TempPathFactory) -> Path:
     fast = PreTrainedTokenizerFast(tokenizer_object=tokenizer, unk_token="<unk>", pad_token="<pad>",
                                    eos_token="<|im_end|>", chat_template=CHATML)
     torch.manual_seed(0)
+    # no dropout, like the Qwen models: training-mode and evaluation-mode outputs agree, so tests can compare them
     model = GPT2LMHeadModel(GPT2Config(vocab_size=len(fast), n_positions=256, n_embd=32, n_layer=2, n_head=2,
+                                       resid_pdrop=0.0, embd_pdrop=0.0, attn_pdrop=0.0,
                                        bos_token_id=fast.eos_token_id, eos_token_id=fast.eos_token_id))
     path = tmp_path_factory.mktemp("tiny-model")
     model.save_pretrained(path)

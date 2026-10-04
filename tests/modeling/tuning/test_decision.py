@@ -202,3 +202,13 @@ def test_markers_come_from_the_architecture(tiny_model: Path) -> None:
     renamed.load("cpu")
     ids = renamed.head.prompt(renamed, "s", "q", ["a", "b"])
     assert renamed.token_ids("<|fim_prefix|>")[0] not in ids and renamed.token_ids("<|im_start|>")[0] in ids
+
+
+def test_cispo_reuses_chains_and_caps_the_importance_weight(tiny_model: Path, tmp_path: Path) -> None:
+    first = pipeline.build(raw("llm_decision_sft", tiny_model, tmp_path, "pointer")).run()
+    method = {"group_size": 3, "iterations": 2, "clip": 0.2}
+    config = raw("llm_decision_cispo", tiny_model, tmp_path, "pointer", method, init=first["stages"]["validate"]["checkpoint"])
+    config["training"]["max_steps"] = 4
+    result = pipeline.build(config).run()
+    log = [json.loads(line) for line in (Path(result["stages"]["train"]["run"]) / "training.jsonl").read_text().splitlines()]
+    assert len(log) == 4 and log[0]["think_tokens"] == log[1]["think_tokens"]  # steps 1-2 share one sampled batch

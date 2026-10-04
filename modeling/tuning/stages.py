@@ -85,7 +85,8 @@ class TuneStage(TrainStage[TuningConfig]):
                 rows = fitting(backbone, method, read_rows(Path(inputs["data"]["train"])), training, self.progress, "training")
                 rows = method.prepare(backbone, rows, workdir, self.progress)
                 backbone.adapt(training.adapter)
-                fit(backbone, method, rows, training, workdir, self.config.seed, self.progress)
+                with self.tracking(workdir) as log:
+                    fit(backbone, method, rows, training, workdir, self.config.seed, self.progress, log)
             finally:
                 backbone.release()
         return {"checkpoint": str(checkpoint), "run": str(workdir), **read_json(summary)}

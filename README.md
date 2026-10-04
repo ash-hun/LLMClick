@@ -105,8 +105,12 @@ pipeline:
   trained model on data training never saw and checks `validation.min` / `validation.max`; a miss, or a metric
   that is not a finite number, stops the pipeline. A later stage reads the checkpoint from `validate`, never from
   `train`. Without bounds the metrics are only recorded, and a warning says so.
-- **Tracking.** With `tracker.enabled` a training run's metrics go to wandb once per run and project. `tracker` is
-  not part of an experiment's identity, so switching it on later sends the already cached run instead of retraining.
+- **Tracking.** With `tracker.enabled` each training step is sent to wandb as it happens; a run interrupted and
+  resumed continues the same wandb run. `tracker` is not part of an experiment's identity, so switching it on later
+  replays the already cached run once instead of retraining. A run is sent to a given project only once.
+- **Jobs.** The API keeps its jobs in a SQLite table (`JOBS_DB`), so they survive a restart; a job the server was
+  running when it stopped is marked `interrupted` and resumes when submitted again. `JOB_WORKERS` jobs run at once,
+  each worker on its own accelerator: set it to the number of GPUs on a multi-GPU server and keep 1 otherwise.
 - **Typos.** Every config section rejects keys it does not know, so `validaton:` or `training.learning_rate` is an
   error instead of a silently ignored setting.
 
@@ -295,6 +299,20 @@ reference margins there). Helpers shared by LLM methods live in `modeling/llm/me
 A package with `models/`, `methods/`, a `TuningConfig` subclass that sets `backbones` to its catalog, and a
 `TuningPipeline` subclass; import it in `modeling/__init__.py`. The data, train and validate stages and the training
 loop are inherited.
+
+### Reusing sampled groups (`llm_grpo`, `llm_decision_cispo`)
+
+Sampling is the expensive part of both methods. `method.iterations` takes that many optimizer steps on each sampled
+group before sampling again. From the second step on the policy has moved away from the one that produced the
+samples, and `method.clip` bounds how far: GRPO clips the policy ratio to 1 +- clip (PPO's surrogate), CISPO caps the
+importance weight of each reasoning token at 1 + clip. `llm_grpo` also takes `method.beta`, a KL penalty towards
+the base model; it needs `training.adapter`, because the base model is then the same weights with the adapter
+switched off and no second model is loaded.
+
+```yaml
+method: {group_size: 4, iterations: 2, clip: 0.2, beta: 0.05}
+training: {adapter: {name: lora, r: 16, alpha: 32}}
+```
 
 ### A reward for `llm_grpo`
 

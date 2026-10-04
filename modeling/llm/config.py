@@ -59,6 +59,8 @@ class GRPOConfig(LLMConfig):
     def _reward_registered(self) -> "GRPOConfig":
         if self.method.reward.name not in REWARDS:
             raise ValueError(f"Unknown reward {self.method.reward.name!r}; registered: {REWARDS.names()}")
+        if self.method.beta > 0 and self.training.adapter is None:
+            raise ValueError("method.beta needs training.adapter: the KL reference is the base model under the adapter")
         return self
 
 
