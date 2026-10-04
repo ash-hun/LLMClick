@@ -53,5 +53,3 @@
 ## 미구현 / 알려진 제약
 
 - 자체 프론트엔드 없음. Job 상태는 `GET /api/jobs/{job_id}` 를 폴링한다.
-- `jeff/playground.html` 과 `jeff/dashboard.html` 은 이식된 jeff 모듈의 화면이며 이 서버(`main.py`)는 서빙하지 않는다.
-  학습 대시보드는 `uv run jeff-dashboard`, 추론 플레이그라운드는 `uv run jeff-serve` 로 따로 띄운다.

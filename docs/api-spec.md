@@ -165,10 +165,10 @@ POST /api/config/validate
 
 ```bash
 $ curl -s -X POST http://localhost:8000/api/config/validate -H 'content-type: application/json' \
-  -d '{"pipeline":{"recipe":"jev","name":"x"},"model":{"backbone":"nope","name":"m","revision":"0000000000000000000000000000000000000000"}}'
-{"detail":"1 validation error for JevConfig\n  Value error, Unknown backbone 'nope'; registered: ['gemma4', 'modernbert', 'qwen3_5'] ..."}
+  -d '{"pipeline":{"recipe":"llm_sft","name":"x"},"model":{"architecture":"nope","name":"Qwen/Qwen3.5-0.8B","revision":"2fc06364715b967f1860aea9cf38778875588b17"},"data":{"sources":[{"name":"local_jsonl","path":"samples/llm_sft.jsonl"}]}}'
+{"detail":"1 validation error for SFTConfig\n  Value error, Unknown architecture 'nope'; registered: ['hybrid', 'transformer'] [type=value_error, input_value={'recipe': 'llm_sft', 'na...mples/llm_sft.jsonl'}]}}, input_type=dict] ..."}
 $ curl -s -X POST http://localhost:8000/api/config/validate -H 'content-type: application/json' -d '{"pipeline":{"name":"x"}}'
-{"detail":"pipeline.recipe is None; registered: ['embedding_contrastive', 'jev', 'llm_decision_cispo', 'llm_decision_sft', 'llm_dpo', 'llm_grpo', 'llm_instruction', 'llm_sft']"}
+{"detail":"pipeline.recipe is None; registered: ['embedding_contrastive', 'llm_decision_cispo', 'llm_decision_sft', 'llm_dpo', 'llm_grpo', 'llm_instruction', 'llm_sft']"}
 ```
 
 #### 특이사항
@@ -395,17 +395,6 @@ LLM, Embedding 계열 레시피(`llm_sft`, `llm_instruction`, `llm_dpo`, `llm_gr
 | `reward` | string[] | 아니오 | `llm_grpo` 에만 있음. `method.reward.name` 에 쓸 수 있는 키 |
 | `head` | string[] | 아니오 | `llm_decision_sft`, `llm_decision_cispo` 에만 있음. `model.head` 에 쓸 수 있는 키 |
 
-`jev` 의 필드:
-
-| 필드 | 타입 | 널 허용 | 설명 |
-|---|---|---|---|
-| `stages` | string[] | 아니오 | 스테이지 이름, 실행 순서 |
-| `builder` | string[] | 아니오 | 데이터 빌더 키 |
-| `converter` | string[] | 아니오 | 원시 행 → Example 변환기 키 |
-| `backbone` | string[] | 아니오 | 백본 패밀리 키 |
-| `teacher` | string[] | 아니오 | 합성 데이터 교사 키 |
-| `benchmark` | string[] | 아니오 | 평가셋 키 |
-
 #### 응답 코드
 
 | 코드 | 의미 | 본문 |
@@ -416,7 +405,7 @@ LLM, Embedding 계열 레시피(`llm_sft`, `llm_instruction`, `llm_dpo`, `llm_gr
 
 ```bash
 $ curl -s http://localhost:8000/api/system/recipes
-{"embedding_contrastive":{"stages":["data","train","validate"],"architecture":["bi_encoder"],"source":["huggingface","local_jsonl"],"method_keys":["query_instruction","temperature"]},"jev":{"stages":["data","benchmarks","synthetic","mix","train","validate","evaluate"],"builder":[...],"converter":[...],"backbone":[...],"teacher":[...],"benchmark":[...]},"llm_dpo":{"stages":["data","train","validate"],"architecture":["hybrid","transformer"],"source":["huggingface","local_jsonl"],"method_keys":["beta"]},"llm_grpo":{...,"method_keys":["group_size","max_new_tokens","reward","temperature"],"reward":["contains","exact_match","last_number"]},"llm_decision_sft":{...,"method_keys":["calibration","eval_think","head_lr","max_think","think_fraction"],"head":["pointer","readout"]},"llm_decision_cispo":{...,"head":["pointer","readout"]},"llm_instruction":{...,"method_keys":["system"]},"llm_sft":{...,"method_keys":[]}}
+{"embedding_contrastive":{"stages":["data","train","validate"],"architecture":["bi_encoder"],"source":["huggingface","local_jsonl"],"method_keys":["query_instruction","temperature"]},"llm_dpo":{"stages":["data","train","validate"],"architecture":["hybrid","transformer"],"source":["huggingface","local_jsonl"],"method_keys":["beta"]},"llm_grpo":{...,"method_keys":["group_size","max_new_tokens","reward","temperature"],"reward":["contains","exact_match","last_number"]},"llm_decision_sft":{...,"method_keys":["calibration","eval_think","head_lr","max_think","think_fraction"],"head":["pointer","readout"]},"llm_decision_cispo":{...,"head":["pointer","readout"]},"llm_instruction":{...,"method_keys":["system"]},"llm_sft":{...,"method_keys":[]}}
 ```
 
 #### 특이사항
@@ -522,9 +511,6 @@ $ curl -s http://localhost:8000/health
 
 공통 키는 `core/config/schema.py` 의 `BaseConfig`(recipe, name, seed, output_dir, device, stages), 모델링 공통 키는
 `modeling/config.py` 의 `ModelingConfig`(tracker, validation), 레시피 고유 섹션은 레시피의 스키마가 정본이다.
-`jev` 는 `modeling/jev/config.py`: `checkpoint`, `data`(builders, folds, synthetic, mix), `model`(backbone, name,
-revision, prompt_layout), `training`(jeff.train 인자와 동명), `validation`(min, max, batch_size),
-`evaluation`(benchmarks, batch_size). `builders[*]`, `benchmarks[*]`, `teacher` 는 `name` + 임의 파라미터.
 스키마에 없는 최상위 키는 422.
 
 LLM, Embedding 계열 레시피는 `modeling/tuning/config.py` 의 `TuningConfig` 를 공유한다: `model`(architecture, name,

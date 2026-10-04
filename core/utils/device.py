@@ -1,4 +1,4 @@
-"""Pick the accelerator once, explicitly: jeff's own default never chooses MPS, so Apple silicon would silently train on the CPU."""
+"""Pick the accelerator once, explicitly: cuda, then mps, then cpu, unless the config names one."""
 
 from typing import Literal
 

@@ -24,7 +24,7 @@ def main(argv: list[str] | None = None) -> int:
         commands.add_parser(name, help=text).add_argument("config")
     commands.add_parser("recipes", help="List the recipes, their stages and the keys their registries accept")
     args = parser.parse_args(argv)
-    load_dotenv(ENV_FILE)  # child processes (jeff, Hugging Face downloads) read HF_TOKEN from the environment
+    load_dotenv(ENV_FILE)  # Hugging Face downloads read HF_TOKEN from the environment
     logging.basicConfig(level=logging.INFO, format=LOG_FORMAT, stream=sys.stderr)
 
     if args.command == "recipes":
