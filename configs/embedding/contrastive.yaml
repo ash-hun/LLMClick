@@ -1,0 +1,33 @@
+# Contrastive learning (InfoNCE) with in-batch negatives and optional hard negatives.
+pipeline:
+  recipe: embedding_contrastive
+  name: contrastive-qwen3-embedding-0.6b
+  seed: 20260920
+  output_dir: ./output
+
+model:
+  architecture: bi_encoder          # one tower for queries and documents, last-token pooling
+  name: Qwen/Qwen3-Embedding-0.6B
+  revision: 97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3
+
+data:
+  sources:
+    - name: local_jsonl
+      path: samples/embedding_contrastive.jsonl   # rows: {"query": ..., "positive": ..., "negative"?: str | [str]}
+    # - name: huggingface
+    #   dataset: sentence-transformers/all-nli
+    #   subset: triplet
+    #   revision: d482672c8e74ce18da116f430137434ba2e52fab
+    #   split: train
+    #   limit: 20000
+    #   fields: {query: anchor}
+  validation: 0.1
+
+method:
+  temperature: 0.05
+  query_instruction: "Given an arithmetic question, retrieve the statement that answers it"
+
+training: {epochs: 1, lr: 1.0e-5, batch_size: 8, max_length: 128, max_steps: 4}
+
+validation:
+  min: {accuracy: 0.5}              # share of held-out queries whose positive is ranked first

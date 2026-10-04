@@ -1,23 +1,13 @@
 """Pydantic schema of a jev config; one YAML is one custom model."""
 
 import string
-from typing import Any, Literal
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
-from modeling.config import ModelingConfig, ValidationConfig
+from modeling.config import Keyed, ModelingConfig, ValidationConfig
 
 PROMPT_LAYOUTS = ("state-first", "live-last")
-
-
-class Keyed(BaseModel):
-    """A registry entry: `name` picks the implementation, every other key is passed to it as a parameter."""
-    model_config = ConfigDict(extra="allow")
-    name: str
-
-    @property
-    def params(self) -> dict[str, Any]:
-        return dict(self.model_extra or {})
 
 
 class FoldsConfig(BaseModel):

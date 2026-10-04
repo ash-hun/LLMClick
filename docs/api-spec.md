@@ -70,7 +70,7 @@ YAML 설정 하나를 커스텀 모델 하나로 실행하는 서버. config 의
 #### Endpoint
 
 ```
-POST /api/config/load?config_path=configs/jeff_public_only.yaml
+POST /api/config/load?config_path=configs/llm/sft.yaml
 ```
 
 #### 호출 규약
@@ -108,8 +108,8 @@ POST /api/config/load?config_path=configs/jeff_public_only.yaml
 #### 호출 예시
 
 ```bash
-$ curl -s -X POST 'http://localhost:8000/api/config/load?config_path=configs/jeff_public_only.yaml'
-{"valid":true,"recipe":"jev","experiment":"jeff-0.8b-public-<hash>","directory":"output/jeff-0.8b-public-<hash>","stages":["data","benchmarks","synthetic","mix","train","validate","evaluate"],"config":{...}}
+$ curl -s -X POST 'http://localhost:8000/api/config/load?config_path=configs/llm/sft.yaml'
+{"valid":true,"recipe":"llm_sft","experiment":"sft-qwen3.5-0.8b-<hash>","directory":"output/sft-qwen3.5-0.8b-<hash>","stages":["data","train","validate"],"config":{...}}
 $ curl -s -X POST 'http://localhost:8000/api/config/load?config_path=configs/none.yaml'
 {"detail":"No such config: configs/none.yaml"}
 ```
@@ -168,7 +168,7 @@ $ curl -s -X POST http://localhost:8000/api/config/validate -H 'content-type: ap
   -d '{"pipeline":{"recipe":"jev","name":"x"},"model":{"backbone":"nope","name":"m","revision":"0000000000000000000000000000000000000000"}}'
 {"detail":"1 validation error for JevConfig\n  Value error, Unknown backbone 'nope'; registered: ['gemma4', 'modernbert', 'qwen3_5'] ..."}
 $ curl -s -X POST http://localhost:8000/api/config/validate -H 'content-type: application/json' -d '{"pipeline":{"name":"x"}}'
-{"detail":"pipeline.recipe is None; registered: ['jev']"}
+{"detail":"pipeline.recipe is None; registered: ['embedding_contrastive', 'jev', 'llm_dpo', 'llm_grpo', 'llm_instruction', 'llm_sft']"}
 ```
 
 #### 특이사항
@@ -279,8 +279,8 @@ POST /api/jobs
 
 ```bash
 $ curl -s -X POST http://localhost:8000/api/jobs -H 'content-type: application/json' \
-  -d '{"config_path":"configs/jeff_public_only.yaml"}'
-{"job_id":"jeff-0.8b-public-<hash>-<stages>","status":"pending","recipe":"jev","experiment":"jeff-0.8b-public-<hash>","directory":"output/jeff-0.8b-public-<hash>","stages":["data","benchmarks","synthetic","mix","train","validate","evaluate"],"progress":{"experiment":null,"stages":{},"current":null,"done":0,"total":null,"note":""},"result":null,"error":null}
+  -d '{"config_path":"configs/llm/sft.yaml"}'
+{"job_id":"sft-qwen3.5-0.8b-<hash>-<stages>","status":"pending","recipe":"llm_sft","experiment":"sft-qwen3.5-0.8b-<hash>","directory":"output/sft-qwen3.5-0.8b-<hash>","stages":["data","train","validate"],"progress":{"experiment":null,"stages":{},"current":null,"done":0,"total":null,"note":""},"result":null,"error":null}
 ```
 
 #### 특이사항
@@ -382,7 +382,18 @@ GET /api/system/recipes
 #### Response Body
 
 레시피 키(`pipeline.recipe` 값)마다 객체 하나. 모든 레시피에 `stages` 가 있고, 나머지 필드는 레시피가 정한다.
-아래는 `jev` 의 필드.
+
+LLM, Embedding 계열 레시피(`llm_sft`, `llm_instruction`, `llm_dpo`, `llm_grpo`, `embedding_contrastive`)의 필드:
+
+| 필드 | 타입 | 널 허용 | 설명 |
+|---|---|---|---|
+| `stages` | string[] | 아니오 | `["data","train","validate"]` |
+| `architecture` | string[] | 아니오 | `model.architecture` 에 쓸 수 있는 모델 카탈로그 키 |
+| `source` | string[] | 아니오 | `data.sources[*].name` 에 쓸 수 있는 키 |
+| `method_keys` | string[] | 아니오 | `method` 섹션에 쓸 수 있는 키 |
+| `reward` | string[] | 아니오 | `llm_grpo` 에만 있음. `method.reward.name` 에 쓸 수 있는 키 |
+
+`jev` 의 필드:
 
 | 필드 | 타입 | 널 허용 | 설명 |
 |---|---|---|---|
@@ -403,7 +414,7 @@ GET /api/system/recipes
 
 ```bash
 $ curl -s http://localhost:8000/api/system/recipes
-{"jev":{"stages":["data","benchmarks","synthetic","mix","train","validate","evaluate"],"builder":["huggingface","jeff_extra","jeff_probability","local_jsonl"],"converter":["boolean","classification","example"],"backbone":["gemma4","modernbert","qwen3_5"],"teacher":["openai_compatible"],"benchmark":["huggingface","jeff_jevbench_hard","jeff_panel","jeff_probability","local_jsonl"]}}
+{"embedding_contrastive":{"stages":["data","train","validate"],"architecture":["bi_encoder"],"source":["huggingface","local_jsonl"],"method_keys":["query_instruction","temperature"]},"jev":{"stages":["data","benchmarks","synthetic","mix","train","validate","evaluate"],"builder":[...],"converter":[...],"backbone":[...],"teacher":[...],"benchmark":[...]},"llm_dpo":{"stages":["data","train","validate"],"architecture":["hybrid","transformer"],"source":["huggingface","local_jsonl"],"method_keys":["beta"]},"llm_grpo":{...,"method_keys":["group_size","max_new_tokens","reward","temperature"],"reward":["contains","exact_match","last_number"]},"llm_instruction":{...,"method_keys":["system"]},"llm_sft":{...,"method_keys":[]}}
 ```
 
 #### 특이사항
@@ -513,3 +524,11 @@ $ curl -s http://localhost:8000/health
 revision, prompt_layout), `training`(jeff.train 인자와 동명), `validation`(min, max, batch_size),
 `evaluation`(benchmarks, batch_size). `builders[*]`, `benchmarks[*]`, `teacher` 는 `name` + 임의 파라미터.
 스키마에 없는 최상위 키는 422.
+
+LLM, Embedding 계열 레시피는 `modeling/tuning/config.py` 의 `TuningConfig` 를 공유한다: `model`(architecture, name,
+revision, template), `data`(sources, validation), `training`(epochs, lr, weight_decay, batch_size, accumulation,
+warmup_ratio, max_grad_norm, max_length, max_steps, resume_every, adapter), `validation`(min, max, batch_size), `method`.
+`training.adapter`(name, r, alpha, dropout, targets)가 있으면 LoRA 로 학습하고, 없으면 전체 가중치를 학습한다.
+`method` 섹션의 키는 레시피마다 다르며 `modeling/llm/config.py`, `modeling/embedding/config.py` 가 정본이다.
+`validation.min/max` 에 쓸 수 있는 지표도 레시피마다 다르다: `llm_sft` 와 `llm_instruction` 은 `loss`,
+`perplexity`, `llm_dpo` 는 `accuracy`, `margin`, `llm_grpo` 는 `reward`, `embedding_contrastive` 는 `accuracy`, `mrr`.

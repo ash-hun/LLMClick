@@ -11,18 +11,13 @@ from modeling.jev.tuning import history, trainer
 from modeling.stages import TrainStage, ValidateStage
 from modeling.jev.data import folds, mix, synthetic
 from modeling.jev.evaluation import evaluator
-from modeling.jev.config import JevConfig, Keyed
-from core.utils.files import sha256_file, sha256_json
+from modeling.config import keyed_identity
+from modeling.jev.config import JevConfig
+from core.utils.files import sha256_json
 from core.stage import Outputs, Stage
 from modeling.tracker import History
 
 SCALARS = ("count", "accuracy", "ece", "brier", "nll")  # the metrics validation bounds can name
-
-
-def keyed_identity(entries: list[Keyed]) -> list[Any]:
-    """Registry entries plus the content of any local file they read, so an edited file is a new input."""
-    return [[entry.model_dump(mode="json"), sha256_file(Path(path)) if (path := entry.params.get("path"))
-             and Path(path).is_file() else None] for entry in entries]
 
 
 class DataStage(Stage[JevConfig]):

@@ -1,0 +1,28 @@
+# Group Relative Policy Optimization: sample completions, reward them, reinforce the ones above their group's mean.
+pipeline:
+  recipe: llm_grpo
+  name: grpo-qwen3.5-0.8b
+  seed: 20260920
+  output_dir: ./output
+
+model:
+  architecture: hybrid              # Qwen3.5: linear-attention + full-attention layers, vision tower frozen
+  name: Qwen/Qwen3.5-0.8B           # or Qwen/Qwen3.5-2B @ 15852e8c16360a2fea060d615a32b45270f8a8fc
+  revision: 2fc06364715b967f1860aea9cf38778875588b17
+
+data:
+  sources:
+    - name: local_jsonl
+      path: samples/llm_grpo.jsonl  # rows: {"prompt": str | messages, "answer": ...}
+  validation: 0.1
+
+method:
+  group_size: 4                     # completions sampled per prompt
+  max_new_tokens: 8
+  temperature: 1.0
+  reward: {name: exact_match}     # or contains; add your own in modeling/llm/methods/grpo.py
+
+training: {epochs: 1, lr: 2.0e-6, batch_size: 2, accumulation: 2, max_length: 256, max_steps: 4}
+
+validation:
+  min: {reward: 0.0}              # mean reward of the greedy completion on held-out prompts
