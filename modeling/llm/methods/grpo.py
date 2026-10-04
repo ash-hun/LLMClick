@@ -5,13 +5,14 @@ import re
 from typing import Any
 
 import torch
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from modeling.llm.methods.base import Encoded, LLMMethod, conversation
 from modeling.tuning.method import Row, chunks
 from modeling.llm.models.base import LLMBackbone
 from modeling.config import Keyed
 from core.registry import Registry
+from core.config.schema import Section
 from core.progress import Progress
 
 REWARDS = Registry("reward")  # (completion text, row, params) -> float
@@ -53,7 +54,7 @@ def last_number_match(completion: str, row: Row, params: dict[str, Any]) -> floa
 class GRPO(LLMMethod):
     """Rows: {"prompt": str | messages, ...whatever the reward reads, e.g. "answer"}."""
 
-    class Config(BaseModel):
+    class Config(Section):
         group_size: int = Field(default=4, ge=2, description="Completions sampled per prompt")
         max_new_tokens: int = Field(default=32, ge=1)
         temperature: float = Field(default=1.0, gt=0)
@@ -61,6 +62,9 @@ class GRPO(LLMMethod):
 
     def reward(self, completion: str, row: Row) -> float:
         return float(REWARDS.get(self.config.reward.name)(completion, row, self.config.reward.params))
+
+    def check_identity(self) -> Any:
+        return self.config.reward.model_dump(mode="json")  # `check` scores a row with the reward
 
     def check(self, row: Row) -> None:
         if not isinstance(row["prompt"], (str, list)):

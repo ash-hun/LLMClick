@@ -49,6 +49,9 @@ def test_violations() -> None:
     assert violations({"accuracy": 0.9, "ece": 0.05, "nll": 0.5}, bounds) == []
     assert violations({"accuracy": 0.7, "ece": 0.2}, bounds) == [
         "nll was not measured", "accuracy=0.7000 is below the minimum 0.8", "ece=0.2000 is above the maximum 0.1"]
+    broken = violations({"accuracy": float("nan"), "ece": 0.05, "nll": float("inf")}, bounds)
+    assert broken == ["accuracy is nan, not a finite number", "nll is inf, not a finite number"]  # NaN passes no bound
+    assert violations({"loss": float("nan")}, ValidationConfig()) == ["loss is nan, not a finite number"]
 
 
 def test_train_cannot_be_selected_without_validate(tmp_path: Path) -> None:
@@ -57,8 +60,11 @@ def test_train_cannot_be_selected_without_validate(tmp_path: Path) -> None:
 
 def test_passing_validation_hands_the_checkpoint_on(tmp_path: Path) -> None:
     result = Toy(ToyConfig(name="t", output_dir=str(tmp_path), validation={"min": {"accuracy": 0.8}})).run()
-    assert result["stages"]["validate"]["passed"] is True
-    assert result["stages"]["report"]["checkpoint"] == result["stages"]["train"]["checkpoint"]
+    validated = Path(result["stages"]["validate"]["checkpoint"])
+    assert result["stages"]["validate"]["passed"] is True and result["stages"]["report"]["checkpoint"] == str(validated)
+    assert validated.is_symlink() and validated.resolve() == Path(result["stages"]["train"]["checkpoint"]).resolve()
+    followup = Path(result["directory"]) / "validate" / "checkpoint"  # what model.init of a follow-up experiment reads
+    assert followup.resolve() == validated.resolve()
 
 
 def test_failing_validation_stops_the_pipeline_and_writes_the_report(tmp_path: Path) -> None:
@@ -68,6 +74,7 @@ def test_failing_validation_stops_the_pipeline_and_writes_the_report(tmp_path: P
     manifest = pipeline.experiment.manifest()
     assert set(manifest["stages"]) == {"train"}  # validate is not recorded, report never ran
     assert '"passed": false' in next(tmp_path.glob("_stages/validate-*/validation.json")).read_text()
+    assert not list(tmp_path.glob("_stages/validate-*/checkpoint"))  # no validated checkpoint to continue from
 
 
 def test_tracker_does_not_change_the_experiment(tmp_path: Path) -> None:

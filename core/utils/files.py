@@ -36,3 +36,18 @@ def locked(path: Path) -> Iterator[None]:
     with path.open("w") as stream:
         fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
         yield
+
+
+SMALL_FILE = 1 << 20
+
+
+def directory_signature(path: Path) -> list[Any] | None:
+    """What a directory of model files holds, cheaply: where it really is (links resolved; stage directories are
+    named by fingerprint, so that alone tells two builds apart), every file's size, and the content of small files
+    such as configs. None when it is not a directory, e.g. a Hub model ID or a checkpoint not built yet."""
+    if not path.is_dir():
+        return None
+    real = path.resolve()
+    files = sorted(file for file in real.rglob("*") if file.is_file())
+    return [str(real), [[str(file.relative_to(real)), file.stat().st_size,
+                         sha256_file(file) if file.stat().st_size < SMALL_FILE else None] for file in files]]

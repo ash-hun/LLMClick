@@ -1,10 +1,11 @@
 """Contrastive learning (InfoNCE): a query must score its positive above the batch's other documents."""
 
 import torch
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from modeling.embedding.models.base import EmbeddingBackbone
 from modeling.tuning.method import Row, TrainingMethod, chunks
+from core.config.schema import Section
 from core.progress import Progress
 
 
@@ -16,7 +17,7 @@ def negatives(row: Row) -> list[str]:
 class Contrastive(TrainingMethod[EmbeddingBackbone]):
     """Rows: {"query": str, "positive": str, "negative"?: str | [str]}. Other rows' documents are negatives too."""
 
-    class Config(BaseModel):
+    class Config(Section):
         temperature: float = Field(default=0.05, gt=0)
         query_instruction: str | None = Field(default=None, description="Task description prepended to every query")
 

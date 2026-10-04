@@ -24,7 +24,7 @@ def raw(recipe: str, model: Path, out: Path, **training: Any) -> dict[str, Any]:
         "pipeline": {"recipe": recipe, "name": "tiny", "seed": 3, "output_dir": str(out), "device": "cpu"},
         "model": {"architecture": "bi_encoder" if recipe.startswith("embedding") else "transformer", "name": str(model)},
         "data": {"sources": [{"name": "local_jsonl", "path": f"samples/{sample}.jsonl"}], "validation": 0.2},
-        "method": method,
+        "method": dict(method),  # a copy: tests change it, and RECIPES is shared
         "training": {"lr": 1e-3, "batch_size": 4, "max_length": 64, "max_steps": 3, **training},
     }
 
@@ -103,6 +103,46 @@ def test_config_rules(tiny_model: Path, tmp_path: Path) -> None:
         pipeline.build({**config, "model": {**config["model"], "architecture": "bi_encoder"}})
     with pytest.raises(ValueError, match="Unknown reward"):
         pipeline.build({**raw("llm_grpo", tiny_model, tmp_path), "method": {"reward": {"name": "nope"}}})
+
+
+@pytest.mark.parametrize("section, key", [("training", "learning_rate"), ("method", "bta"), ("data", "validaton"),
+                                          ("validation", "mn"), ("model", "revison"), ("tracker", "enable")])
+def test_misspelt_keys_inside_sections_are_rejected(section: str, key: str, tiny_model: Path, tmp_path: Path) -> None:
+    config = raw("llm_dpo", tiny_model, tmp_path)
+    config[section] = {**config.get(section, {}), key: 1}
+    with pytest.raises(ValueError, match="Extra inputs are not permitted"):
+        pipeline.build(config)
+
+
+def test_changing_what_the_row_check_reads_checks_the_rows_again(tiny_model: Path, tmp_path: Path) -> None:
+    exact = pipeline.build(raw("llm_grpo", tiny_model, tmp_path))
+    config = raw("llm_grpo", tiny_model, tmp_path)
+    config["method"]["reward"] = {"name": "last_number"}
+    assert exact.fingerprint("data") != pipeline.build(config).fingerprint("data")
+    config = raw("llm_grpo", tiny_model, tmp_path)
+    config["method"]["group_size"] = 5  # not read by the row check: the data stage is shared
+    assert exact.fingerprint("data") == pipeline.build(config).fingerprint("data")
+
+
+def test_initial_checkpoint_counts_by_content_not_by_path(tiny_model: Path, tmp_path: Path) -> None:
+    first, second, link = tmp_path / "first", tmp_path / "second", tmp_path / "current"
+    for directory, text in ((first, "a"), (second, "b")):
+        directory.mkdir()
+        (directory / "config.json").write_text(text)
+    link.symlink_to(first)
+
+    def fingerprint() -> str:
+        config = raw("llm_sft", tiny_model, tmp_path)
+        config["model"]["init"] = str(link)
+        return pipeline.build(config).fingerprint("train")
+
+    before = fingerprint()
+    assert fingerprint() == before
+    link.unlink()
+    link.symlink_to(second)  # the same path now leads to another build, as after rebuilding an earlier experiment
+    repointed = fingerprint()
+    (second / "config.json").write_text("c")
+    assert len({before, repointed, fingerprint()}) == 3
 
 
 SHIPPED = sorted([*Path("configs/llm").glob("*.yaml"), *Path("configs/embedding").glob("*.yaml")])

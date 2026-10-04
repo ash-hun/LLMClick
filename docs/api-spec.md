@@ -48,7 +48,7 @@ YAML 설정 하나를 커스텀 모델 하나로 실행하는 서버. config 의
 | 상태 코드 | 언제 |
 |---|---|
 | 200 | 정상 |
-| 202 | Job 접수 (이미 있는 Job 이면 그 Job 을 그대로 반환) |
+| 202 | Job 접수 (대기 중이거나 실행 중인 같은 Job 이 있으면 그 Job 을 반환) |
 | 404 | config 파일 또는 job_id 없음 |
 | 422 | 요청 본문 또는 config 가 스키마에 안 맞음 (Pydantic 메시지가 `detail`) |
 | 500 | 서버 처리 실패 |
@@ -271,7 +271,7 @@ POST /api/jobs
 
 | 코드 | 의미 | 본문 |
 |---|---|---|
-| `202` | 접수 (또는 같은 Job 이미 존재) | JobResponse |
+| `202` | 접수 (대기 중이거나 실행 중인 같은 Job 이 있으면 그 Job) | JobResponse |
 | `404` | config 파일 없음 | `{"detail": "..."}` |
 | `422` | 본문·config 스키마 위반 | `{"detail": "..."}` |
 
@@ -285,9 +285,10 @@ $ curl -s -X POST http://localhost:8000/api/jobs -H 'content-type: application/j
 
 #### 특이사항
 
-**재호출** — 같은 결과, 상태 변화 없음. `job_id` 는 `실험 키 + 스테이지 계획 해시` 이므로 같은 config 를 다시 보내면
-새 작업을 만들지 않고 기존 Job(대기, 실행, 완료)을 돌려준다. 실패한 Job 은 재호출 시 다시 실행되며, 파이프라인은
-완료된 스테이지를 지문으로 건너뛰므로 실패 지점부터 이어진다. validate 스테이지가 기준 미달로 실패한 Job 은
+**재호출** — `job_id` 는 `실험 키 + 스테이지 계획 해시` 이므로 같은 config 를 다시 보내면 같은 `job_id` 를 받는다.
+대기 중이거나 실행 중인 Job 이 있으면 그 Job 을 그대로 돌려준다. 완료되었거나 실패한 Job 은 다시 실행된다.
+파이프라인이 유효한 스테이지를 지문으로 건너뛰므로, 바뀐 것이 없으면 즉시 같은 결과로 끝나고, 입력 파일이
+바뀌었거나 산출물이 지워졌으면 그 스테이지부터 다시 만든다(CLI 를 다시 실행한 것과 같다). validate 스테이지가 기준 미달로 실패한 Job 은
 재호출해도 같은 이유로 실패한다(config 의 `validation` 기준이나 학습 설정을 바꿔야 한다).
 
 동시성: Job 은 워커 하나가 접수 순서대로 실행한다(학습 두 개가 가속기를 나눠 쓰지 않도록). 스테이지 디렉토리는
@@ -511,7 +512,7 @@ $ curl -s http://localhost:8000/health
 
 공통 키는 `core/config/schema.py` 의 `BaseConfig`(recipe, name, seed, output_dir, device, stages), 모델링 공통 키는
 `modeling/config.py` 의 `ModelingConfig`(tracker, validation), 레시피 고유 섹션은 레시피의 스키마가 정본이다.
-스키마에 없는 최상위 키는 422.
+스키마에 없는 키는 최상위든 섹션 안이든 422 (`data.sources[*]` 와 `method.reward` 처럼 `name` + 임의 파라미터인 항목 제외).
 
 LLM, Embedding 계열 레시피는 `modeling/tuning/config.py` 의 `TuningConfig` 를 공유한다: `model`(architecture, name,
 revision, template, head, init), `data`(sources, validation), `training`(epochs, lr, weight_decay, batch_size, accumulation,

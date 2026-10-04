@@ -1,18 +1,18 @@
 """Shared by the decision methods: the Jev row format, the head's loss, calibrated metrics and temperature fitting."""
 
 import json
-import math
 import hashlib
 from dataclasses import dataclass
 from typing import Any
 
 import torch
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from modeling.llm.models.heads.base import DecisionHead, Layout
 from modeling.tuning.method import Row, chunks
 from modeling.llm.models.base import LLMBackbone
 from modeling.llm.methods.base import LLMMethod
+from core.config.schema import Section
 from core.progress import Progress
 
 ECE_BINS = 15
@@ -89,7 +89,7 @@ class DecisionMethod(LLMMethod):
     """Rows: {"state", "questions": {id: {"type", "instructions", "criteria", "label", "target"?}}} (Jev), or
     {"state", "question": {...}, "label", "target"?} (jeff Example)."""
 
-    class Config(BaseModel):
+    class Config(Section):
         head_lr: float = Field(default=1e-4, gt=0, description="Learning rate of the head, which starts untrained")
         calibration: float = Field(default=0.1, gt=0, lt=1, description="Share of training rows kept for fitting the temperature")
         max_think: int = Field(default=256, ge=1, description="Reasoning tokens per question before the model must decide")
@@ -197,4 +197,4 @@ class DecisionMethod(LLMMethod):
         if self.config.eval_think:
             scores, entries = self.collect(backbone, rows, batch_size, progress, True, "reasoning")
             metrics["think_accuracy"] = self.measured(backbone, scores, entries)["accuracy"]
-        return {key: (value if math.isfinite(value) else 0.0) for key, value in metrics.items()}
+        return metrics

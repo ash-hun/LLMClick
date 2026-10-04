@@ -24,7 +24,7 @@ released checkpoints do not load here.
 ```
 LLMClick/
 ├── main.py                       # FastAPI entry point
-├── config.py                     # process settings (environment/.env): HF_TOKEN, TEACHER_URL ...
+├── config.py                     # process settings (environment/.env): HF_TOKEN
 ├── configs/                      # one YAML = one custom model; a directory per family (llm/, embedding/)
 ├── samples/                      # tiny rows per recipe so the shipped configs run offline
 ├── core/                         # the framework, shared by every channel
@@ -35,7 +35,7 @@ LLMClick/
 │   ├── config/                   #   schema.py (BaseConfig), experiment.py (directories, manifest)
 │   ├── cli.py                    #   llmclick run|validate|recipes
 │   ├── api/                      #   routers: config_channel, job_channel, system_channel; store.py
-│   └── utils/                    #   files (hash, lock), proc (child processes), device
+│   └── utils/                    #   files (hash, lock), device
 ├── modeling/                     # Modeling channel: config -> trained, validated model
 │   ├── config.py                 #   ModelingConfig: tracker, validation bounds
 │   ├── stages.py                 #   TrainStage, ValidateStage (templates every recipe fills in)
@@ -91,8 +91,11 @@ pipeline:
 - **Progress.** The CLI shows two bars (stages, and steps inside the running stage); API jobs report the same
   state in `progress`.
 - **Validation.** In the Modeling channel `validate` follows `train` and cannot be left out. It measures the
-  trained model on data training never saw and checks `validation.min` / `validation.max`; a miss stops the
-  pipeline, and a later stage reads the checkpoint from `validate`, never from `train`.
+  trained model on data training never saw and checks `validation.min` / `validation.max`; a miss, or a metric
+  that is not a finite number, stops the pipeline. A later stage reads the checkpoint from `validate`, never from
+  `train`. Without bounds the metrics are only recorded, and a warning says so.
+- **Typos.** Every config section rejects keys it does not know, so `validaton:` or `training.learning_rate` is an
+  error instead of a silently ignored setting.
 
 ### Stages
 
@@ -123,7 +126,8 @@ The base weights stay frozen and only the adapter trains, so the resume snapshot
 layers are adapted comes from the architecture (`transformer`, `bi_encoder`: the attention projections; `hybrid`:
 those plus the linear-attention projections) unless `targets` names others. The adapter is folded into the base
 weights when the checkpoint is written, so a LoRA checkpoint and a fully trained one load the same way: a plain
-`save_pretrained` directory at `output/<experiment>/train/checkpoint/`.
+`save_pretrained` directory at `output/<experiment>/train/checkpoint/` (and, once validation passed, at
+`output/<experiment>/validate/checkpoint`).
 
 ### Decision recipes
 
@@ -151,17 +155,19 @@ store it with the head (`head.json` in the checkpoint); validation reports calib
 ```yaml
 model:
   head: pointer
-  init: output/decision-pointer-qwen3.5-0.8b-<hash>/train/checkpoint   # stage 2 starts where stage 1 ended
+  init: output/decision-pointer-qwen3.5-0.8b-<hash>/validate/checkpoint   # stage 2 starts where stage 1 ended
 ```
 
 `model.init` works in every `llm_*` and `embedding_*` recipe: it is "start from this checkpoint of an earlier
-experiment".
+experiment". Point it at `<experiment>/validate/checkpoint`: that link exists only when the earlier experiment
+passed validation, whereas `train/checkpoint` is there even when it failed. The checkpoint counts by content in
+the fingerprint, so rebuilding the earlier experiment rebuilds the one that continues it.
 
 ## 03. Quick start
 
 ```bash
 uv sync                                                    # Python 3.12
-cp environment/.env.sample environment/.env                # HF_TOKEN, TEACHER_URL ...
+cp environment/.env.sample environment/.env                # HF_TOKEN, only for gated models and datasets
 
 uv run llmclick recipes                                    # recipes, their stages and registry keys
 uv run llmclick validate configs/llm/sft.yaml              # experiment key and stage plan

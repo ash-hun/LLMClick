@@ -51,5 +51,13 @@ def test_job_runs_the_pipeline_and_resubmit_is_same_job(tiny_model: Path, tmp_pa
     assert job["status"] == "done", job["error"]
     assert job["result"]["stages"]["train"]["steps"] == 2 and job["result"]["stages"]["validate"]["passed"] is True
     assert job["progress"]["stages"] == {stage: "done" for stage in ["data", "train", "validate"]}
+    again = client.post("/api/jobs", json=body).json()  # a finished job runs again; everything comes from cache
+    assert again["job_id"] == job_id and again["status"] in {"pending", "running", "done"}
+    for _ in range(300):
+        job = client.get(f"/api/jobs/{job_id}").json()
+        if job["status"] in {"done", "failed"}:
+            break
+        time.sleep(0.1)
+    assert job["status"] == "done" and job["progress"]["stages"] == {stage: "cached" for stage in ["data", "train", "validate"]}
     assert client.get("/api/jobs/nope").status_code == 404
     assert any(j["job_id"] == job_id for j in client.get("/api/jobs").json())

@@ -5,7 +5,7 @@ from typing import Any, ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from core.config.schema import BaseConfig
+from core.config.schema import BaseConfig, Section
 from core.utils.files import sha256_file
 
 
@@ -25,14 +25,14 @@ def keyed_identity(entries: list[Keyed]) -> list[Any]:
              and Path(path).is_file() else None] for entry in entries]
 
 
-class TrackerConfig(BaseModel):
+class TrackerConfig(Section):
     enabled: bool = False
     project: str = "llmclick"
     entity: str | None = None
     tags: list[str] = Field(default_factory=list)
 
 
-class ValidationConfig(BaseModel):
+class ValidationConfig(Section):
     """Bounds the trained model must meet on held-out data; a metric outside them fails the pipeline."""
     min: dict[str, float] = Field(default_factory=dict, description="metric -> lowest accepted value")
     max: dict[str, float] = Field(default_factory=dict, description="metric -> highest accepted value")

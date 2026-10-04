@@ -4,9 +4,10 @@ import string
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import Field, model_validator
 
 from modeling.config import Keyed, ModelingConfig, ValidationConfig
+from core.config.schema import Section
 from core.registry import Registry
 
 if TYPE_CHECKING:
@@ -14,7 +15,7 @@ if TYPE_CHECKING:
     from modeling.tuning.method import TrainingMethod
 
 
-class BackboneConfig(BaseModel):
+class BackboneConfig(Section):
     architecture: str = Field(description="Key of the family's model catalog")
     name: str = Field(description="Hugging Face model ID, or a local directory")
     revision: str | None = Field(default=None, description="40-character commit; required unless `name` is a directory")
@@ -31,14 +32,13 @@ class BackboneConfig(BaseModel):
         return self
 
 
-class DataConfig(BaseModel):
+class DataConfig(Section):
     sources: list[Keyed] = Field(min_length=1)
     validation: float = Field(default=0.1, gt=0, lt=1, description="Share of rows held out for the validate stage")
 
 
-class AdapterConfig(BaseModel):
+class AdapterConfig(Section):
     """Train small low-rank matrices next to the frozen weights instead of the weights themselves."""
-    model_config = ConfigDict(extra="forbid")
     name: Literal["lora"] = "lora"
     r: int = Field(default=16, ge=1, description="Rank of the update matrices")
     alpha: int = Field(default=32, ge=1, description="Update scale; the effective factor is alpha / r")
@@ -46,7 +46,7 @@ class AdapterConfig(BaseModel):
     targets: list[str] | None = Field(default=None, description="Layer names to adapt; default: the architecture's")
 
 
-class TrainingConfig(BaseModel):
+class TrainingConfig(Section):
     epochs: int = Field(default=1, ge=1)
     lr: float = Field(default=1e-5, gt=0)
     weight_decay: float = Field(default=0.0, ge=0)

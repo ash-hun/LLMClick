@@ -1,4 +1,4 @@
-"""The LLM recipes: one pipeline, four training methods."""
+"""The LLM recipes: one pipeline, one registered recipe per training method."""
 
 from typing import ClassVar
 
