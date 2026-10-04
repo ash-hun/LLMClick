@@ -1,52 +1,125 @@
-"""data -> benchmarks -> mix on local fixtures, twice: the second run must change nothing."""
+"""The runner on a toy recipe: caching, sharing between experiments, stage selection, locking and progress."""
 
 import json
 from pathlib import Path
+from typing import Any, ClassVar
 
-from core import pipeline
-from core.config.schema import PipelineConfig
-from core.modules.tuning import trainer
-from core.utils.files import sha256_file
+import pytest
 
-STAGES = ["data", "benchmarks", "mix"]
+from core.config.schema import BaseConfig
+from core.pipeline import Pipeline
+from core.progress import StateProgress
+from core.stage import Outputs, Stage
 
-
-def build(raw: dict) -> PipelineConfig:
-    return PipelineConfig(**raw["pipeline"], **{k: v for k, v in raw.items() if k != "pipeline"})
-
-
-def snapshot(root: Path) -> dict[str, str]:
-    return {str(p.relative_to(root)): sha256_file(p) for p in sorted(root.rglob("*"))
-            if p.is_file() and p.name != "pipeline.log"}
+RUNS: list[str] = []
 
 
-def test_local_stages_run_and_are_idempotent(local_config: dict) -> None:
-    config = build(local_config)
-    first = pipeline.run(config, STAGES)
-    root = Path(first["directory"])
-    assert first["stages"]["data"]["rows"] == {"train": 50, "dev": 6, "temperature": 4}
-    assert (root / "data" / "mix" / "public.jsonl").exists()
-    assert first["stages"]["mix"]["leaks"]["public"] == 0
-    before = snapshot(root)
-    second = pipeline.run(config, STAGES)
-    assert snapshot(root) == before
-    assert second["stages"] == first["stages"]
-    manifest = json.loads((root / "manifest.json").read_text())
-    assert set(manifest["stages"]) == set(STAGES) | {"synthetic"}  # mix depends on synthetic, which records "disabled" as {}
+class ToyConfig(BaseConfig):
+    recipe: str = "toy"
+    text: str = "a"
+    repeat: int = 2
 
 
-def test_changed_config_is_a_new_experiment(local_config: dict) -> None:
-    config = build(local_config)
-    pipeline.run(config, STAGES)
-    changed = build({**local_config, "data": {**local_config["data"], "mix": {**local_config["data"]["mix"], "escape": False}}})
-    result = pipeline.run(changed, STAGES)
-    assert Path(result["directory"]) != Path(pipeline.Experiment(config).root)
+class Write(Stage[ToyConfig]):
+    name: ClassVar[str] = "write"
+    sections: ClassVar[tuple[str, ...]] = ("text",)
+
+    def run(self, workdir: Path, inputs: dict[str, Outputs]) -> Outputs:
+        RUNS.append(self.name)
+        (workdir / "text.txt").write_text(self.config.text)
+        return {"file": str(workdir / "text.txt")}
 
 
-def test_train_argv_mirrors_training_config(local_config: dict) -> None:
-    config = build(local_config)
-    assert config.training and config.model
-    args = trainer.argv(config.training, config.model, Path("t"), Path("d"), Path("c"), Path("run"), Path("out"), 7)
-    joined = " ".join(args)
-    assert "--base-model Qwen/Qwen3.5-0.8B" in joined and "--eval-every 10" in joined and "--lr 5e-06" in joined
-    assert "--patience" not in joined
+class Repeat(Stage[ToyConfig]):
+    name: ClassVar[str] = "repeat"
+    requires: ClassVar[tuple[str, ...]] = ("write",)
+    sections: ClassVar[tuple[str, ...]] = ("repeat",)
+
+    def run(self, workdir: Path, inputs: dict[str, Outputs]) -> Outputs:
+        RUNS.append(self.name)
+        self.progress.update(1, 1, "repeating")
+        return {"value": Path(inputs["write"]["file"]).read_text() * self.config.repeat}
+
+
+class Toy(Pipeline[ToyConfig]):
+    kind: ClassVar[str] = "toy"
+    config_class = ToyConfig
+    stage_classes = (Write, Repeat)
+
+
+@pytest.fixture(autouse=True)
+def clear() -> None:
+    RUNS.clear()
+
+
+def toy(tmp_path: Path, **keys: Any) -> Toy:
+    return Toy(ToyConfig(name="t", output_dir=str(tmp_path), **keys))
+
+
+def test_second_run_builds_nothing_and_returns_the_same(tmp_path: Path) -> None:
+    first = toy(tmp_path).run()
+    assert first["stages"]["repeat"] == {"value": "aa"} and RUNS == ["write", "repeat"]
+    second = toy(tmp_path).run()
+    assert json.dumps(second) == json.dumps(first) and RUNS == ["write", "repeat"]  # same bytes, not only equal
+    assert (Path(first["directory"]) / "write" / "text.txt").read_text() == "a"  # experiment links to the stage directory
+
+
+def test_experiments_share_a_stage_whose_inputs_match(tmp_path: Path) -> None:
+    a, b = toy(tmp_path), toy(tmp_path, repeat=3)
+    a.run()
+    assert b.run()["stages"]["repeat"] == {"value": "aaa"}
+    assert RUNS == ["write", "repeat", "repeat"]
+    assert a.experiment.key != b.experiment.key and a.fingerprint("write") == b.fingerprint("write")
+
+
+def test_stages_select_what_runs_but_not_which_experiment(tmp_path: Path) -> None:
+    only_write = toy(tmp_path, stages=["write"])
+    assert only_write.plan() == ["write"] and only_write.experiment.key == toy(tmp_path).experiment.key
+    only_write.run()
+    assert toy(tmp_path, stages=["repeat"]).plan() == ["write", "repeat"]  # what a stage reads comes along
+    toy(tmp_path, stages=["repeat"]).run()
+    assert RUNS == ["write", "repeat"]
+    with pytest.raises(ValueError, match="Unknown stages"):
+        toy(tmp_path, stages=["nope"])
+
+
+def test_missing_output_file_rebuilds_the_stage(tmp_path: Path) -> None:
+    first = toy(tmp_path).run()
+    Path(first["stages"]["write"]["file"]).unlink()
+    toy(tmp_path).run()
+    assert RUNS == ["write", "repeat", "write"]
+
+
+def test_failed_stage_is_not_recorded_and_reruns(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    progress = StateProgress()
+    monkeypatch.setattr(Repeat, "run", lambda self, workdir, inputs: 1 / 0)
+    with pytest.raises(ZeroDivisionError):
+        Toy(ToyConfig(name="t", output_dir=str(tmp_path)), progress).run()
+    assert progress.snapshot()["stages"] == {"write": "done", "repeat": "failed"}
+    monkeypatch.undo()
+    assert toy(tmp_path).run()["stages"]["repeat"] == {"value": "aa"} and RUNS == ["write", "repeat"]
+
+
+def test_progress_reports_stage_states(tmp_path: Path) -> None:
+    progress = StateProgress()
+    Toy(ToyConfig(name="t", output_dir=str(tmp_path)), progress).run()
+    state = progress.snapshot()
+    assert state["stages"] == {"write": "done", "repeat": "done"} and state["note"] == "repeating"
+    again = StateProgress()
+    Toy(ToyConfig(name="t", output_dir=str(tmp_path)), again).run()
+    assert again.snapshot()["stages"] == {"write": "cached", "repeat": "cached"}
+
+
+def test_recipe_with_a_backward_dependency_is_rejected() -> None:
+    class Broken(Pipeline[ToyConfig]):
+        kind: ClassVar[str] = "broken"
+        config_class = ToyConfig
+        stage_classes = (Repeat, Write)
+
+    with pytest.raises(TypeError, match="requires later stages"):
+        Broken.check()
+
+
+def test_unknown_config_keys_are_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="Extra inputs"):
+        ToyConfig(name="t", output_dir=str(tmp_path), txet="typo")

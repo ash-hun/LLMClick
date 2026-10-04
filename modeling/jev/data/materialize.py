@@ -7,7 +7,7 @@ from typing import Any
 from datasets import load_dataset
 
 from config import get_settings
-from core.registry import CONVERTERS
+from modeling.jev.registry import CONVERTERS
 from jeff.data import validate, write_rows
 from jeff.types import Example
 

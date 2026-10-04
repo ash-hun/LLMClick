@@ -14,6 +14,7 @@ RUN uv sync --frozen --no-dev --no-install-project
 
 COPY main.py config.py ./
 COPY core/ ./core/
+COPY modeling/ ./modeling/
 COPY jeff/ ./jeff/
 COPY configs/ ./configs/
 RUN uv sync --frozen --no-dev

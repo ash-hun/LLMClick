@@ -33,9 +33,9 @@ def fixture_dir(tmp_path: Path) -> Path:
 @pytest.fixture
 def local_config(fixture_dir: Path) -> dict:
     return {
-        "pipeline": {"name": "local-test", "seed": 7, "output_dir": str(fixture_dir / "output")},
+        "pipeline": {"recipe": "jev", "name": "local-test", "seed": 7, "output_dir": str(fixture_dir / "output")},
         "data": {"builders": [{"name": "local_jsonl", "path": str(fixture_dir / "train.jsonl")}],
-                 "folds": {"dev": 6, "temperature": 4},
+                 "folds": {"dev": 6, "temperature": 4, "validation": 5},
                  "mix": {"size": 100, "sweep_size": 10, "panel_layout": False, "escape": True, "adversarial": True}},
         "model": {"backbone": "qwen3_5", "name": "Qwen/Qwen3.5-0.8B", "revision": "2fc06364715b967f1860aea9cf38778875588b17"},
         "training": {"epochs": 1, "lr": 5e-6, "eval_every": 10},

@@ -1,7 +1,10 @@
 """Content hashing and JSON helpers shared by stages and manifests."""
 
+import fcntl
 import hashlib
 import json
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -24,3 +27,12 @@ def write_json(path: Path, value: Any) -> None:
 
 def read_json(path: Path) -> Any:
     return json.loads(path.read_text())
+
+
+@contextmanager
+def locked(path: Path) -> Iterator[None]:
+    """Hold an exclusive lock on `path`; a second thread or process waits here until the first is done."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w") as stream:
+        fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+        yield

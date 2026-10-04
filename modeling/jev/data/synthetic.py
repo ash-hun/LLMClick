@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from config import get_settings
-from core.registry import TEACHERS
+from modeling.jev.registry import TEACHERS
 from core.utils.proc import run_module
 from jeff.families import BY_NAME, FOCUS, FOCUS_V2, FOCUS_V3, FOCUS_V4, FOCUS_V5, BBH_CODE
 from jeff.generate import GROUNDED

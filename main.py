@@ -11,7 +11,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname
 from core.api.routers import config_channel_router, job_channel_router, system_channel_router  # noqa: E402
 
 app = FastAPI(title="LLMClick Pipeline", version="0.1.0",
-              description="Config-driven training and evaluation of Jev-style decision models (jeff recipe).")
+              description="Config-driven custom model building: one YAML per model, one pipeline per recipe.")
 
 
 @app.get("/health", tags=["Health"])

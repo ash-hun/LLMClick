@@ -1,6 +1,7 @@
 # jeff's public-only recipe on Apple silicon (MPS). Same data and hyperparameters as jeff_public_only.yaml;
 # micro-batches are smaller for unified memory, the effective batch of 256 is unchanged. Expect many hours.
 pipeline:
+  recipe: jev
   name: jeff-0.8b-public-mac
   seed: 20260920
   output_dir: ./output
@@ -11,7 +12,7 @@ data:
     - name: jeff_extra
     - name: jeff_probability
       count: 3000
-  folds: {dev: 1500, temperature: 1000}
+  folds: {dev: 1500, temperature: 1000, validation: 1000}
   mix: {size: 50000, sweep_size: 10000, panel_layout: true, escape: true, adversarial: true}
 
 model:

@@ -1,68 +1,95 @@
-"""The experiment directory: named by config hash so the same config always lands in the same place, with a stage manifest."""
+"""Where results live: stage directories named by fingerprint and shared, experiment directories that point at them."""
 
+import os
 import logging
 from pathlib import Path
 from typing import Any
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 import yaml
 
-from core.config.schema import PipelineConfig
 from core.utils.files import read_json, sha256_json, write_json
+from core.config.schema import BaseConfig
 
-logger = logging.getLogger(__name__)
 HASH_LENGTH = 8
+STAGE_HASH_LENGTH = 12
+STORE = "_stages"
+DONE = "stage.json"
+LOG_FORMAT = "%(asctime)s %(name)s %(levelname)s %(message)s"
 
 
-def load_config(path: str | Path) -> PipelineConfig:
-    raw: dict[str, Any] = yaml.safe_load(Path(path).read_text()) or {}
-    pipeline = raw.pop("pipeline", {})
-    return PipelineConfig(**{**pipeline, **raw})
-
-
-def config_hash(config: PipelineConfig) -> str:
-    return sha256_json(config.model_dump(mode="json"))[:HASH_LENGTH]
+def config_hash(config: BaseConfig) -> str:
+    return sha256_json(config.identity())[:HASH_LENGTH]
 
 
 class Experiment:
-    def __init__(self, config: PipelineConfig) -> None:
+    def __init__(self, config: BaseConfig) -> None:
         self.config = config
         self.key = f"{config.name}-{config_hash(config)}"
         self.root = Path(config.output_dir) / self.key
-        self.data = self.root / "data"
-        self.runs = self.root / "runs"
-        self.checkpoints = self.root / "checkpoints"
-        self.eval = self.root / "eval"
+        self.store = Path(config.output_dir) / STORE
         self.manifest_path = self.root / "manifest.json"
 
     def ensure(self) -> Path:
         self.root.mkdir(parents=True, exist_ok=True)
+        dumped = yaml.safe_dump(self.config.model_dump(mode="json"), sort_keys=True, allow_unicode=True)
         config_file = self.root / "config.yaml"
-        if not config_file.exists():
-            config_file.write_text(yaml.safe_dump(self.config.model_dump(mode="json"), sort_keys=True, allow_unicode=True))
+        if not config_file.exists() or config_file.read_text() != dumped:
+            config_file.write_text(dumped)
         if not self.manifest_path.exists():
-            write_json(self.manifest_path, {"key": self.key, "stages": {}})
-        handler_exists = any(getattr(h, "baseFilename", None) == str(self.root / "pipeline.log")
-                             for h in logging.getLogger().handlers)
-        if not handler_exists:
-            handler = logging.FileHandler(self.root / "pipeline.log")
-            handler.setFormatter(logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s"))
-            logging.getLogger().addHandler(handler)
+            write_json(self.manifest_path, {"key": self.key, "recipe": self.config.recipe, "stages": {}})
         return self.root
 
     def manifest(self) -> dict[str, Any]:
-        return read_json(self.manifest_path) if self.manifest_path.exists() else {"key": self.key, "stages": {}}
+        manifest: dict[str, Any] = read_json(self.manifest_path)
+        return manifest
 
-    def stage_outputs(self, stage: str, fingerprint: str) -> dict[str, Any] | None:
-        """Outputs recorded for this stage if it finished with the same inputs and its files still exist."""
-        entry = self.manifest()["stages"].get(stage)
-        if not entry or entry["fingerprint"] != fingerprint:
+    def stage_dir(self, stage: str, fingerprint: str) -> Path:
+        """The same stage with the same inputs lands in the same directory, whichever experiment asks."""
+        return self.store / f"{stage}-{fingerprint[:STAGE_HASH_LENGTH]}"
+
+    def stage_outputs(self, workdir: Path, fingerprint: str) -> dict[str, Any] | None:
+        """Outputs recorded in this stage directory if it finished with the same inputs and its files still exist."""
+        marker = workdir / DONE
+        if not marker.exists():
+            return None
+        entry = read_json(marker)
+        if entry["fingerprint"] != fingerprint:
             return None
         outputs: dict[str, Any] = entry["outputs"]
-        if all(Path(value).exists() for value in outputs.values() if isinstance(value, str) and value.startswith(str(self.root))):
-            return outputs
-        return None
+        inside = [value for value in outputs.values() if isinstance(value, str) and value.startswith(str(workdir))]
+        return outputs if all(Path(value).exists() for value in inside) else None
 
-    def mark_done(self, stage: str, fingerprint: str, outputs: dict[str, Any]) -> None:
+    def mark_done(self, workdir: Path, fingerprint: str, outputs: dict[str, Any]) -> dict[str, Any]:
+        """Record the stage as finished and return its outputs as stored, so a first run and a cached run agree."""
+        write_json(workdir / DONE, {"fingerprint": fingerprint, "outputs": outputs})
+        stored: dict[str, Any] = read_json(workdir / DONE)["outputs"]
+        return stored
+
+    def link(self, stage: str, fingerprint: str, workdir: Path, outputs: dict[str, Any]) -> None:
+        """Point this experiment at a finished stage: a manifest entry and `<experiment>/<stage>` -> stage directory."""
         manifest = self.manifest()
-        manifest["stages"][stage] = {"fingerprint": fingerprint, "outputs": outputs}
-        write_json(self.manifest_path, manifest)
+        entry = {"fingerprint": fingerprint, "directory": str(workdir), "outputs": outputs}
+        if manifest["stages"].get(stage) != entry:
+            manifest["stages"][stage] = entry
+            write_json(self.manifest_path, manifest)
+        link = self.root / stage
+        target = os.path.relpath(workdir, self.root)
+        if link.is_symlink() and os.readlink(link) == target:
+            return
+        if link.is_symlink():
+            link.unlink()
+        link.symlink_to(target)
+
+    @contextmanager
+    def logging(self) -> Iterator[None]:
+        """Copy log records to `<experiment>/pipeline.log` for the duration of one run only."""
+        handler = logging.FileHandler(self.root / "pipeline.log")
+        handler.setFormatter(logging.Formatter(LOG_FORMAT))
+        logging.getLogger().addHandler(handler)
+        try:
+            yield
+        finally:
+            logging.getLogger().removeHandler(handler)
+            handler.close()

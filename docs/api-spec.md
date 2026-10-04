@@ -2,7 +2,7 @@
 
 | 항목 | 값 |
 |---|---|
-| Last Updated | 2026-09-29 |
+| Last Updated | 2026-10-04 |
 | Base URL | `http://localhost:8000` |
 | 데이터 포맷 | JSON (UTF-8) |
 | 인증 | 없음 |
@@ -22,8 +22,7 @@
    - [GET /api/jobs](#get-apijobs)
    - [POST /api/jobs](#post-apijobs)
    - [GET /api/jobs/{job_id}](#get-apijobsjob_id)
-   - [GET /api/system/registries](#get-apisystemregistries)
-   - [GET /api/system/stages](#get-apisystemstages)
+   - [GET /api/system/recipes](#get-apisystemrecipes)
    - [GET /health](#get-health)
 4. [데이터 모델](#데이터-모델)
 
@@ -31,8 +30,10 @@
 
 ## 개요
 
-YAML 설정 하나를 실험 하나로 실행하는 서버. 정본은 `output/<name>-<hash>/manifest.json` 과 그 디렉토리의 파일이며,
-API 는 그 파이프라인(`core/pipeline.py`)을 백그라운드 스레드로 띄우고 상태를 돌려준다. 라우터: `core/api/routers/`.
+YAML 설정 하나를 커스텀 모델 하나로 실행하는 서버. config 의 `pipeline.recipe` 가 레시피(서브모델)를 고르고,
+`pipeline.stages` 가 수행 단계를 고른다. 정본은 `output/_stages/<stage>-<fingerprint>/` 의 스테이지 산출물과
+`output/<name>-<hash>/manifest.json` 이며, API 는 파이프라인(`core/pipeline.py`)을 백그라운드 워커 하나로 실행하고
+상태와 진행률을 돌려준다. 라우터: `core/api/routers/`.
 
 ---
 
@@ -108,7 +109,7 @@ POST /api/config/load?config_path=configs/jeff_public_only.yaml
 
 ```bash
 $ curl -s -X POST 'http://localhost:8000/api/config/load?config_path=configs/jeff_public_only.yaml'
-{"valid":true,"experiment":"jeff-0.8b-public-<hash>","directory":"output/jeff-0.8b-public-<hash>","config":{...}}
+{"valid":true,"recipe":"jev","experiment":"jeff-0.8b-public-<hash>","directory":"output/jeff-0.8b-public-<hash>","stages":["data","benchmarks","synthetic","mix","train","validate","evaluate"],"config":{...}}
 $ curl -s -X POST 'http://localhost:8000/api/config/load?config_path=configs/none.yaml'
 {"detail":"No such config: configs/none.yaml"}
 ```
@@ -141,7 +142,7 @@ POST /api/config/validate
 
 #### Request Body
 
-[PipelineConfig](#pipelineconfig) 와 같은 구조의 객체. `pipeline` 섹션은 최상위로 병합된다.
+[Config](#config) 와 같은 구조의 객체. `pipeline` 섹션은 최상위로 병합된다.
 
 #### Query / Path 파라미터
 
@@ -164,8 +165,10 @@ POST /api/config/validate
 
 ```bash
 $ curl -s -X POST http://localhost:8000/api/config/validate -H 'content-type: application/json' \
-  -d '{"pipeline":{"name":"x"},"model":{"backbone":"nope","name":"m","revision":"0000000000000000000000000000000000000000"}}'
-{"detail":"1 validation error for PipelineConfig\n  Value error, Unknown backbone 'nope'; registered: ['gemma4', 'modernbert', 'qwen3_5'] ..."}
+  -d '{"pipeline":{"recipe":"jev","name":"x"},"model":{"backbone":"nope","name":"m","revision":"0000000000000000000000000000000000000000"}}'
+{"detail":"1 validation error for JevConfig\n  Value error, Unknown backbone 'nope'; registered: ['gemma4', 'modernbert', 'qwen3_5'] ..."}
+$ curl -s -X POST http://localhost:8000/api/config/validate -H 'content-type: application/json' -d '{"pipeline":{"name":"x"}}'
+{"detail":"pipeline.recipe is None; registered: ['jev']"}
 ```
 
 #### 특이사항
@@ -229,7 +232,7 @@ $ curl -s http://localhost:8000/api/jobs
 
 ### POST /api/jobs
 
-config 로 파이프라인을 백그라운드에서 실행한다.
+config 로 파이프라인을 백그라운드에서 실행한다. 수행 단계는 config 의 `pipeline.stages` 로 정한다(없으면 전부).
 
 #### Endpoint
 
@@ -253,7 +256,6 @@ POST /api/jobs
 |---|---|---|---|---|
 | `config_path` | string | `config` 와 택일 | null | 서버 안 YAML 경로 |
 | `config` | object | `config_path` 와 택일 | null | 인라인 config (YAML 과 같은 구조) |
-| `stages` | string[] | 아니오 | null (전부) | `data, benchmarks, synthetic, mix, train, evaluate` 의 부분집합 |
 
 #### Query / Path 파라미터
 
@@ -277,17 +279,19 @@ POST /api/jobs
 
 ```bash
 $ curl -s -X POST http://localhost:8000/api/jobs -H 'content-type: application/json' \
-  -d '{"config_path":"configs/jeff_public_only.yaml","stages":["data","benchmarks","mix"]}'
-{"job_id":"jeff-0.8b-public-<hash>-<stages>","status":"pending","experiment":"jeff-0.8b-public-<hash>","directory":"output/jeff-0.8b-public-<hash>","stages":["data","benchmarks","mix"],"result":null,"error":null}
+  -d '{"config_path":"configs/jeff_public_only.yaml"}'
+{"job_id":"jeff-0.8b-public-<hash>-<stages>","status":"pending","recipe":"jev","experiment":"jeff-0.8b-public-<hash>","directory":"output/jeff-0.8b-public-<hash>","stages":["data","benchmarks","synthetic","mix","train","validate","evaluate"],"progress":{"experiment":null,"stages":{},"current":null,"done":0,"total":null,"note":""},"result":null,"error":null}
 ```
 
 #### 특이사항
 
-**재호출** — 같은 결과, 상태 변화 없음. `job_id` 는 `실험 키 + stages 해시` 이므로 같은 config·stages 를 다시 보내면
-새 스레드를 만들지 않고 기존 Job(대기·실행·완료)을 돌려준다. 실패한 Job 은 재호출 시 다시 실행되며, 파이프라인은
-완료된 스테이지를 manifest 로 건너뛰므로 실패 지점부터 이어진다.
+**재호출** — 같은 결과, 상태 변화 없음. `job_id` 는 `실험 키 + 스테이지 계획 해시` 이므로 같은 config 를 다시 보내면
+새 작업을 만들지 않고 기존 Job(대기, 실행, 완료)을 돌려준다. 실패한 Job 은 재호출 시 다시 실행되며, 파이프라인은
+완료된 스테이지를 지문으로 건너뛰므로 실패 지점부터 이어진다. validate 스테이지가 기준 미달로 실패한 Job 은
+재호출해도 같은 이유로 실패한다(config 의 `validation` 기준이나 학습 설정을 바꿔야 한다).
 
-동시성: 같은 실험 디렉토리를 두 프로세스가 동시에 쓰는 것은 막지 않는다. 서버 하나에 워커 하나로 운용한다.
+동시성: Job 은 워커 하나가 접수 순서대로 실행한다(학습 두 개가 가속기를 나눠 쓰지 않도록). 스테이지 디렉토리는
+파일 잠금으로 보호되므로 CLI 와 서버가 같은 스테이지를 동시에 요청하면 한쪽이 기다렸다가 결과를 재사용한다.
 
 ---
 
@@ -345,14 +349,14 @@ $ curl -s http://localhost:8000/api/jobs/nope
 
 ---
 
-### GET /api/system/registries
+### GET /api/system/recipes
 
-YAML 의 `name:` 키로 쓸 수 있는 값 목록.
+이 서버가 만들 수 있는 레시피와, 레시피별 스테이지 순서 및 YAML 의 `name:` 키로 쓸 수 있는 값 목록.
 
 #### Endpoint
 
 ```
-GET /api/system/registries
+GET /api/system/recipes
 ```
 
 #### 호출 규약
@@ -377,8 +381,12 @@ GET /api/system/registries
 
 #### Response Body
 
+레시피 키(`pipeline.recipe` 값)마다 객체 하나. 모든 레시피에 `stages` 가 있고, 나머지 필드는 레시피가 정한다.
+아래는 `jev` 의 필드.
+
 | 필드 | 타입 | 널 허용 | 설명 |
 |---|---|---|---|
+| `stages` | string[] | 아니오 | 스테이지 이름, 실행 순서 |
 | `builder` | string[] | 아니오 | 데이터 빌더 키 |
 | `converter` | string[] | 아니오 | 원시 행 → Example 변환기 키 |
 | `backbone` | string[] | 아니오 | 백본 패밀리 키 |
@@ -394,61 +402,8 @@ GET /api/system/registries
 #### 호출 예시
 
 ```bash
-$ curl -s http://localhost:8000/api/system/registries
-{"builder":["huggingface","jeff_extra","jeff_probability","local_jsonl"],"converter":["boolean","classification","example"],"backbone":["gemma4","modernbert","qwen3_5"],"teacher":["openai_compatible"],"benchmark":["huggingface","jeff_jevbench_hard","jeff_panel","local_jsonl"]}
-```
-
-#### 특이사항
-
-**재호출** — 상태를 바꾸지 않음.
-
----
-
-### GET /api/system/stages
-
-파이프라인 스테이지 이름을 실행 순서대로.
-
-#### Endpoint
-
-```
-GET /api/system/stages
-```
-
-#### 호출 규약
-
-| 항목 | 값 |
-|---|---|
-| Method | `GET` |
-| 인증 | 없음 |
-| 요청 Content-Type | 없음 (본문 없음) |
-| 응답 Content-Type | `application/json` |
-| 필수 헤더 | 없음 |
-
-#### Request Body
-
-없음.
-
-#### Query / Path 파라미터
-
-| 파라미터 | 위치 | 타입 | 필수 | 기본값 | 설명 |
-|---|---|---|---|---|---|
-| — | — | — | — | — | 없음 |
-
-#### Response Body
-
-string 배열.
-
-#### 응답 코드
-
-| 코드 | 의미 | 본문 |
-|---|---|---|
-| `200` | 정상 | `["data","benchmarks","synthetic","mix","train","evaluate"]` |
-
-#### 호출 예시
-
-```bash
-$ curl -s http://localhost:8000/api/system/stages
-["data","benchmarks","synthetic","mix","train","evaluate"]
+$ curl -s http://localhost:8000/api/system/recipes
+{"jev":{"stages":["data","benchmarks","synthetic","mix","train","validate","evaluate"],"builder":["huggingface","jeff_extra","jeff_probability","local_jsonl"],"converter":["boolean","classification","example"],"backbone":["gemma4","modernbert","qwen3_5"],"teacher":["openai_compatible"],"benchmark":["huggingface","jeff_jevbench_hard","jeff_panel","jeff_probability","local_jsonl"]}}
 ```
 
 #### 특이사항
@@ -519,8 +474,10 @@ $ curl -s http://localhost:8000/health
 | 필드 | 타입 | 널 허용 | 설명 |
 |---|---|---|---|
 | `valid` | bool | 아니오 | 항상 true (실패는 422) |
-| `experiment` | string | 아니오 | `<name>-<config sha256[:8]>` |
+| `recipe` | string | 아니오 | config 의 `pipeline.recipe` |
+| `experiment` | string | 아니오 | `<name>-<config sha256[:8]>`. `stages`, `output_dir`, `tracker` 는 해시에 넣지 않는다 |
 | `directory` | string | 아니오 | `output_dir/experiment` |
+| `stages` | string[] | 아니오 | 실행하거나 재사용할 스테이지, 순서대로. 요청한 스테이지가 읽는 상위 스테이지와 `train` 에 따라붙는 `validate` 포함 |
 | `config` | object | 아니오 | 기본값이 채워진 정규화 config |
 
 ### JobResponse
@@ -529,14 +486,30 @@ $ curl -s http://localhost:8000/health
 |---|---|---|---|
 | `job_id` | string | 아니오 | `<experiment>-<stages sha256[:6]>` |
 | `status` | string | 아니오 | `pending` / `running` / `done` / `failed` |
+| `recipe` | string | 아니오 | 레시피 키 |
 | `experiment` | string | 아니오 | 실험 키 |
 | `directory` | string | 아니오 | 실험 디렉토리 |
-| `stages` | string[] | 아니오 | 요청된 스테이지 |
+| `stages` | string[] | 아니오 | 스테이지 계획 (ConfigSummary 의 `stages` 와 같음) |
+| `progress` | object | 아니오 | [Progress](#progress) |
 | `result` | object | 예 | `done` 일 때 `{"experiment","directory","stages":{stage: outputs}}` |
 | `error` | string | 예 | `failed` 일 때 메시지 + traceback |
 
-### PipelineConfig
+### Progress
 
-`core/config/schema.py` 가 정본. 섹션: `pipeline`(name, seed, output_dir, device, checkpoint), `data`(builders,
-folds, synthetic, mix), `model`(backbone, name, revision, prompt_layout), `training`(jeff.train 인자와 동명),
-`tracker`, `evaluation`(benchmarks, batch_size). `builders[*]`·`benchmarks[*]`·`teacher` 는 `name` + 임의 파라미터.
+| 필드 | 타입 | 널 허용 | 설명 |
+|---|---|---|---|
+| `experiment` | string | 예 | 실행이 시작되기 전에는 null |
+| `stages` | object | 아니오 | 스테이지 이름 → `pending` / `running` / `done` / `cached` / `failed` |
+| `current` | string | 예 | 실행 중인 스테이지. 대기 중이거나 끝났으면 null |
+| `done` | int | 아니오 | 현재 스테이지 안에서 끝난 단위 (학습이면 업데이트 스텝) |
+| `total` | int | 예 | 현재 스테이지의 전체 단위. 스테이지가 알리지 않으면 null |
+| `note` | string | 아니오 | 현재 스테이지의 부가 정보 (예: `loss 0.4312`, 처리 중인 벤치마크 이름) |
+
+### Config
+
+공통 키는 `core/config/schema.py` 의 `BaseConfig`(recipe, name, seed, output_dir, device, stages), 모델링 공통 키는
+`modeling/config.py` 의 `ModelingConfig`(tracker, validation), 레시피 고유 섹션은 레시피의 스키마가 정본이다.
+`jev` 는 `modeling/jev/config.py`: `checkpoint`, `data`(builders, folds, synthetic, mix), `model`(backbone, name,
+revision, prompt_layout), `training`(jeff.train 인자와 동명), `validation`(min, max, batch_size),
+`evaluation`(benchmarks, batch_size). `builders[*]`, `benchmarks[*]`, `teacher` 는 `name` + 임의 파라미터.
+스키마에 없는 최상위 키는 422.

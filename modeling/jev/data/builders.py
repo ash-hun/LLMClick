@@ -3,8 +3,8 @@
 from pathlib import Path
 from typing import Any
 
-from core.modules.data.materialize import from_huggingface, from_local
-from core.registry import BUILDERS
+from modeling.jev.data.materialize import from_huggingface, from_local
+from modeling.jev.registry import BUILDERS
 from core.utils.proc import run_module
 
 
