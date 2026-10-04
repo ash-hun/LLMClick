@@ -4,9 +4,12 @@ from typing import ClassVar
 
 from pydantic import Field, model_validator
 
+from modeling.llm.methods.decision.cispo import DecisionCISPO
 from modeling.llm.methods.instruction import InstructionTuning
+from modeling.llm.methods.decision.sft import DecisionSFT
 from modeling.llm.methods.grpo import GRPO, REWARDS
 from modeling.tuning.config import TuningConfig
+from modeling.llm.models.heads import HEADS
 from modeling.llm.models import LLM_BACKBONES
 from modeling.llm.methods.dpo import DPO
 from modeling.llm.methods.sft import SFT
@@ -40,3 +43,18 @@ class GRPOConfig(LLMConfig):
         if self.method.reward.name not in REWARDS:
             raise ValueError(f"Unknown reward {self.method.reward.name!r}; registered: {REWARDS.names()}")
         return self
+
+
+class DecisionConfig(LLMConfig):
+    """Decision recipes read the options through a head, so `model.head` is required."""
+    heads: ClassVar = HEADS
+
+
+class DecisionSFTConfig(DecisionConfig):
+    method_class: ClassVar = DecisionSFT
+    method: DecisionSFT.Config = Field(default_factory=DecisionSFT.Config)
+
+
+class DecisionCISPOConfig(DecisionConfig):
+    method_class: ClassVar = DecisionCISPO
+    method: DecisionCISPO.Config = Field(default_factory=DecisionCISPO.Config)

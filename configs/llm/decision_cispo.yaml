@@ -1,0 +1,43 @@
+# Reasoning decision model, stage 2 (Jeeves CISPO): the model reasons, then decides. Reasoning that leads the head
+# to the right option more surely than the other chains sampled for the same question is reinforced.
+# Run configs/llm/decision_pointer.yaml first: `model.init` points at the checkpoint it writes. That path contains
+# the stage-1 experiment key, which `llmclick validate configs/llm/decision_pointer.yaml` prints.
+pipeline:
+  recipe: llm_decision_cispo
+  name: decision-cispo-qwen3.5-0.8b
+  seed: 20260920
+  output_dir: ./output
+
+model:
+  architecture: hybrid
+  name: Qwen/Qwen3.5-0.8B
+  revision: 2fc06364715b967f1860aea9cf38778875588b17
+  head: pointer
+  init: output/decision-pointer-qwen3.5-0.8b-fedcb0fa/validate/checkpoint   # exists only if stage 1 passed validation
+
+data:
+  sources:
+    - name: local_jsonl
+      path: samples/llm_decision.jsonl
+      limit: 48
+  validation: 0.15
+
+method:
+  group_size: 4                     # reasoning chains sampled per question
+  max_think: 64
+  temperature: 1.0
+  rollout_weight: 0.5               # head loss after reasoning
+  anchor_weight: 0.5                # head loss without reasoning, so the one-pass answer keeps working
+  length_hinge: 48                  # chains longer than this lose up to length_penalty_cap of their reward
+  calibration: 0.15
+
+training:
+  epochs: 1
+  lr: 2.0e-5
+  batch_size: 1                     # records per step; each question gets group_size chains
+  max_length: 768
+  max_steps: 4
+  adapter: {name: lora, r: 16, alpha: 32}
+
+validation:
+  min: {accuracy: 0.3}            # think_accuracy (after reasoning) is reported next to accuracy

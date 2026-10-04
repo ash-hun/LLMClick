@@ -1,4 +1,4 @@
-"""In-memory job store: the job id is the experiment key plus the stage plan, so resubmitting is a lookup."""
+"""In-memory job store: the job id is the experiment key plus the stage plan, so one experiment never runs twice at once."""
 
 import threading
 import traceback
@@ -20,10 +20,12 @@ def job_id(experiment_key: str, stages: list[str]) -> str:
 
 
 def submit(identifier: str, work: Callable[[], Any], detail: dict[str, Any]) -> dict[str, Any]:
-    """Queue `work` unless a job with this id is pending, running or done; then return the existing one."""
+    """Queue `work` unless a job with this id is pending or running; then return that one. A finished job is run
+    again: stages that are still valid return from cache at once, and an edited input or a deleted output is
+    rebuilt, exactly as a second CLI run would."""
     with _lock:
         existing = _jobs.get(identifier)
-        if existing and existing["status"] in {"pending", "running", "done"}:
+        if existing and existing["status"] in {"pending", "running"}:
             return existing
         job = {"job_id": identifier, "status": "pending", "result": None, "error": None, **detail}
         _jobs[identifier] = job

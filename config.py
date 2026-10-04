@@ -9,10 +9,6 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file="environment/.env", env_file_encoding="utf-8", extra="ignore")
 
     HF_TOKEN: str = ""
-    HF_ORG: str = "braincrew-dev"
-    TEACHER_URL: str = ""
-    JEFF_DEVICE: str = ""
-    OUTPUT_DIR: str = "./output"
 
 
 @lru_cache

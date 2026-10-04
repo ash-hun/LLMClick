@@ -48,7 +48,7 @@ YAML 설정 하나를 커스텀 모델 하나로 실행하는 서버. config 의
 | 상태 코드 | 언제 |
 |---|---|
 | 200 | 정상 |
-| 202 | Job 접수 (이미 있는 Job 이면 그 Job 을 그대로 반환) |
+| 202 | Job 접수 (대기 중이거나 실행 중인 같은 Job 이 있으면 그 Job 을 반환) |
 | 404 | config 파일 또는 job_id 없음 |
 | 422 | 요청 본문 또는 config 가 스키마에 안 맞음 (Pydantic 메시지가 `detail`) |
 | 500 | 서버 처리 실패 |
@@ -165,10 +165,10 @@ POST /api/config/validate
 
 ```bash
 $ curl -s -X POST http://localhost:8000/api/config/validate -H 'content-type: application/json' \
-  -d '{"pipeline":{"recipe":"jev","name":"x"},"model":{"backbone":"nope","name":"m","revision":"0000000000000000000000000000000000000000"}}'
-{"detail":"1 validation error for JevConfig\n  Value error, Unknown backbone 'nope'; registered: ['gemma4', 'modernbert', 'qwen3_5'] ..."}
+  -d '{"pipeline":{"recipe":"llm_sft","name":"x"},"model":{"architecture":"nope","name":"Qwen/Qwen3.5-0.8B","revision":"2fc06364715b967f1860aea9cf38778875588b17"},"data":{"sources":[{"name":"local_jsonl","path":"samples/llm_sft.jsonl"}]}}'
+{"detail":"1 validation error for SFTConfig\n  Value error, Unknown architecture 'nope'; registered: ['hybrid', 'transformer'] [type=value_error, input_value={'recipe': 'llm_sft', 'na...mples/llm_sft.jsonl'}]}}, input_type=dict] ..."}
 $ curl -s -X POST http://localhost:8000/api/config/validate -H 'content-type: application/json' -d '{"pipeline":{"name":"x"}}'
-{"detail":"pipeline.recipe is None; registered: ['embedding_contrastive', 'jev', 'llm_dpo', 'llm_grpo', 'llm_instruction', 'llm_sft']"}
+{"detail":"pipeline.recipe is None; registered: ['embedding_contrastive', 'llm_decision_cispo', 'llm_decision_sft', 'llm_dpo', 'llm_grpo', 'llm_instruction', 'llm_sft']"}
 ```
 
 #### 특이사항
@@ -271,7 +271,7 @@ POST /api/jobs
 
 | 코드 | 의미 | 본문 |
 |---|---|---|
-| `202` | 접수 (또는 같은 Job 이미 존재) | JobResponse |
+| `202` | 접수 (대기 중이거나 실행 중인 같은 Job 이 있으면 그 Job) | JobResponse |
 | `404` | config 파일 없음 | `{"detail": "..."}` |
 | `422` | 본문·config 스키마 위반 | `{"detail": "..."}` |
 
@@ -285,9 +285,10 @@ $ curl -s -X POST http://localhost:8000/api/jobs -H 'content-type: application/j
 
 #### 특이사항
 
-**재호출** — 같은 결과, 상태 변화 없음. `job_id` 는 `실험 키 + 스테이지 계획 해시` 이므로 같은 config 를 다시 보내면
-새 작업을 만들지 않고 기존 Job(대기, 실행, 완료)을 돌려준다. 실패한 Job 은 재호출 시 다시 실행되며, 파이프라인은
-완료된 스테이지를 지문으로 건너뛰므로 실패 지점부터 이어진다. validate 스테이지가 기준 미달로 실패한 Job 은
+**재호출** — `job_id` 는 `실험 키 + 스테이지 계획 해시` 이므로 같은 config 를 다시 보내면 같은 `job_id` 를 받는다.
+대기 중이거나 실행 중인 Job 이 있으면 그 Job 을 그대로 돌려준다. 완료되었거나 실패한 Job 은 다시 실행된다.
+파이프라인이 유효한 스테이지를 지문으로 건너뛰므로, 바뀐 것이 없으면 즉시 같은 결과로 끝나고, 입력 파일이
+바뀌었거나 산출물이 지워졌으면 그 스테이지부터 다시 만든다(CLI 를 다시 실행한 것과 같다). validate 스테이지가 기준 미달로 실패한 Job 은
 재호출해도 같은 이유로 실패한다(config 의 `validation` 기준이나 학습 설정을 바꿔야 한다).
 
 동시성: Job 은 워커 하나가 접수 순서대로 실행한다(학습 두 개가 가속기를 나눠 쓰지 않도록). 스테이지 디렉토리는
@@ -383,7 +384,8 @@ GET /api/system/recipes
 
 레시피 키(`pipeline.recipe` 값)마다 객체 하나. 모든 레시피에 `stages` 가 있고, 나머지 필드는 레시피가 정한다.
 
-LLM, Embedding 계열 레시피(`llm_sft`, `llm_instruction`, `llm_dpo`, `llm_grpo`, `embedding_contrastive`)의 필드:
+LLM, Embedding 계열 레시피(`llm_sft`, `llm_instruction`, `llm_dpo`, `llm_grpo`, `llm_decision_sft`, `llm_decision_cispo`,
+`embedding_contrastive`)의 필드:
 
 | 필드 | 타입 | 널 허용 | 설명 |
 |---|---|---|---|
@@ -392,17 +394,7 @@ LLM, Embedding 계열 레시피(`llm_sft`, `llm_instruction`, `llm_dpo`, `llm_gr
 | `source` | string[] | 아니오 | `data.sources[*].name` 에 쓸 수 있는 키 |
 | `method_keys` | string[] | 아니오 | `method` 섹션에 쓸 수 있는 키 |
 | `reward` | string[] | 아니오 | `llm_grpo` 에만 있음. `method.reward.name` 에 쓸 수 있는 키 |
-
-`jev` 의 필드:
-
-| 필드 | 타입 | 널 허용 | 설명 |
-|---|---|---|---|
-| `stages` | string[] | 아니오 | 스테이지 이름, 실행 순서 |
-| `builder` | string[] | 아니오 | 데이터 빌더 키 |
-| `converter` | string[] | 아니오 | 원시 행 → Example 변환기 키 |
-| `backbone` | string[] | 아니오 | 백본 패밀리 키 |
-| `teacher` | string[] | 아니오 | 합성 데이터 교사 키 |
-| `benchmark` | string[] | 아니오 | 평가셋 키 |
+| `head` | string[] | 아니오 | `llm_decision_sft`, `llm_decision_cispo` 에만 있음. `model.head` 에 쓸 수 있는 키 |
 
 #### 응답 코드
 
@@ -414,7 +406,7 @@ LLM, Embedding 계열 레시피(`llm_sft`, `llm_instruction`, `llm_dpo`, `llm_gr
 
 ```bash
 $ curl -s http://localhost:8000/api/system/recipes
-{"embedding_contrastive":{"stages":["data","train","validate"],"architecture":["bi_encoder"],"source":["huggingface","local_jsonl"],"method_keys":["query_instruction","temperature"]},"jev":{"stages":["data","benchmarks","synthetic","mix","train","validate","evaluate"],"builder":[...],"converter":[...],"backbone":[...],"teacher":[...],"benchmark":[...]},"llm_dpo":{"stages":["data","train","validate"],"architecture":["hybrid","transformer"],"source":["huggingface","local_jsonl"],"method_keys":["beta"]},"llm_grpo":{...,"method_keys":["group_size","max_new_tokens","reward","temperature"],"reward":["contains","exact_match","last_number"]},"llm_instruction":{...,"method_keys":["system"]},"llm_sft":{...,"method_keys":[]}}
+{"embedding_contrastive":{"stages":["data","train","validate"],"architecture":["bi_encoder"],"source":["huggingface","local_jsonl"],"method_keys":["query_instruction","temperature"]},"llm_dpo":{"stages":["data","train","validate"],"architecture":["hybrid","transformer"],"source":["huggingface","local_jsonl"],"method_keys":["beta"]},"llm_grpo":{...,"method_keys":["group_size","max_new_tokens","reward","temperature"],"reward":["contains","exact_match","last_number"]},"llm_decision_sft":{...,"method_keys":["calibration","eval_think","head_lr","max_think","think_fraction"],"head":["pointer","readout"]},"llm_decision_cispo":{...,"head":["pointer","readout"]},"llm_instruction":{...,"method_keys":["system"]},"llm_sft":{...,"method_keys":[]}}
 ```
 
 #### 특이사항
@@ -520,15 +512,15 @@ $ curl -s http://localhost:8000/health
 
 공통 키는 `core/config/schema.py` 의 `BaseConfig`(recipe, name, seed, output_dir, device, stages), 모델링 공통 키는
 `modeling/config.py` 의 `ModelingConfig`(tracker, validation), 레시피 고유 섹션은 레시피의 스키마가 정본이다.
-`jev` 는 `modeling/jev/config.py`: `checkpoint`, `data`(builders, folds, synthetic, mix), `model`(backbone, name,
-revision, prompt_layout), `training`(jeff.train 인자와 동명), `validation`(min, max, batch_size),
-`evaluation`(benchmarks, batch_size). `builders[*]`, `benchmarks[*]`, `teacher` 는 `name` + 임의 파라미터.
-스키마에 없는 최상위 키는 422.
+스키마에 없는 키는 최상위든 섹션 안이든 422 (`data.sources[*]` 와 `method.reward` 처럼 `name` + 임의 파라미터인 항목 제외).
 
 LLM, Embedding 계열 레시피는 `modeling/tuning/config.py` 의 `TuningConfig` 를 공유한다: `model`(architecture, name,
-revision, template), `data`(sources, validation), `training`(epochs, lr, weight_decay, batch_size, accumulation,
+revision, template, head, init), `data`(sources, validation), `training`(epochs, lr, weight_decay, batch_size, accumulation,
 warmup_ratio, max_grad_norm, max_length, max_steps, resume_every, adapter), `validation`(min, max, batch_size), `method`.
 `training.adapter`(name, r, alpha, dropout, targets)가 있으면 LoRA 로 학습하고, 없으면 전체 가중치를 학습한다.
 `method` 섹션의 키는 레시피마다 다르며 `modeling/llm/config.py`, `modeling/embedding/config.py` 가 정본이다.
 `validation.min/max` 에 쓸 수 있는 지표도 레시피마다 다르다: `llm_sft` 와 `llm_instruction` 은 `loss`,
-`perplexity`, `llm_dpo` 는 `accuracy`, `margin`, `llm_grpo` 는 `reward`, `embedding_contrastive` 는 `accuracy`, `mrr`.
+`perplexity`, `llm_dpo` 는 `accuracy`, `margin`, `llm_grpo` 는 `reward`, `llm_decision_sft` 는 `accuracy`, `nll`, `ece`,
+`llm_decision_cispo` 는 여기에 `think_accuracy`, `embedding_contrastive` 는 `accuracy`, `mrr`.
+`model.head` 는 결정 레시피에서 필수이고 다른 레시피에서 쓰면 422. `model.init` 은 이전 실험의 체크포인트 폴더이며,
+폴더가 없어도 config 검증은 통과하고 train 스테이지에서 실패한다.

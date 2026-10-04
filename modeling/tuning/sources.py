@@ -22,9 +22,9 @@ def renamed(rows: list[Row], fields: dict[str, str] | None) -> list[Row]:
 
 @SOURCES.register("local_jsonl")
 def local_jsonl(params: dict[str, Any]) -> list[Row]:
-    """params: path, fields?"""
-    lines = Path(params["path"]).read_text().split("\n")
-    return renamed([json.loads(line) for line in lines if line.strip()], params.get("fields"))
+    """params: path, limit?, fields?"""
+    lines = [line for line in Path(params["path"]).read_text().split("\n") if line.strip()]
+    return renamed([json.loads(line) for line in lines[: params.get("limit")]], params.get("fields"))
 
 
 @SOURCES.register("huggingface")

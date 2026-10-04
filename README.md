@@ -10,19 +10,22 @@ what is already built, shows progress, and never hands on a trained model that h
 | LLM | `llm_instruction` | instruction/input/output records | same |
 | LLM | `llm_dpo` | chosen/rejected preference pairs | same |
 | LLM | `llm_grpo` | prompts scored by a reward function | same |
+| LLM | `llm_decision_sft` | decision questions: a head scores the options (Jev, jeff, Jeeves stage 1) | same, plus `model.head`: `readout` or `pointer` |
+| LLM | `llm_decision_cispo` | the same questions with reasoning before the decision, by reinforcement (Jeeves stage 2) | same |
 | Embedding | `embedding_contrastive` | query/positive/negative triples (InfoNCE) | `bi_encoder` (Qwen3-Embedding-0.6B) |
-| Decision | `jev` | one-pass decision models with calibrated option probabilities | `qwen3_5`, `gemma4`, `modernbert` |
 
-`jev` is trained with [jeff](https://github.com/firelex/jeff) (itself a fork of
-[AutoJev](https://github.com/denis-pplx/autojev)), vendored unchanged under `jeff/`.
+The decision recipes follow the Jev request format. The readout head and one-pass training follow
+[jeff](https://github.com/firelex/jeff); the pointer head, reasoning chains and CISPO follow
+[Jeeves](https://github.com/PostHog/jeeves). Both are reimplemented on this framework's training loop, so their
+released checkpoints do not load here.
 
 ## 01. Project structure
 
 ```
 LLMClick/
 ├── main.py                       # FastAPI entry point
-├── config.py                     # process settings (environment/.env): HF_TOKEN, TEACHER_URL ...
-├── configs/                      # one YAML = one custom model; a directory per family (llm/, embedding/, jev/)
+├── config.py                     # process settings (environment/.env): HF_TOKEN
+├── configs/                      # one YAML = one custom model; a directory per family (llm/, embedding/)
 ├── samples/                      # tiny rows per recipe so the shipped configs run offline
 ├── core/                         # the framework, shared by every channel
 │   ├── stage.py                  #   Stage: one fingerprinted, rerunnable unit of work
@@ -32,7 +35,7 @@ LLMClick/
 │   ├── config/                   #   schema.py (BaseConfig), experiment.py (directories, manifest)
 │   ├── cli.py                    #   llmclick run|validate|recipes
 │   ├── api/                      #   routers: config_channel, job_channel, system_channel; store.py
-│   └── utils/                    #   files (hash, lock), proc (child processes), device
+│   └── utils/                    #   files (hash, lock), device
 ├── modeling/                     # Modeling channel: config -> trained, validated model
 │   ├── config.py                 #   ModelingConfig: tracker, validation bounds
 │   ├── stages.py                 #   TrainStage, ValidateStage (templates every recipe fills in)
@@ -47,21 +50,16 @@ LLMClick/
 │   │   └── config.py pipeline.py #     TuningConfig, TuningPipeline
 │   ├── llm/                      #   family: generative language models
 │   │   ├── models/               #     Model Catalog: base.py (LLMBackbone), transformer.py, hybrid.py
+│   │   │   └── heads/            #       decision heads on top of a backbone: base.py (DecisionHead), readout, pointer
 │   │   ├── methods/              #     Training Method: base.py (LLMMethod), sft, instruction, dpo, grpo
+│   │   │   └── decision/         #       base.py (DecisionMethod: rows, metrics, calibration), sft, cispo
 │   │   └── config.py pipeline.py #     one config class and one registered recipe per method
-│   ├── embedding/                #   family: text embedding models
-│   │   ├── models/               #     Model Catalog: base.py (EmbeddingBackbone), bi_encoder.py
-│   │   ├── methods/              #     Training Method: contrastive.py
-│   │   └── config.py pipeline.py
-│   └── jev/                      #   family of its own: decision models through the vendored jeff trainer
-│       ├── config.py             #     JevConfig
-│       ├── stages.py             #     data, benchmarks, synthetic, mix, train, validate, evaluate
-│       ├── pipeline.py           #     JevPipeline (registered as `jev`)
-│       ├── registry.py           #     BUILDERS, CONVERTERS, BACKBONES, TEACHERS, BENCHMARKS
-│       └── data/ model/ tuning/ evaluation/
-├── jeff/                         # vendored jeff package (MIT); local patches listed in jeff/PATCHES.md
-├── tests/core/  tests/modeling/  tests/jeff/
-├── docs/                         # api-spec.md, screen-spec.md, data-sources.md
+│   └── embedding/                #   family: text embedding models
+│       ├── models/               #     Model Catalog: base.py (EmbeddingBackbone), bi_encoder.py
+│       ├── methods/              #     Training Method: contrastive.py
+│       └── config.py pipeline.py
+├── tests/core/  tests/modeling/
+├── docs/                         # api-spec.md, screen-spec.md
 ├── environment/                  # Dockerfile, docker-compose.yml, .env.sample
 └── output/
     ├── _stages/<stage>-<fingerprint>/   # what each stage built; shared by every experiment with the same inputs
@@ -76,27 +74,30 @@ its name to `CHANNELS` in `core/registry.py` and reuses `Stage`, `Pipeline`, `Pr
 
 ```yaml
 pipeline:
-  recipe: jev                       # which pipeline builds this model
+  recipe: llm_sft                   # which pipeline builds this model
   name: my-model
-  stages: [data, benchmarks, mix]   # optional; default all. Stages they read are added, train always brings validate
+  stages: [data, train]             # optional; default all. Stages they read are added, train always brings validate
 ```
 
 - **Fingerprints.** A stage's fingerprint is its own config inputs (plus the content of local files it reads) and
   the fingerprints of the stages it reads. Its directory is `output/_stages/<stage>-<fingerprint>/`, so two configs
   that differ only in training settings share the data stages, and a rerun of the same config builds nothing.
 - **Reruns.** A stage is recorded only when it finishes. A crashed run is resumed by running the same command
-  again; training continues from `checkpoints/resume.pt`.
+  again; training continues from `resume.pt` in the train stage directory.
 - **Locks.** A stage directory is locked while it is built, so a CLI run and an API job asking for the same stage
   never build it twice.
 - **Identity.** The experiment directory is `<name>-<hash>`; `stages`, `output_dir` and `tracker` are not part of
   the hash, because they say how to run, not what to build.
 - **Progress.** The CLI shows two bars (stages, and steps inside the running stage); API jobs report the same
-  state in `progress`. Output of child processes goes to log files in the stage directory.
+  state in `progress`.
 - **Validation.** In the Modeling channel `validate` follows `train` and cannot be left out. It measures the
-  trained model on data training never saw and checks `validation.min` / `validation.max`; a miss stops the
-  pipeline, and `evaluate` reads the checkpoint from `validate`, never from `train`.
+  trained model on data training never saw and checks `validation.min` / `validation.max`; a miss, or a metric
+  that is not a finite number, stops the pipeline. A later stage reads the checkpoint from `validate`, never from
+  `train`. Without bounds the metrics are only recorded, and a warning says so.
+- **Typos.** Every config section rejects keys it does not know, so `validaton:` or `training.learning_rate` is an
+  error instead of a silently ignored setting.
 
-### Stages of the LLM and embedding recipes
+### Stages
 
 | Stage | What it does |
 |---|---|
@@ -110,6 +111,8 @@ pipeline:
 | `llm_instruction` | `instruction`, `input`?, `output` | `loss`, `perplexity` |
 | `llm_dpo` | `prompt`, `chosen`, `rejected` | `accuracy` (chosen more likely than rejected), `margin` |
 | `llm_grpo` | `prompt` + what the reward reads (`answer`) | `reward` (greedy completion) |
+| `llm_decision_sft` | `state`, `questions` (Jev records) or `state`, `question`, `label` (one question per row) | `accuracy`, `nll`, `ece` |
+| `llm_decision_cispo` | same | `accuracy`, `nll`, `ece`, `think_accuracy` (after reasoning) |
 | `embedding_contrastive` | `query`, `positive`, `negative`? | `accuracy` (positive ranked first), `mrr` |
 
 By default every weight is trained, in FP32. `training.adapter` switches any of these recipes to LoRA:
@@ -123,25 +126,48 @@ The base weights stay frozen and only the adapter trains, so the resume snapshot
 layers are adapted comes from the architecture (`transformer`, `bi_encoder`: the attention projections; `hybrid`:
 those plus the linear-attention projections) unless `targets` names others. The adapter is folded into the base
 weights when the checkpoint is written, so a LoRA checkpoint and a fully trained one load the same way: a plain
-`save_pretrained` directory at `output/<experiment>/train/checkpoint/`.
+`save_pretrained` directory at `output/<experiment>/train/checkpoint/` (and, once validation passed, at
+`output/<experiment>/validate/checkpoint`).
 
-### Stages of `jev`
+### Decision recipes
 
-| Stage | What it does | jeff parts used |
+A decision model answers `choice`, `noul` (yes/no) and `score` questions about a `state` with a probability per
+option. The backbone gets a head (`model.head`) that reads the options, and the prompt marks state, question and
+options with rare tokens of the Qwen tokenizer:
+
+| Head | How it scores | Origin |
 |---|---|---|
-| `data` | run every `data.builders[*]`, concatenate, carve `dev`/`temperature`/`validation` folds by family | `jeff.extra`, `jeff.probability`, `jeff.data.choose/validate/write_rows` |
-| `benchmarks` | freeze every `evaluation.benchmarks[*]` | `jeff.panel`, `jeff.jevbench` |
-| `synthetic` | teacher-written questions with verify/review/repair (only if `data.synthetic.enabled`) | `jeff.materials`, `jeff.grounded`, `jeff.generate` |
-| `mix` | leak filter against the benchmarks and the validation fold, panel layouts, escape options, hijack attempts, size caps | `jeff.mix`, `jeff.layout`, `jeff.escape`, `jeff.adversarial` |
-| `train` | full-weight SFT, checkpoint selection on dev NLL, fitted temperature | `jeff.train` |
-| `validate` | accuracy, ECE, Brier, NLL on the validation fold against `validation.min`/`max` | `jeff.evaluate` |
-| `evaluate` | accuracy, ECE, Brier, NLL per benchmark | `jeff.evaluate` |
+| `readout` | options get one-token codes (A, B, ...); a linear layer on the decide position scores the codes | Jev, jeff |
+| `pointer` | a dot product between the decide position and each option's end position; no codes, any number of options | Jeeves |
+
+`llm_decision_sft` trains the head with cross-entropy over the options. With `method.think_fraction: 0` that is a
+one-pass decision model. Above 0, that share of the questions gets a reasoning chain sampled from the base model
+before training and inserted as context, so the head learns to decide after reasoning as well as without it.
+
+`llm_decision_cispo` continues from such a checkpoint (`model.init`): per question it samples `group_size`
+reasoning chains, rewards each by the probability the head then gives the right option, and reinforces the chains
+that beat their group's mean. The head's loss after reasoning and without reasoning is added, so the one-pass
+answer keeps working.
+
+Both keep `method.calibration` of the training rows aside, fit one temperature on them when training ends and
+store it with the head (`head.json` in the checkpoint); validation reports calibrated `accuracy`, `nll` and `ece`.
+
+```yaml
+model:
+  head: pointer
+  init: output/decision-pointer-qwen3.5-0.8b-<hash>/validate/checkpoint   # stage 2 starts where stage 1 ended
+```
+
+`model.init` works in every `llm_*` and `embedding_*` recipe: it is "start from this checkpoint of an earlier
+experiment". Point it at `<experiment>/validate/checkpoint`: that link exists only when the earlier experiment
+passed validation, whereas `train/checkpoint` is there even when it failed. The checkpoint counts by content in
+the fingerprint, so rebuilding the earlier experiment rebuilds the one that continues it.
 
 ## 03. Quick start
 
 ```bash
-uv sync                                                    # Python 3.12, pins from jeff
-cp environment/.env.sample environment/.env                # HF_TOKEN, TEACHER_URL ...
+uv sync                                                    # Python 3.12
+cp environment/.env.sample environment/.env                # HF_TOKEN, only for gated models and datasets
 
 uv run llmclick recipes                                    # recipes, their stages and registry keys
 uv run llmclick validate configs/llm/sft.yaml              # experiment key and stage plan
@@ -161,13 +187,10 @@ curl -X POST localhost:8000/api/jobs -H 'content-type: application/json' \
 | `llm/sft_lora.yaml` | the SFT recipe with a LoRA adapter instead of full fine-tuning |
 | `llm/grpo.yaml` | GRPO of Qwen3.5-0.8B with the `exact_match` reward |
 | `llm/grpo_gsm8k.yaml` | GRPO on GSM8K word problems from the Hub with the `last_number` reward |
+| `llm/decision_readout.yaml` | one-pass decision model: full fine-tuning, readout head (Jev, jeff) |
+| `llm/decision_pointer.yaml` | reasoning decision model, stage 1: LoRA, pointer head, reasoning chains as context (Jeeves SFT) |
+| `llm/decision_cispo.yaml` | reasoning decision model, stage 2: CISPO from the stage-1 checkpoint |
 | `embedding/contrastive.yaml` | contrastive learning of Qwen3-Embedding-0.6B |
-| `jev/jeff_public_only.yaml` | jeff's public-only arm (no teacher) |
-| `jev/jeff_combined.yaml` | public + synthetic data from a local teacher |
-| `jev/custom_dataset.yaml` | your own HF/local data through YAML-only converters |
-| `jev/jeff_0.8b_mac.yaml` | the public-only recipe on Apple silicon (MPS) |
-| `jev/mac_smoke.yaml` | minutes-long end-to-end pilot on a Mac |
-| `jev/eval.yaml` | scores an existing checkpoint |
 
 The `llm/` and `embedding/` configs ship as pilots: sample rows from `samples/` and `max_steps: 4`. Point
 `data.sources` at your rows and remove `max_steps` for a real run.
@@ -176,17 +199,9 @@ Docker: `IMAGE_TAG=$(git rev-parse --short HEAD) docker compose -f environment/d
 
 ### Apple silicon
 
-Training and evaluation run on MPS. `device` in the config (or auto-detection: cuda, then mps, then cpu) is passed to
-jeff as `JEFF_DEVICE`; `jeff/PATCHES.md` lists the small changes that made jeff's trainer device-agnostic.
-
-```bash
-uv run llmclick run configs/jev/mac_smoke.yaml      # ~minutes: 0.8B, 4 updates, code-built data, proves the path
-uv run llmclick run configs/jev/jeff_0.8b_mac.yaml  # the real public-only recipe; many hours on an M-series
-```
-
-Memory: full-weight 0.8B in bf16 plus FP32 master weights and Adam moments in host memory needs roughly 12 GB of
-unified memory at `batch_size: 8`, `token_budget: 4096`; lower both if the run is killed. Gemma and the 2B student
-have not been tried on MPS.
+Training and validation run on MPS; `device` in the config (or auto-detection: cuda, then mps, then cpu) decides.
+Weights are trained in FP32: fully fine-tuning Qwen3.5-0.8B needs roughly 13 GB of unified memory at the shipped
+batch sizes, and `training.adapter` (LoRA) cuts that to little more than the weights themselves.
 
 ## 04. Extending
 
@@ -196,11 +211,12 @@ Each family is a model catalog crossed with training methods; the two grow indep
 modeling
 ├── llm
 │   ├── Model Catalog      transformer, hybrid            <- add an architecture
+│   │   └── heads          readout, pointer               <- add a decision head
 │   └── Training Method    sft, instruction, dpo, grpo    <- add a method
-├── embedding
-│   ├── Model Catalog      bi_encoder
-│   └── Training Method    contrastive
-└── jev
+│       └── decision       sft, cispo
+└── embedding
+    ├── Model Catalog      bi_encoder
+    └── Training Method    contrastive
 ```
 
 ### A new architecture in a catalog
@@ -217,6 +233,17 @@ class MoEBackbone(LLMBackbone):
 
 An embedding architecture (for example a cross-encoder) subclasses `EmbeddingBackbone` the same way and overrides
 what differs, such as `pool`.
+
+### A new decision head
+
+A head owns the prompt it reads and turns hidden states into one score per option.
+
+```python
+@HEADS.register("my_head")                      # modeling/llm/models/heads/my_head.py; import it in heads/__init__.py
+class MyHead(DecisionHead):
+    def option_block(self, options): ...        # how the options appear in the prompt
+    def scores(self, hidden, layouts): ...      # (rows, options) scores from (rows, tokens, hidden) states
+```
 
 ### A new training method in a family
 
@@ -258,33 +285,10 @@ loop are inherited.
 def json_valid(completion: str, row: dict, params: dict) -> float: ...
 ```
 
-### A registry entry of `jev`
-
-Everything external is a `name:` key in the YAML (`uv run llmclick recipes` lists them):
-
-| Registry | Keys | Extend |
-|---|---|---|
-| builder | `local_jsonl`, `huggingface`, `jeff_extra`, `jeff_probability` | `modeling/jev/data/builders.py` |
-| converter | `example`, `classification`, `boolean` | `modeling/jev/data/converters.py` |
-| backbone | `qwen3_5`, `gemma4`, `modernbert` | `modeling/jev/model/backbones.py` |
-| teacher | `openai_compatible` | `modeling/jev/data/synthetic.py` |
-| benchmark | `local_jsonl`, `huggingface`, `jeff_panel`, `jeff_jevbench_hard`, `jeff_probability` | `modeling/jev/evaluation/benchmarks.py` |
-
-A Hugging Face classification set needs no code: see `configs/jev/custom_dataset.yaml`, which maps `premise`/`hypothesis`
-and a label column to jeff's `choice` question through the `classification` converter. Pin `revision` to a commit.
-
-```python
-from modeling.jev.registry import BENCHMARKS
-
-@BENCHMARKS.register("kobest_boolq")
-def kobest_boolq(params: dict, out: Path, seed: int) -> Path:
-    ...  # write Example rows to out/rows.jsonl and return the path; never overwrite a different file
-```
-
 ### A recipe with its own stages
 
-When training does not fit the shared loop (as with `jev`, which drives an external trainer), a recipe brings its
-own config class, stages and pipeline class; users only see a new value for `pipeline.recipe`.
+When training does not fit the shared loop (for example an external trainer run as a child process), a recipe
+brings its own config class, stages and pipeline class; users only see a new value for `pipeline.recipe`.
 
 ```python
 class MyConfig(ModelingConfig):                 # modeling/<recipe>/config.py
@@ -309,17 +313,10 @@ class MyPipeline(ModelingPipeline[MyConfig]):
 
 Inside a stage, `self.progress.update(done, total, note)` drives the progress bar.
 
-## 05. Data contract
-
-All stages exchange jeff `Example` rows (`jeff/types.py`): `id`, `suite`, `family`, `state`, `question`
-(`choice` with `criteria` or `noul`), `label`, `target`, `source`. `family` groups rows that must stay in one fold.
-
-## 06. Tests
+## 05. Tests
 
 ```bash
 uv run pytest tests/core tests/modeling  # runner, progress, validation gate, API, every recipe on a tiny random model
-uv run pytest tests/jeff -m "not slow"   # jeff's own tests on the vendored code
 ```
 
-Licences: LLMClick code MIT; `jeff/` MIT (see `jeff/LICENSE`); training data keep their own licences
-(`docs/data-sources.md`).
+Licence: MIT. Models and datasets a config names keep their own licences.

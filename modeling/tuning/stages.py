@@ -12,7 +12,7 @@ from modeling.tuning.config import TuningConfig
 from modeling.tuning.method import Row
 from modeling.config import keyed_identity
 from core.utils.device import resolve_device
-from core.utils.files import read_json
+from core.utils.files import directory_signature, read_json
 from modeling.tracker import History
 from core.stage import Outputs, Stage
 
@@ -33,7 +33,8 @@ class DataStage(Stage[TuningConfig]):
 
     def identity(self) -> Any:
         data = self.config.data
-        return [self.config.seed, self.config.recipe, keyed_identity(data.sources), data.validation]
+        return [self.config.seed, self.config.recipe, keyed_identity(data.sources), data.validation,
+                self.config.build_method().check_identity()]
 
     def run(self, workdir: Path, inputs: dict[str, Outputs]) -> Outputs:
         sources, method = self.config.data.sources, self.config.build_method()
@@ -64,6 +65,13 @@ class TuneStage(TrainStage[TuningConfig]):
     """Load the backbone, let the method prepare, run the loop; a rerun resumes or returns the finished checkpoint."""
     requires: ClassVar[tuple[str, ...]] = ("data",)
     sections: ClassVar[tuple[str, ...]] = ("seed", "recipe", "model", "training", "method", "device")
+
+    def identity(self) -> Any:
+        """Local weights count by content, not by path: `model.init` usually goes through an experiment's link,
+        which points somewhere else once that experiment is rebuilt."""
+        model = self.config.model
+        return [super().identity(), directory_signature(Path(model.init)) if model.init else None,
+                directory_signature(Path(model.name))]
 
     def train(self, workdir: Path, inputs: dict[str, Outputs]) -> Outputs:
         checkpoint, summary = workdir / CHECKPOINT, workdir / SUMMARY

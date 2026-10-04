@@ -4,12 +4,13 @@ import json
 from pathlib import Path
 
 import torch
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from modeling.llm.methods.base import LLMMethod, conversation
 from modeling.tuning.method import Row, chunks
 from modeling.llm.models.base import LLMBackbone
 from core.utils.files import write_json
+from core.config.schema import Section
 from core.progress import Progress
 
 REFERENCE = "reference_margins.json"
@@ -18,7 +19,7 @@ REFERENCE = "reference_margins.json"
 class DPO(LLMMethod):
     """Rows: {"prompt": str | messages, "chosen": str, "rejected": str}."""
 
-    class Config(BaseModel):
+    class Config(Section):
         beta: float = Field(default=0.1, gt=0, description="How strongly the policy may move away from the base model")
 
     def check(self, row: Row) -> None:

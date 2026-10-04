@@ -25,9 +25,16 @@ class Backbone(ABC):
         self.config = config
 
     def origin(self, checkpoint: Path | None) -> tuple[str, str | None]:
-        """Where weights come from: a checkpoint this pipeline wrote, a local directory, or a pinned Hub revision."""
+        """Where weights come from: a checkpoint this pipeline wrote, `model.init`, a local directory, or a pinned
+        Hub revision."""
         if checkpoint is not None:
             return str(checkpoint), None
+        if self.config.init is not None:
+            # checked here, not in the config: a config that continues another experiment must validate before
+            # that experiment has run
+            if not Path(self.config.init).is_dir():
+                raise FileNotFoundError(f"model.init {self.config.init!r} does not exist; run the experiment that writes it")
+            return self.config.init, None
         return self.config.name, None if Path(self.config.name).is_dir() else self.config.revision
 
     @abstractmethod
@@ -51,8 +58,23 @@ class Backbone(ABC):
         """The model to save: adapter weights folded into the base, so a checkpoint loads like any other model."""
         return self.model.merge_and_unload() if hasattr(self.model, "merge_and_unload") else self.model
 
+    def modules(self) -> dict[str, torch.nn.Module]:
+        """Everything that holds trainable weights, by name; a backbone with a head adds it here."""
+        return {"model": self.model}
+
     def trainable(self) -> list[torch.nn.Parameter]:
-        return [parameter for parameter in self.model.parameters() if parameter.requires_grad]
+        return [parameter for module in self.modules().values() for parameter in module.parameters()
+                if parameter.requires_grad]
+
+    def snapshot(self) -> dict[str, torch.Tensor]:
+        """The weights that train, for a resume file: nothing frozen is written."""
+        return {f"{prefix}.{name}": parameter for prefix, module in self.modules().items()
+                for name, parameter in module.named_parameters() if parameter.requires_grad}
+
+    def restore(self, weights: dict[str, torch.Tensor]) -> None:
+        for prefix, module in self.modules().items():
+            own = {name.removeprefix(f"{prefix}."): value for name, value in weights.items() if name.startswith(f"{prefix}.")}
+            module.load_state_dict(own, strict=False)
 
     def release(self) -> None:
         """Drop the weights so the next stage or job gets the accelerator memory back."""

@@ -5,8 +5,12 @@ from typing import Any, ClassVar, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class BaseConfig(BaseModel):
+class Section(BaseModel):
+    """A config section: an unknown key is an error, so a typo cannot silently fall back to a default."""
     model_config = ConfigDict(extra="forbid")
+
+
+class BaseConfig(Section):
     # Keys that say how to run, not what to build: they never change the experiment directory or a stage fingerprint.
     identity_exclude: ClassVar[frozenset[str]] = frozenset({"stages", "output_dir"})
 
