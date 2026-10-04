@@ -9,6 +9,7 @@ from core.utils.proc import run_module
 from jeff.families import BY_NAME, FOCUS, FOCUS_V2, FOCUS_V3, FOCUS_V4, FOCUS_V5, BBH_CODE
 from jeff.generate import GROUNDED
 
+LOG = "synthetic.log"  # child output goes here, not onto the progress bar
 FOCUS_WEIGHTS = {"v1": FOCUS, "v2": FOCUS_V2, "v3": FOCUS_V3, "v4": FOCUS_V4, "v5": FOCUS_V5, "bbh-code": BBH_CODE,
                  "fallacies": {"formal_fallacies": 1}}
 
@@ -35,7 +36,7 @@ def generate(out: Path, public_train: Path, slots: int, seed: int, focus: str | 
         return synthetic
     materials = out / "materials.json"
     if not materials.exists():
-        run_module("jeff.materials", ["--out", str(materials)], env=env)
+        run_module("jeff.materials", ["--out", str(materials)], env=env, log=out / LOG)
     args = ["run", "--slots", str(slots), "--seed", str(seed), "--out", str(out / "gen"), "--materials", str(materials),
             "--concurrency", str(concurrency)]
     if focus:
@@ -43,8 +44,8 @@ def generate(out: Path, public_train: Path, slots: int, seed: int, focus: str | 
     if needs_grounded(focus):
         grounded = out / "grounded.jsonl"
         if not grounded.exists():
-            run_module("jeff.grounded", ["--extra", str(public_train), "--out", str(grounded)], env=env)
+            run_module("jeff.grounded", ["--extra", str(public_train), "--out", str(grounded)], env=env, log=out / LOG)
         args += ["--grounded", str(grounded)]
-    run_module("jeff.generate", args, env=env)
-    run_module("jeff.generate", ["finalize", "--out", str(out / "gen")], env=env)
+    run_module("jeff.generate", args, env=env, log=out / LOG)
+    run_module("jeff.generate", ["finalize", "--out", str(out / "gen")], env=env, log=out / LOG)
     return synthetic

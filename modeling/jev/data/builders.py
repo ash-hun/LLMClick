@@ -7,6 +7,8 @@ from modeling.jev.data.materialize import from_huggingface, from_local
 from modeling.jev.registry import BUILDERS
 from core.utils.proc import run_module
 
+LOG = "build.log"  # child output goes here, not onto the progress bar
+
 
 @BUILDERS.register("local_jsonl")
 def local_jsonl(params: dict[str, Any], out: Path, seed: int) -> Path:
@@ -26,7 +28,7 @@ def jeff_extra(params: dict[str, Any], out: Path, seed: int) -> Path:
         args = ["--out", str(out)]
         if params.get("only"):
             args += ["--only", *params["only"]]
-        run_module("jeff.extra", args)
+        run_module("jeff.extra", args, log=out / LOG)
     return target
 
 
@@ -36,5 +38,5 @@ def jeff_probability(params: dict[str, Any], out: Path, seed: int) -> Path:
     target = out / "train.jsonl"
     if not target.exists():
         run_module("jeff.probability", ["--out", str(out), "--count", str(params.get("count", 3000)),
-                                        "--seed", str(params.get("seed", seed))])
+                                        "--seed", str(params.get("seed", seed))], log=out / LOG)
     return target

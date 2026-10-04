@@ -8,6 +8,7 @@ from modeling.jev.data.materialize import from_huggingface, from_local
 from modeling.jev.registry import BENCHMARKS
 from core.utils.proc import run_module
 
+LOG = "build.log"  # child output goes here, not onto the progress bar
 JEVBENCH_REPOSITORY = "https://github.com/fstandhartinger/jevbench"
 
 
@@ -27,7 +28,7 @@ def jeff_probability(params: dict[str, Any], out: Path, seed: int) -> Path:
     target = out / "train.jsonl"
     if not target.exists():
         run_module("jeff.probability", ["--out", str(out), "--count", str(params.get("count", 500)),
-                                        "--seed", str(params.get("seed", seed + 1))])
+                                        "--seed", str(params.get("seed", seed + 1))], log=out / LOG)
     return target
 
 
@@ -36,7 +37,7 @@ def jeff_panel(params: dict[str, Any], out: Path, seed: int) -> Path:
     """BBH, Financial PhraseBank, JudgeBench, RAGTruth and WinoGrande at jeff's pinned revisions (4,599 rows)."""
     target = out / "panel.jsonl"
     if not target.exists():
-        run_module("jeff.panel", ["--output", str(target)])
+        run_module("jeff.panel", ["--output", str(target)], log=out / LOG)
     return target
 
 
@@ -47,5 +48,5 @@ def jeff_jevbench_hard(params: dict[str, Any], out: Path, seed: int) -> Path:
         checkout = out / "repo"
         if not checkout.exists():
             subprocess.run(["git", "clone", "--quiet", JEVBENCH_REPOSITORY, str(checkout)], check=True)
-        run_module("jeff.jevbench", ["--checkout", str(checkout), "--out", str(target)])
+        run_module("jeff.jevbench", ["--checkout", str(checkout), "--out", str(target)], log=out / LOG)
     return target

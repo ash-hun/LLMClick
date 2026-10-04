@@ -15,9 +15,10 @@ RUN_NAME = "train"
 class TrainingEvents:
     """Turns the events jeff.train appends to its event file into progress updates; safe to poll at any time."""
 
-    def __init__(self, path: Path, progress: Progress) -> None:
+    def __init__(self, path: Path, progress: Progress, limit: int | None = None) -> None:
         self.path = path
         self.progress = progress
+        self.limit = limit  # a pilot's stop_after: the run ends there, so the bar should too
         self.offset = 0
         self.total: int | None = None
 
@@ -32,7 +33,7 @@ class TrainingEvents:
         for line in complete.splitlines():
             event = json.loads(line)
             if event["kind"] == "training_started":
-                self.total = int(event["total_steps"])
+                self.total = min(int(event["total_steps"]), self.limit or int(event["total_steps"]))
                 self.progress.update(int(event["step"]), self.total)
             elif event["kind"] == "training_step":
                 self.progress.update(int(event["step"]), self.total, f"loss {float(event['loss']):.4f}")
@@ -65,7 +66,8 @@ def train(training: TrainingConfig, model: ModelConfig, train_file: Path, dev: P
         args += ["--resume", str(resume)]
     events = run / "events.jsonl"
     env: dict[str, str] = {"JEFF_EVENTS": str(events), "JEFF_DEVICE": resolve_device(device)}
-    run_module("jeff.train", args, env=env, poll=TrainingEvents(events, progress).poll, log=runs / "train.log")
+    tail = TrainingEvents(events, progress, training.stop_after)
+    run_module("jeff.train", args, env=env, poll=tail.poll, log=runs / "train.log")
     if not selected.exists():
         raise RuntimeError("Training finished without a selected checkpoint (no evaluation passed the calibration gate)")
     return selected

@@ -73,3 +73,10 @@ def test_training_events_become_progress(tmp_path: Path) -> None:
         stream.write('ning_step", "step": 4, "loss": 0.25}\n')
     tail.poll()
     assert progress.state["done"] == 4
+
+
+def test_pilot_progress_ends_at_stop_after(tmp_path: Path) -> None:
+    events, progress = tmp_path / "events.jsonl", StateProgress()
+    events.write_text(json.dumps({"kind": "training_started", "step": 0, "total_steps": 18}) + "\n")
+    trainer.TrainingEvents(events, progress, limit=4).poll()
+    assert progress.state["total"] == 4
