@@ -54,10 +54,12 @@ def tiny_model(tmp_path_factory: pytest.TempPathFactory) -> Path:
     from transformers import GPT2Config, GPT2LMHeadModel, PreTrainedTokenizerFast
     import torch
 
-    special = ["<unk>", "<pad>", "<|im_start|>", "<|im_end|>"]
+    special = ["<unk>", "<pad>", "<|im_start|>", "<|im_end|>", "<think>", "</think>", "<|fim_prefix|>", "<|fim_middle|>",
+               "<|fim_suffix|>", "<|box_start|>", "<|box_end|>"]
     tokenizer = Tokenizer(models.WordLevel(unk_token="<unk>"))
     tokenizer.pre_tokenizer = pre_tokenizers.Whitespace()
-    corpus = [path.read_text() for path in sorted(Path("samples").glob("*.jsonl"))] + ["system user assistant"]
+    corpus = [path.read_text() for path in sorted(Path("samples").glob("*.jsonl"))]
+    corpus += ["system user assistant Context Question Options no yes A B C D E F"]
     tokenizer.train_from_iterator(corpus, trainers.WordLevelTrainer(special_tokens=special))
     fast = PreTrainedTokenizerFast(tokenizer_object=tokenizer, unk_token="<unk>", pad_token="<pad>",
                                    eos_token="<|im_end|>", chat_template=CHATML)

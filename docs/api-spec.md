@@ -168,7 +168,7 @@ $ curl -s -X POST http://localhost:8000/api/config/validate -H 'content-type: ap
   -d '{"pipeline":{"recipe":"jev","name":"x"},"model":{"backbone":"nope","name":"m","revision":"0000000000000000000000000000000000000000"}}'
 {"detail":"1 validation error for JevConfig\n  Value error, Unknown backbone 'nope'; registered: ['gemma4', 'modernbert', 'qwen3_5'] ..."}
 $ curl -s -X POST http://localhost:8000/api/config/validate -H 'content-type: application/json' -d '{"pipeline":{"name":"x"}}'
-{"detail":"pipeline.recipe is None; registered: ['embedding_contrastive', 'jev', 'llm_dpo', 'llm_grpo', 'llm_instruction', 'llm_sft']"}
+{"detail":"pipeline.recipe is None; registered: ['embedding_contrastive', 'jev', 'llm_decision_cispo', 'llm_decision_sft', 'llm_dpo', 'llm_grpo', 'llm_instruction', 'llm_sft']"}
 ```
 
 #### 특이사항
@@ -383,7 +383,8 @@ GET /api/system/recipes
 
 레시피 키(`pipeline.recipe` 값)마다 객체 하나. 모든 레시피에 `stages` 가 있고, 나머지 필드는 레시피가 정한다.
 
-LLM, Embedding 계열 레시피(`llm_sft`, `llm_instruction`, `llm_dpo`, `llm_grpo`, `embedding_contrastive`)의 필드:
+LLM, Embedding 계열 레시피(`llm_sft`, `llm_instruction`, `llm_dpo`, `llm_grpo`, `llm_decision_sft`, `llm_decision_cispo`,
+`embedding_contrastive`)의 필드:
 
 | 필드 | 타입 | 널 허용 | 설명 |
 |---|---|---|---|
@@ -392,6 +393,7 @@ LLM, Embedding 계열 레시피(`llm_sft`, `llm_instruction`, `llm_dpo`, `llm_gr
 | `source` | string[] | 아니오 | `data.sources[*].name` 에 쓸 수 있는 키 |
 | `method_keys` | string[] | 아니오 | `method` 섹션에 쓸 수 있는 키 |
 | `reward` | string[] | 아니오 | `llm_grpo` 에만 있음. `method.reward.name` 에 쓸 수 있는 키 |
+| `head` | string[] | 아니오 | `llm_decision_sft`, `llm_decision_cispo` 에만 있음. `model.head` 에 쓸 수 있는 키 |
 
 `jev` 의 필드:
 
@@ -414,7 +416,7 @@ LLM, Embedding 계열 레시피(`llm_sft`, `llm_instruction`, `llm_dpo`, `llm_gr
 
 ```bash
 $ curl -s http://localhost:8000/api/system/recipes
-{"embedding_contrastive":{"stages":["data","train","validate"],"architecture":["bi_encoder"],"source":["huggingface","local_jsonl"],"method_keys":["query_instruction","temperature"]},"jev":{"stages":["data","benchmarks","synthetic","mix","train","validate","evaluate"],"builder":[...],"converter":[...],"backbone":[...],"teacher":[...],"benchmark":[...]},"llm_dpo":{"stages":["data","train","validate"],"architecture":["hybrid","transformer"],"source":["huggingface","local_jsonl"],"method_keys":["beta"]},"llm_grpo":{...,"method_keys":["group_size","max_new_tokens","reward","temperature"],"reward":["contains","exact_match","last_number"]},"llm_instruction":{...,"method_keys":["system"]},"llm_sft":{...,"method_keys":[]}}
+{"embedding_contrastive":{"stages":["data","train","validate"],"architecture":["bi_encoder"],"source":["huggingface","local_jsonl"],"method_keys":["query_instruction","temperature"]},"jev":{"stages":["data","benchmarks","synthetic","mix","train","validate","evaluate"],"builder":[...],"converter":[...],"backbone":[...],"teacher":[...],"benchmark":[...]},"llm_dpo":{"stages":["data","train","validate"],"architecture":["hybrid","transformer"],"source":["huggingface","local_jsonl"],"method_keys":["beta"]},"llm_grpo":{...,"method_keys":["group_size","max_new_tokens","reward","temperature"],"reward":["contains","exact_match","last_number"]},"llm_decision_sft":{...,"method_keys":["calibration","eval_think","head_lr","max_think","think_fraction"],"head":["pointer","readout"]},"llm_decision_cispo":{...,"head":["pointer","readout"]},"llm_instruction":{...,"method_keys":["system"]},"llm_sft":{...,"method_keys":[]}}
 ```
 
 #### 특이사항
@@ -526,9 +528,12 @@ revision, prompt_layout), `training`(jeff.train 인자와 동명), `validation`(
 스키마에 없는 최상위 키는 422.
 
 LLM, Embedding 계열 레시피는 `modeling/tuning/config.py` 의 `TuningConfig` 를 공유한다: `model`(architecture, name,
-revision, template), `data`(sources, validation), `training`(epochs, lr, weight_decay, batch_size, accumulation,
+revision, template, head, init), `data`(sources, validation), `training`(epochs, lr, weight_decay, batch_size, accumulation,
 warmup_ratio, max_grad_norm, max_length, max_steps, resume_every, adapter), `validation`(min, max, batch_size), `method`.
 `training.adapter`(name, r, alpha, dropout, targets)가 있으면 LoRA 로 학습하고, 없으면 전체 가중치를 학습한다.
 `method` 섹션의 키는 레시피마다 다르며 `modeling/llm/config.py`, `modeling/embedding/config.py` 가 정본이다.
 `validation.min/max` 에 쓸 수 있는 지표도 레시피마다 다르다: `llm_sft` 와 `llm_instruction` 은 `loss`,
-`perplexity`, `llm_dpo` 는 `accuracy`, `margin`, `llm_grpo` 는 `reward`, `embedding_contrastive` 는 `accuracy`, `mrr`.
+`perplexity`, `llm_dpo` 는 `accuracy`, `margin`, `llm_grpo` 는 `reward`, `llm_decision_sft` 는 `accuracy`, `nll`, `ece`,
+`llm_decision_cispo` 는 여기에 `think_accuracy`, `embedding_contrastive` 는 `accuracy`, `mrr`.
+`model.head` 는 결정 레시피에서 필수이고 다른 레시피에서 쓰면 422. `model.init` 은 이전 실험의 체크포인트 폴더이며,
+폴더가 없어도 config 검증은 통과하고 train 스테이지에서 실패한다.

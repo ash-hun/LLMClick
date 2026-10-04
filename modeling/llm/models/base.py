@@ -1,20 +1,29 @@
 """What every LLM backbone offers the training methods: chat rendering, token ids, logits and generation."""
 
+import json
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import torch
+from safetensors.torch import load_file, save_file
 from transformers import AutoTokenizer
 
 from modeling.tuning.backbone import Backbone
 from core.utils.device import Device
+from core.utils.files import write_json
+
+if TYPE_CHECKING:
+    from modeling.llm.models.heads.base import DecisionHead
 
 Message = dict[str, str]
+THINK, THINK_END = "<think>", "</think>"
+HEAD_WEIGHTS, HEAD_CONFIG = "head.safetensors", "head.json"
 
 
 class LLMBackbone(Backbone):
     loader: ClassVar[Any]                        # the transformers Auto class that builds this architecture
     frozen: ClassVar[tuple[str, ...]] = ()       # parameter-name fragments that text training must not update
+    head: "DecisionHead | None" = None           # set when `model.head` names one
 
     def load(self, device: Device, checkpoint: Path | None = None) -> None:
         origin, revision = self.origin(checkpoint)
@@ -27,10 +36,52 @@ class LLMBackbone(Backbone):
             if any(fragment in name for fragment in self.frozen):
                 parameter.requires_grad_(False)
         self.device = device
+        if self.config.head is not None:
+            self.load_head(Path(origin))
+
+    def load_head(self, origin: Path) -> None:
+        """A fresh head on a base model; the saved head (weights, option codes, temperature) on a checkpoint."""
+        from modeling.llm.models.heads import HEADS
+        saved = json.loads((origin / HEAD_CONFIG).read_text()) if (origin / HEAD_CONFIG).exists() else None
+        if saved is not None and saved["head"] != self.config.head:
+            raise ValueError(f"{origin} was trained with head {saved['head']!r}, the config asks for {self.config.head!r}")
+        self.head = HEADS.get(str(self.config.head))(self, saved)
+        assert self.head is not None
+        if saved is not None:
+            self.head.load_state_dict(load_file(str(origin / HEAD_WEIGHTS)))
+        self.head.to(self.device)
+
+    def modules(self) -> dict[str, torch.nn.Module]:
+        return {**super().modules(), **({"head": self.head} if self.head is not None else {})}
 
     def save(self, path: Path) -> None:
         self.exported().save_pretrained(path)
         self.tokenizer.save_pretrained(path)
+        if self.head is not None:
+            save_file({name: value.detach().cpu().contiguous() for name, value in self.head.state_dict().items()},
+                      str(path / HEAD_WEIGHTS))
+            write_json(path / HEAD_CONFIG, {"head": self.config.head, **self.head.settings()})
+
+    def release(self) -> None:
+        self.head = None
+        super().release()
+
+    def token_ids(self, text: str) -> list[int]:
+        ids: list[int] = self.tokenizer(text, add_special_tokens=False)["input_ids"]
+        return ids
+
+    def think_prompt(self, content: str) -> list[int]:
+        """One user turn followed by an open reasoning block. Qwen3.5's template opens the block itself; Qwen3's
+        leaves that to the model, so it is added here."""
+        text: str = self.tokenizer.apply_chat_template([{"role": "user", "content": content}], tokenize=False,
+                                                       add_generation_prompt=True, enable_thinking=True)
+        return self.token_ids(text if text.endswith(f"{THINK}\n") else f"{text}{THINK}\n")
+
+    def states(self, sequences: list[list[int]]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Final hidden states, next-token logits and the attention mask of right-padded sequences."""
+        ids, mask = self.padded(sequences)
+        output = self.model(input_ids=ids, attention_mask=mask, output_hidden_states=True)
+        return output.hidden_states[-1], output.logits, mask
 
     def render(self, messages: list[Message], generation_prompt: bool) -> list[int]:
         """Token ids of a conversation in the model's own chat format."""
@@ -56,20 +107,22 @@ class LLMBackbone(Backbone):
         return logits, mask
 
     @torch.no_grad()
-    def generate(self, prompts: list[list[int]], max_new_tokens: int, samples: int = 1,
-                 temperature: float = 0.0) -> list[list[list[int]]]:
-        """Per prompt, `samples` completions as token ids cut at the end token; temperature 0 decodes greedily."""
+    def generate(self, prompts: list[list[int]], max_new_tokens: int, samples: int = 1, temperature: float = 0.0,
+                 stop: int | None = None, suppress: list[int] | None = None) -> list[list[list[int]]]:
+        """Per prompt, `samples` completions as token ids cut at the end token (or at `stop`); temperature 0 decodes
+        greedily. `suppress` lists tokens that may never be produced."""
         ids, mask = self.padded(prompts, left=True)
         sampling = {"do_sample": True, "temperature": temperature} if temperature > 0 else {"do_sample": False}
         training = self.model.training
         self.model.eval()
         output = self.model.generate(input_ids=ids, attention_mask=mask, max_new_tokens=max_new_tokens,
                                      num_return_sequences=samples, pad_token_id=self.tokenizer.pad_token_id,
-                                     eos_token_id=self.tokenizer.eos_token_id, **sampling)
+                                     eos_token_id=[self.tokenizer.eos_token_id, *([stop] if stop is not None else [])],
+                                     suppress_tokens=suppress, **sampling)
         self.model.train(training)
         completions = output[:, ids.shape[1]:].tolist()
-        stop = {self.tokenizer.eos_token_id, self.tokenizer.pad_token_id}
-        cut = [next((tokens[:i] for i, token in enumerate(tokens) if token in stop), tokens) for tokens in completions]
+        ends = {self.tokenizer.eos_token_id, self.tokenizer.pad_token_id, stop}
+        cut = [next((tokens[:i] for i, token in enumerate(tokens) if token in ends), tokens) for tokens in completions]
         return [cut[start:start + samples] for start in range(0, len(cut), samples)]
 
     def text(self, tokens: list[int]) -> str:

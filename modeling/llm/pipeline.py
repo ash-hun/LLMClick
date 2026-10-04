@@ -2,7 +2,8 @@
 
 from typing import ClassVar
 
-from modeling.llm.config import DPOConfig, GRPOConfig, InstructionConfig, SFTConfig
+from modeling.llm.config import (DecisionCISPOConfig, DecisionSFTConfig, DPOConfig, GRPOConfig, InstructionConfig,
+                                 SFTConfig)
 from modeling.tuning.pipeline import TuningPipeline
 from modeling.llm.methods.grpo import REWARDS
 from core.pipeline import recipe
@@ -38,3 +39,15 @@ class GRPOPipeline(LLMPipeline):
     @classmethod
     def catalogue(cls) -> dict[str, list[str]]:
         return {**super().catalogue(), "reward": REWARDS.names()}
+
+
+@recipe
+class DecisionSFTPipeline(LLMPipeline):
+    kind: ClassVar[str] = "llm_decision_sft"
+    config_class = DecisionSFTConfig
+
+
+@recipe
+class DecisionCISPOPipeline(LLMPipeline):
+    kind: ClassVar[str] = "llm_decision_cispo"
+    config_class = DecisionCISPOConfig

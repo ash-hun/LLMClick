@@ -49,12 +49,13 @@ def fit(backbone: Backbone, method: TrainingMethod[Any], rows: list[Row], traini
         seed: int, progress: Progress) -> dict[str, Any]:
     """Train `backbone` in place and write `checkpoint/` and `summary.json`; a rerun continues from `resume.pt`."""
     steps = schedule(len(rows), training, seed)
-    optimizer = torch.optim.AdamW(backbone.trainable(), lr=training.lr, weight_decay=training.weight_decay)
+    optimizer = torch.optim.AdamW(method.parameter_groups(backbone), lr=training.lr, weight_decay=training.weight_decay)
+    peaks = [group["lr"] for group in optimizer.param_groups]
     start, events = 0, []
     resume = workdir / RESUME
     if resume.exists():
         state = torch.load(resume, map_location=backbone.device, weights_only=True)
-        backbone.model.load_state_dict(state["model"], strict=False)  # the snapshot holds only what trains
+        backbone.restore(state["model"])
         optimizer.load_state_dict(state["optimizer"])
         start = int(state["step"])
         events = [event for event in history(workdir) if event["step"] <= start]
@@ -66,8 +67,8 @@ def fit(backbone: Backbone, method: TrainingMethod[Any], rows: list[Row], traini
     for index in range(start, len(steps)):
         torch.manual_seed(seed + index)  # methods that sample (GRPO) repeat exactly after a resume
         rate = learning_rate(index, len(steps), training)
-        for group in optimizer.param_groups:
-            group["lr"] = rate
+        for group, peak in zip(optimizer.param_groups, peaks, strict=True):
+            group["lr"] = peak * rate / training.lr
         total = 0.0
         for batch in steps[index]:
             with autocast:
@@ -85,12 +86,12 @@ def fit(backbone: Backbone, method: TrainingMethod[Any], rows: list[Row], traini
         progress.update(index + 1, len(steps), ", ".join(f"{k} {v:.4f}" for k, v in event.items() if k not in {"step", "lr"}))
         if training.resume_every and (index + 1) % training.resume_every == 0 and index + 1 < len(steps):
             temporary = resume.with_suffix(".tmp")
-            weights = {name: parameter for name, parameter in backbone.model.named_parameters() if parameter.requires_grad}
-            torch.save({"step": index + 1, "model": weights, "optimizer": optimizer.state_dict()}, temporary)
+            torch.save({"step": index + 1, "model": backbone.snapshot(), "optimizer": optimizer.state_dict()}, temporary)
             temporary.replace(resume)
     backbone.model.eval()
+    finished = method.finish(backbone)
     backbone.save(workdir / CHECKPOINT)
-    summary = {"steps": len(steps), "rows": len(rows), "loss": history(workdir)[-1]["loss"] if steps else None}
+    summary = {"steps": len(steps), "rows": len(rows), "loss": history(workdir)[-1]["loss"] if steps else None, **finished}
     write_json(workdir / SUMMARY, summary)
     resume.unlink(missing_ok=True)
     return summary

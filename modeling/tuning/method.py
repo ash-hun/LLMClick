@@ -36,9 +36,17 @@ class TrainingMethod(ABC, Generic[BackboneT]):
         """Once before training, with the untouched base weights; may cache into `workdir` and annotate rows."""
         return rows
 
+    def parameter_groups(self, backbone: BackboneT) -> list[dict[str, Any]]:
+        """Optimizer groups; a group may carry its own `lr`, which follows the same warmup and decay."""
+        return [{"params": backbone.trainable()}]
+
     @abstractmethod
     def loss(self, backbone: BackboneT, rows: list[Row]) -> torch.Tensor:
         """Differentiable scalar for one batch of rows."""
+
+    def finish(self, backbone: BackboneT) -> dict[str, float]:
+        """Once after the last step and before the checkpoint is written, e.g. to fit a calibration temperature."""
+        return {}
 
     @abstractmethod
     def evaluate(self, backbone: BackboneT, rows: list[Row], batch_size: int, progress: Progress) -> dict[str, float]:

@@ -1,0 +1,30 @@
+# One-pass decision model (Jev, jeff): describe the situation and the options, get a calibrated probability per
+# option from a single forward pass. Every weight is trained; the readout head scores one-token option codes.
+pipeline:
+  recipe: llm_decision_sft
+  name: decision-readout-qwen3.5-0.8b
+  seed: 20260920
+  output_dir: ./output
+
+model:
+  architecture: hybrid
+  name: Qwen/Qwen3.5-0.8B           # or Qwen/Qwen3.5-2B @ 15852e8c16360a2fea060d615a32b45270f8a8fc
+  revision: 2fc06364715b967f1860aea9cf38778875588b17
+  head: readout                     # or pointer
+
+data:
+  sources:
+    - name: local_jsonl
+      path: samples/llm_decision.jsonl   # rows: {"state": ..., "questions": {id: {type, instructions, criteria, label}}}
+      limit: 48                          # pilot size; drop for a real run
+  validation: 0.15
+
+method:
+  think_fraction: 0.0               # no reasoning: the model decides straight from the prompt
+  head_lr: 1.0e-4
+  calibration: 0.15                 # share of training rows kept aside to fit the temperature
+
+training: {epochs: 1, lr: 5.0e-6, batch_size: 4, max_length: 768, max_steps: 8}
+
+validation:
+  min: {accuracy: 0.3}            # accuracy, nll and ece are measured on the held-out rows

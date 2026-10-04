@@ -15,5 +15,6 @@ class TuningPipeline(ModelingPipeline[TuningConfig]):
     @classmethod
     def catalogue(cls) -> dict[str, list[str]]:
         method: Any = cls.config_class.method_class
+        heads = cls.config_class.heads
         return {**super().catalogue(), "architecture": cls.config_class.backbones.names(), "source": SOURCES.names(),
-                "method_keys": sorted(method.Config.model_fields)}
+                "method_keys": sorted(method.Config.model_fields), **({"head": heads.names()} if heads else {})}

@@ -19,6 +19,8 @@ class BackboneConfig(BaseModel):
     name: str = Field(description="Hugging Face model ID, or a local directory")
     revision: str | None = Field(default=None, description="40-character commit; required unless `name` is a directory")
     template: dict[str, Any] = Field(default_factory=dict, description="Extra chat-template arguments, e.g. enable_thinking")
+    head: str | None = Field(default=None, description="Decision head on top of the backbone; decision recipes only")
+    init: str | None = Field(default=None, description="Start from this checkpoint directory of an earlier experiment")
 
     @model_validator(mode="after")
     def _pinned(self) -> "BackboneConfig":
@@ -65,6 +67,7 @@ class TuningValidationConfig(ValidationConfig):
 class TuningConfig(ModelingConfig):
     """A family sets `backbones`; a recipe sets `method_class` and types its own `method:` section."""
     backbones: ClassVar[Registry]
+    heads: ClassVar[Registry | None] = None  # set by recipes whose method reads a decision head
     method_class: ClassVar[type["TrainingMethod[Any]"]]
 
     model: BackboneConfig
@@ -81,6 +84,10 @@ class TuningConfig(ModelingConfig):
         for source in self.data.sources:
             if source.name not in SOURCES:
                 raise ValueError(f"Unknown source {source.name!r}; registered: {SOURCES.names()}")
+        if self.heads is None and self.model.head is not None:
+            raise ValueError(f"recipe {self.recipe!r} has no decision head; remove model.head")
+        if self.heads is not None and self.model.head not in self.heads:
+            raise ValueError(f"model.head is {self.model.head!r}; recipe {self.recipe!r} needs one of {self.heads.names()}")
         return self
 
     def build_backbone(self) -> "Backbone":

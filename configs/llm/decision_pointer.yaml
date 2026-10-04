@@ -1,0 +1,37 @@
+# Reasoning decision model, stage 1 (Jeeves SFT): LoRA plus a pointer head. A share of the questions carries a
+# reasoning chain sampled from the base model, so the head learns to decide after reasoning as well as without it.
+pipeline:
+  recipe: llm_decision_sft
+  name: decision-pointer-qwen3.5-0.8b
+  seed: 20260920
+  output_dir: ./output
+
+model:
+  architecture: hybrid
+  name: Qwen/Qwen3.5-0.8B           # or Qwen/Qwen3.5-2B @ 15852e8c16360a2fea060d615a32b45270f8a8fc
+  revision: 2fc06364715b967f1860aea9cf38778875588b17
+  head: pointer
+
+data:
+  sources:
+    - name: local_jsonl
+      path: samples/llm_decision.jsonl   # rows: {"state": ..., "questions": {id: {type, instructions, criteria, label}}}
+      limit: 48                          # pilot size; drop for a real run
+  validation: 0.15
+
+method:
+  think_fraction: 0.5
+  max_think: 64                     # reasoning tokens per question; Jeeves uses 2560 on a 9B model
+  head_lr: 1.0e-4
+  calibration: 0.15
+
+training:
+  epochs: 1
+  lr: 5.0e-5
+  batch_size: 4
+  max_length: 768
+  max_steps: 8
+  adapter: {name: lora, r: 16, alpha: 32}
+
+validation:
+  min: {accuracy: 0.3}

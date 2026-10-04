@@ -10,6 +10,8 @@ what is already built, shows progress, and never hands on a trained model that h
 | LLM | `llm_instruction` | instruction/input/output records | same |
 | LLM | `llm_dpo` | chosen/rejected preference pairs | same |
 | LLM | `llm_grpo` | prompts scored by a reward function | same |
+| LLM | `llm_decision_sft` | decision questions: a head scores the options (Jev, jeff, Jeeves stage 1) | same, plus `model.head`: `readout` or `pointer` |
+| LLM | `llm_decision_cispo` | the same questions with reasoning before the decision, by reinforcement (Jeeves stage 2) | same |
 | Embedding | `embedding_contrastive` | query/positive/negative triples (InfoNCE) | `bi_encoder` (Qwen3-Embedding-0.6B) |
 | Decision | `jev` | one-pass decision models with calibrated option probabilities | `qwen3_5`, `gemma4`, `modernbert` |
 
@@ -47,7 +49,9 @@ LLMClick/
 │   │   └── config.py pipeline.py #     TuningConfig, TuningPipeline
 │   ├── llm/                      #   family: generative language models
 │   │   ├── models/               #     Model Catalog: base.py (LLMBackbone), transformer.py, hybrid.py
+│   │   │   └── heads/            #       decision heads on top of a backbone: base.py (DecisionHead), readout, pointer
 │   │   ├── methods/              #     Training Method: base.py (LLMMethod), sft, instruction, dpo, grpo
+│   │   │   └── decision/         #       base.py (DecisionMethod: rows, metrics, calibration), sft, cispo
 │   │   └── config.py pipeline.py #     one config class and one registered recipe per method
 │   ├── embedding/                #   family: text embedding models
 │   │   ├── models/               #     Model Catalog: base.py (EmbeddingBackbone), bi_encoder.py
@@ -110,6 +114,8 @@ pipeline:
 | `llm_instruction` | `instruction`, `input`?, `output` | `loss`, `perplexity` |
 | `llm_dpo` | `prompt`, `chosen`, `rejected` | `accuracy` (chosen more likely than rejected), `margin` |
 | `llm_grpo` | `prompt` + what the reward reads (`answer`) | `reward` (greedy completion) |
+| `llm_decision_sft` | `state`, `questions` (Jev) or `state`, `question`, `label` (jeff Example) | `accuracy`, `nll`, `ece` |
+| `llm_decision_cispo` | same | `accuracy`, `nll`, `ece`, `think_accuracy` (after reasoning) |
 | `embedding_contrastive` | `query`, `positive`, `negative`? | `accuracy` (positive ranked first), `mrr` |
 
 By default every weight is trained, in FP32. `training.adapter` switches any of these recipes to LoRA:
@@ -124,6 +130,38 @@ layers are adapted comes from the architecture (`transformer`, `bi_encoder`: the
 those plus the linear-attention projections) unless `targets` names others. The adapter is folded into the base
 weights when the checkpoint is written, so a LoRA checkpoint and a fully trained one load the same way: a plain
 `save_pretrained` directory at `output/<experiment>/train/checkpoint/`.
+
+### Decision recipes
+
+A decision model answers `choice`, `noul` (yes/no) and `score` questions about a `state` with a probability per
+option. The backbone gets a head (`model.head`) that reads the options, and the prompt marks state, question and
+options with rare tokens of the Qwen tokenizer:
+
+| Head | How it scores | Origin |
+|---|---|---|
+| `readout` | options get one-token codes (A, B, ...); a linear layer on the decide position scores the codes | Jev, jeff |
+| `pointer` | a dot product between the decide position and each option's end position; no codes, any number of options | Jeeves |
+
+`llm_decision_sft` trains the head with cross-entropy over the options. With `method.think_fraction: 0` that is a
+one-pass decision model. Above 0, that share of the questions gets a reasoning chain sampled from the base model
+before training and inserted as context, so the head learns to decide after reasoning as well as without it.
+
+`llm_decision_cispo` continues from such a checkpoint (`model.init`): per question it samples `group_size`
+reasoning chains, rewards each by the probability the head then gives the right option, and reinforces the chains
+that beat their group's mean. The head's loss after reasoning and without reasoning is added, so the one-pass
+answer keeps working.
+
+Both keep `method.calibration` of the training rows aside, fit one temperature on them when training ends and
+store it with the head (`head.json` in the checkpoint); validation reports calibrated `accuracy`, `nll` and `ece`.
+
+```yaml
+model:
+  head: pointer
+  init: output/decision-pointer-qwen3.5-0.8b-<hash>/train/checkpoint   # stage 2 starts where stage 1 ended
+```
+
+`model.init` works in every `llm_*` and `embedding_*` recipe: it is "start from this checkpoint of an earlier
+experiment". The existing `jev` recipe (the vendored jeff trainer and its data pipeline) is unchanged.
 
 ### Stages of `jev`
 
@@ -161,6 +199,9 @@ curl -X POST localhost:8000/api/jobs -H 'content-type: application/json' \
 | `llm/sft_lora.yaml` | the SFT recipe with a LoRA adapter instead of full fine-tuning |
 | `llm/grpo.yaml` | GRPO of Qwen3.5-0.8B with the `exact_match` reward |
 | `llm/grpo_gsm8k.yaml` | GRPO on GSM8K word problems from the Hub with the `last_number` reward |
+| `llm/decision_readout.yaml` | one-pass decision model: full fine-tuning, readout head (Jev, jeff) |
+| `llm/decision_pointer.yaml` | reasoning decision model, stage 1: LoRA, pointer head, reasoning chains as context (Jeeves SFT) |
+| `llm/decision_cispo.yaml` | reasoning decision model, stage 2: CISPO from the stage-1 checkpoint |
 | `embedding/contrastive.yaml` | contrastive learning of Qwen3-Embedding-0.6B |
 | `jev/jeff_public_only.yaml` | jeff's public-only arm (no teacher) |
 | `jev/jeff_combined.yaml` | public + synthetic data from a local teacher |
@@ -196,7 +237,9 @@ Each family is a model catalog crossed with training methods; the two grow indep
 modeling
 ├── llm
 │   ├── Model Catalog      transformer, hybrid            <- add an architecture
+│   │   └── heads          readout, pointer               <- add a decision head
 │   └── Training Method    sft, instruction, dpo, grpo    <- add a method
+│       └── decision       sft, cispo
 ├── embedding
 │   ├── Model Catalog      bi_encoder
 │   └── Training Method    contrastive
@@ -217,6 +260,17 @@ class MoEBackbone(LLMBackbone):
 
 An embedding architecture (for example a cross-encoder) subclasses `EmbeddingBackbone` the same way and overrides
 what differs, such as `pool`.
+
+### A new decision head
+
+A head owns the prompt it reads and turns hidden states into one score per option.
+
+```python
+@HEADS.register("my_head")                      # modeling/llm/models/heads/my_head.py; import it in heads/__init__.py
+class MyHead(DecisionHead):
+    def option_block(self, options): ...        # how the options appear in the prompt
+    def scores(self, hidden, layouts): ...      # (rows, options) scores from (rows, tokens, hidden) states
+```
 
 ### A new training method in a family
 
