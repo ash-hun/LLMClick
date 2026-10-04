@@ -28,7 +28,7 @@ class LLMMethod(TrainingMethod[LLMBackbone]):
             start = common_prefix(backbone.render(messages[:turn], True), full)
             end = common_prefix(backbone.render(messages[:turn + 1], False), full)
             targets[start:end] = [True] * max(end - start, 0)
-        limit = self.training.max_length
+        limit = self.training.max_length  # rows that do not fit never get here: `fitting` stops or skips them first
         return full[:limit], targets[:limit]
 
     def log_probabilities(self, backbone: LLMBackbone, encoded: list[Encoded]) -> tuple[torch.Tensor, torch.Tensor]:

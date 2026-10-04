@@ -9,6 +9,7 @@ from pydantic import Field
 from modeling.llm.methods.decision.base import DecisionMethod, items
 from modeling.llm.models.base import LLMBackbone
 from modeling.tuning.method import Row
+from core.progress import Progress
 
 
 class DecisionCISPO(DecisionMethod):
@@ -27,7 +28,10 @@ class DecisionCISPO(DecisionMethod):
         length_penalty_cap: float = Field(default=0.1, ge=0, le=1)
         eval_think: bool = True
 
-    def prepare(self, backbone: LLMBackbone, rows: list[Row], workdir: Path) -> list[Row]:
+    def thinks(self) -> bool:
+        return True
+
+    def prepare(self, backbone: LLMBackbone, rows: list[Row], workdir: Path, progress: Progress) -> list[Row]:
         return self.prepare_calibration(rows)
 
     # ponytail: chains are sampled from the weights that are then updated once, so CISPO's importance weight

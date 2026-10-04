@@ -87,10 +87,10 @@ def test_interrupted_training_resumes_and_matches_an_uninterrupted_run(adapter: 
 def test_dpo_starts_at_log_two_and_caches_the_reference(backbone: TransformerBackbone, tmp_path: Path) -> None:
     rows = [json.loads(line) for line in Path("samples/llm_dpo.jsonl").read_text().splitlines()][:6]
     method = DPO(DPO.Config(beta=0.5), TrainingConfig(batch_size=4, max_length=64))
-    prepared = method.prepare(backbone, rows, tmp_path)
+    prepared = method.prepare(backbone, rows, tmp_path, Progress())
     assert float(method.loss(backbone, prepared).detach()) == pytest.approx(math.log(2), abs=1e-4)  # policy == reference
     (tmp_path / "reference_margins.json").write_text(json.dumps([0.0] * 6))
-    assert [row["_reference"] for row in method.prepare(backbone, rows, tmp_path)] == [0.0] * 6  # read, not recomputed
+    assert [row["_reference"] for row in method.prepare(backbone, rows, tmp_path, Progress())] == [0.0] * 6  # read, not recomputed
 
 
 def test_last_token_pooling_handles_both_padding_sides() -> None:

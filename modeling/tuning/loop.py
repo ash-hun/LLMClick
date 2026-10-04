@@ -89,7 +89,8 @@ def fit(backbone: Backbone, method: TrainingMethod[Any], rows: list[Row], traini
             torch.save({"step": index + 1, "model": backbone.snapshot(), "optimizer": optimizer.state_dict()}, temporary)
             temporary.replace(resume)
     backbone.model.eval()
-    finished = method.finish(backbone)
+    finished = method.finish(backbone, progress)
+    progress.update(len(steps), len(steps), "saving checkpoint")
     backbone.save(workdir / CHECKPOINT)
     summary = {"steps": len(steps), "rows": len(rows), "loss": history(workdir)[-1]["loss"] if steps else None, **finished}
     write_json(workdir / SUMMARY, summary)

@@ -11,6 +11,7 @@ from modeling.llm.methods.decision.base import DecisionMethod, Item, items
 from modeling.llm.models.base import LLMBackbone
 from modeling.tuning.method import Row, chunks
 from core.utils.files import write_json
+from core.progress import Progress
 
 CHAINS = "reasoning_chains.json"
 
@@ -29,12 +30,15 @@ class DecisionSFT(DecisionMethod):
     class Config(DecisionMethod.Config):
         think_fraction: float = Field(default=0.0, ge=0, le=1, description="Share of questions given a reasoning chain")
 
+    def thinks(self) -> bool:
+        return super().thinks() or self.config.think_fraction > 0
+
     def with_chain(self, key: str) -> bool:
         share: float = self.config.think_fraction
         return int(hashlib.sha256(f"think:{key}".encode()).hexdigest(), 16) % 10_000 < share * 10_000
 
     @torch.no_grad()
-    def prepare(self, backbone: LLMBackbone, rows: list[Row], workdir: Path) -> list[Row]:
+    def prepare(self, backbone: LLMBackbone, rows: list[Row], workdir: Path, progress: Progress) -> list[Row]:
         """Cached like DPO's reference: a resumed run must reuse the chains the first attempt trained on."""
         rows = self.prepare_calibration(rows)
         cache = workdir / CHAINS
@@ -42,7 +46,9 @@ class DecisionSFT(DecisionMethod):
             wanted = [(f"{index}/{entry.key}", entry) for index, row in enumerate(rows) for entry in items(row)
                       if self.with_chain(f"{index}/{entry.key}")]
             chains: dict[str, list[int]] = {}
-            for batch in chunks([{"key": key, "entry": entry} for key, entry in wanted], self.training.batch_size):
+            batches = chunks([{"key": key, "entry": entry} for key, entry in wanted], self.training.batch_size)
+            for index, batch in enumerate(batches):
+                progress.update(index, len(batches), "sampling reasoning chains")
                 prompts = [backbone.think_prompt(plain_question(wrapped["entry"])) for wrapped in batch]
                 for wrapped, group in zip(batch, self.reasoning(backbone, prompts), strict=True):
                     chains[wrapped["key"]] = group[0][0]

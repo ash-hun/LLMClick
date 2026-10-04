@@ -1,5 +1,6 @@
 """Training Method base: what a row must contain, how a batch becomes a loss, and how the result is measured."""
 
+import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Generic, TypeVar
@@ -12,6 +13,7 @@ from core.config.schema import Section
 from core.progress import Progress
 
 Row = dict[str, Any]
+logger = logging.getLogger(__name__)
 BackboneT = TypeVar("BackboneT", bound=Backbone)
 
 
@@ -37,7 +39,12 @@ class TrainingMethod(ABC, Generic[BackboneT]):
         it checks the rows again instead of reusing rows checked under the old setting."""
         return None
 
-    def prepare(self, backbone: BackboneT, rows: list[Row], workdir: Path) -> list[Row]:
+    def lengths(self, backbone: BackboneT, row: Row) -> list[int]:
+        """Token counts of the sequences this row becomes, at their longest; they are checked against
+        `training.max_length` before any training time is spent. Empty when the method may cut text safely."""
+        return []
+
+    def prepare(self, backbone: BackboneT, rows: list[Row], workdir: Path, progress: Progress) -> list[Row]:
         """Once before training, with the untouched base weights; may cache into `workdir` and annotate rows."""
         return rows
 
@@ -49,10 +56,31 @@ class TrainingMethod(ABC, Generic[BackboneT]):
     def loss(self, backbone: BackboneT, rows: list[Row]) -> torch.Tensor:
         """Differentiable scalar for one batch of rows."""
 
-    def finish(self, backbone: BackboneT) -> dict[str, float]:
+    def finish(self, backbone: BackboneT, progress: Progress) -> dict[str, float]:
         """Once after the last step and before the checkpoint is written, e.g. to fit a calibration temperature."""
         return {}
 
     @abstractmethod
     def evaluate(self, backbone: BackboneT, rows: list[Row], batch_size: int, progress: Progress) -> dict[str, float]:
         """Metrics on held-out rows; the validation bounds in the config name these keys."""
+
+
+def fitting(backbone: Backbone, method: TrainingMethod[Any], rows: list[Row], training: TrainingConfig, progress: Progress,
+            name: str) -> list[Row]:
+    """The rows whose sequences fit `training.max_length`. With `overflow: error` any other row stops the run here,
+    before training; with `skip` such rows are left out. Either way nothing is cut and nothing fails hours later."""
+    kept: list[tuple[int, int, Row]] = []
+    over: list[tuple[int, int, Row]] = []
+    for index, row in enumerate(rows):
+        if index % 256 == 0:
+            progress.update(index, len(rows), f"checking {name} lengths")
+        longest = max(method.lengths(backbone, row), default=0)
+        (over if longest > training.max_length else kept).append((index, longest, row))
+    progress.update(len(rows), len(rows), f"checking {name} lengths")
+    if over and (training.overflow == "error" or not kept):
+        worst = ", ".join(f"row {index}: {longest}" for index, longest, _ in sorted(over, key=lambda item: -item[1])[:5])
+        raise ValueError(f"{len(over)} of {len(rows)} {name} rows need more than training.max_length={training.max_length} "
+                         f"tokens ({worst}). Raise max_length, shorten the rows, or set training.overflow: skip")
+    if over:
+        logger.warning("%d of %d %s rows exceed max_length=%d and are left out", len(over), len(rows), name, training.max_length)
+    return [row for _, _, row in kept]

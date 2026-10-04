@@ -101,6 +101,15 @@ class DecisionMethod(LLMMethod):
         if not items(row):
             raise ValueError("a row needs at least one question")
 
+    def thinks(self) -> bool:
+        """Whether sequences can carry a reasoning chain, which counts towards their length."""
+        return bool(self.config.eval_think)
+
+    def lengths(self, backbone: LLMBackbone, row: Row) -> list[int]:
+        head, reasoning = self.head(backbone), self.config.max_think + 1 if self.thinks() else 0
+        return [len(head.layout(backbone, entry.state, entry.instructions, entry.options).ids) + reasoning
+                for entry in items(row)]
+
     def head(self, backbone: LLMBackbone) -> DecisionHead:
         if backbone.head is None:
             raise ValueError("a decision recipe needs model.head")
@@ -179,9 +188,10 @@ class DecisionMethod(LLMMethod):
             raise ValueError(f"{len(rows)} training rows cannot be split into training and calibration rows")
         return kept
 
-    def finish(self, backbone: LLMBackbone) -> dict[str, float]:
+    def finish(self, backbone: LLMBackbone, progress: Progress) -> dict[str, float]:
         """Fit one temperature on the calibration rows (answers without reasoning) and store it in the head."""
-        scores, entries = self.collect(backbone, self.calibration_rows, self.training.batch_size, Progress(), False, "")
+        scores, entries = self.collect(backbone, self.calibration_rows, self.training.batch_size, progress, False,
+                                       "fitting temperature")
         labels = torch.tensor([entry.label for entry in entries], device=scores.device)
         grid = torch.linspace(-1.5, 2.0, 351, device=scores.device).exp()
         losses = torch.stack([torch.nn.functional.cross_entropy(scores / value, labels) for value in grid])

@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from core.progress import StateProgress
+from core.progress import Progress, StateProgress
 from core import pipeline
 
 RECIPES = {  # recipe -> (sample file, method section, metric the validate stage must report)
@@ -151,3 +151,55 @@ SHIPPED = sorted([*Path("configs/llm").glob("*.yaml"), *Path("configs/embedding"
 @pytest.mark.parametrize("path", SHIPPED, ids=[p.name for p in SHIPPED])
 def test_shipped_configs_validate(path: Path) -> None:
     assert pipeline.load(path).plan() == ["data", "train", "validate"]
+
+
+class Notes(Progress):
+    """Collects every phase a stage reports."""
+
+    def __init__(self) -> None:
+        self.seen: list[str] = []
+
+    def update(self, done: int, total: int | None = None, note: str = "") -> None:
+        if note and note not in self.seen:
+            self.seen.append(note)
+
+
+def with_long_rows(tmp_path: Path, count: int) -> str:
+    rows = [json.loads(line) for line in Path("samples/llm_sft.jsonl").read_text().splitlines()]
+    for row in rows[:count]:
+        row["messages"][0]["content"] = " ".join(["What is 1 plus 2 ?"] * 12)  # about 70 tokens
+    path = tmp_path / "rows.jsonl"
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    return str(path)
+
+
+def test_rows_over_max_length_stop_the_run_before_training(tiny_model: Path, tmp_path: Path) -> None:
+    config = raw("llm_sft", tiny_model, tmp_path, max_length=40)
+    config["data"]["sources"][0]["path"] = with_long_rows(tmp_path, 5)
+    notes = Notes()
+    with pytest.raises(ValueError, match="rows need more than training.max_length=40"):
+        pipeline.build(config, notes).run()
+    assert not list(tmp_path.glob("_stages/train-*/training.jsonl"))  # no step was taken
+    assert "loading model" in notes.seen and "sampling" not in " ".join(notes.seen)
+
+
+def test_overflow_skip_leaves_long_rows_out_of_training_and_validation(tiny_model: Path, tmp_path: Path) -> None:
+    config = raw("llm_sft", tiny_model, tmp_path, max_length=40, overflow="skip")
+    config["data"]["sources"][0]["path"] = with_long_rows(tmp_path, 5)
+    result = pipeline.build(config).run()
+    data, train, validate = (result["stages"][name] for name in ("data", "train", "validate"))
+    assert data["rows"] == {"train": 64, "validation": 16} and train["rows"] < 64 and validate["passed"] is True
+    held_out = [json.loads(line) for line in Path(data["validation"]).read_text().splitlines()]
+    long_held_out = sum(len(row["messages"][0]["content"]) > 100 for row in held_out)
+    assert train["rows"] == 64 - (5 - long_held_out)
+    every = raw("llm_sft", tiny_model, tmp_path, max_length=8, overflow="skip")
+    with pytest.raises(ValueError, match="rows need more than training.max_length=8"):
+        pipeline.build(every).run()  # skipping everything is still an error
+
+
+def test_every_long_phase_reports_progress(tiny_model: Path, tmp_path: Path) -> None:
+    notes = Notes()
+    pipeline.build(raw("llm_dpo", tiny_model, tmp_path), notes).run()
+    for phase in ("loading model", "checking validation lengths", "checking training lengths", "reference margins",
+                  "saving checkpoint", "loading checkpoint"):
+        assert phase in notes.seen, (phase, notes.seen)

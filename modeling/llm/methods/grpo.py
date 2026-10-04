@@ -71,6 +71,9 @@ class GRPO(LLMMethod):
             raise ValueError("prompt must be a string or messages")
         self.reward("", row)  # surfaces a row the reward cannot score before any training time is spent
 
+    def lengths(self, backbone: LLMBackbone, row: Row) -> list[int]:
+        return [len(backbone.render(conversation(row["prompt"]), True)) + self.config.max_new_tokens + 1]
+
     # ponytail: one policy update per sampled group, so the PPO ratio is 1 and clipping and the KL term do nothing;
     # keep the sampling-time log-probabilities and add both when a group is reused for several updates.
     def loss(self, backbone: LLMBackbone, rows: list[Row]) -> torch.Tensor:
