@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 import torch
 
-from modeling.llm.models.heads.base import MASKED, OPTION, OPTION_END, DecisionHead, Layout
+from modeling.llm.models.heads.base import MASKED, DecisionHead, Layout
 from modeling.llm.models.heads import HEADS
 
 if TYPE_CHECKING:
@@ -24,7 +24,7 @@ class PointerHead(DecisionHead):
         self.key = torch.nn.Linear(self.hidden_size, LATENT)
 
     def option_block(self, options: list[str]) -> str:
-        return "".join(f"{OPTION}{option}{OPTION_END}\n" for option in options)
+        return "".join(f"{self.markers.option}{option}{self.markers.option_end}\n" for option in options)
 
     def scores(self, hidden: torch.Tensor, layouts: list[Layout]) -> torch.Tensor:
         out = hidden.new_full((len(layouts), max(layout.options for layout in layouts)), MASKED, dtype=torch.float32)

@@ -203,3 +203,77 @@ def test_every_long_phase_reports_progress(tiny_model: Path, tmp_path: Path) -> 
     for phase in ("loading model", "checking validation lengths", "checking training lengths", "reference margins",
                   "saving checkpoint", "loading checkpoint"):
         assert phase in notes.seen, (phase, notes.seen)
+
+
+def test_shared_model_keys_stay_out_of_other_families(tiny_model: Path, tmp_path: Path) -> None:
+    config = raw("embedding_contrastive", tiny_model, tmp_path)
+    for key, value in (("template", {"enable_thinking": False}), ("head", "pointer")):
+        with pytest.raises(ValueError, match="Extra inputs are not permitted"):
+            pipeline.build({**config, "model": {**config["model"], key: value}})
+    llm = raw("llm_sft", tiny_model, tmp_path)
+    assert pipeline.build({**llm, "model": {**llm["model"], "template": {"enable_thinking": False}}})
+
+
+def test_grpo_grades_the_end_token_only_when_the_model_stopped(tiny_model: Path) -> None:
+    from modeling.llm.methods.grpo import GRPO
+    from modeling.llm.models.config import LLMBackboneConfig
+    from modeling.llm.models.transformer import TransformerBackbone
+    from modeling.tuning.config import TrainingConfig
+
+    backbone = TransformerBackbone(LLMBackboneConfig(architecture="transformer", name=str(tiny_model)))
+    backbone.load("cpu")
+    method = GRPO(GRPO.Config(max_new_tokens=4), TrainingConfig())
+    end = backbone.tokenizer.eos_token_id
+    stopped = method.graded(backbone, [1, 2], [7, 8])            # shorter than the cap: the model ended it
+    cut_off = method.graded(backbone, [1, 2], [7, 8, 9, 10])     # at the cap: it was cut, it did not stop
+    assert stopped == ([1, 2, 7, 8, end], [False, False, True, True, True])
+    assert cut_off == ([1, 2, 7, 8, 9, 10], [False, False, True, True, True, True])
+
+
+def test_bumping_one_parts_version_rebuilds_only_its_recipes(tiny_model: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from modeling.llm.methods.dpo import DPO
+
+    def fingerprints() -> dict[str, str]:
+        return {name: pipeline.build(raw(name, tiny_model, tmp_path)).fingerprint("train") for name in ("llm_dpo", "llm_sft")}
+
+    before = fingerprints()
+    monkeypatch.setattr(DPO, "version", DPO.version + 1)
+    after = fingerprints()
+    assert after["llm_dpo"] != before["llm_dpo"] and after["llm_sft"] == before["llm_sft"]
+
+
+def test_tracker_is_synced_once_even_when_switched_on_after_training(tiny_model: Path, tmp_path: Path,
+                                                                     monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+    import types
+
+    calls: dict[str, Any] = {"init": [], "log": 0, "finish": 0}
+
+    class Session:
+        def finish(self) -> None:
+            calls["finish"] += 1
+
+    def init(**keys: Any) -> Session:
+        calls["init"].append(keys)
+        return Session()
+
+    def log(metrics: dict[str, float], step: int) -> None:
+        calls["log"] += 1
+
+    monkeypatch.setitem(sys.modules, "wandb", types.SimpleNamespace(init=init, log=log))
+    plain = pipeline.build(raw("llm_sft", tiny_model, tmp_path)).run()
+    assert calls["init"] == []  # tracker off
+    tracked = {**raw("llm_sft", tiny_model, tmp_path), "tracker": {"enabled": True, "project": "p"}}
+    again = pipeline.build(tracked).run()  # same experiment, training comes from cache
+    assert again["experiment"] == plain["experiment"] and len(calls["init"]) == 1 and calls["log"] == 3
+    assert calls["init"][0]["id"] == Path(plain["stages"]["train"]["run"]).name
+    pipeline.build(tracked).run()
+    assert len(calls["init"]) == 1  # already sent to this project
+    pipeline.build({**tracked, "tracker": {"enabled": True, "project": "other"}}).run()
+    assert [call["project"] for call in calls["init"]] == ["p", "other"]
+
+
+def test_stage_two_config_points_at_the_stage_one_experiment() -> None:
+    stage_one = pipeline.load("configs/llm/decision_pointer.yaml")
+    init = pipeline.load("configs/llm/decision_cispo.yaml").config.model.init
+    assert init == f"output/{stage_one.experiment.key}/validate/checkpoint"  # edit one config, update the other

@@ -74,6 +74,13 @@ class GRPO(LLMMethod):
     def lengths(self, backbone: LLMBackbone, row: Row) -> list[int]:
         return [len(backbone.render(conversation(row["prompt"]), True)) + self.config.max_new_tokens + 1]
 
+    def graded(self, backbone: LLMBackbone, prompt: list[int], tokens: list[int]) -> Encoded:
+        """A sampled completion as a graded sequence. The end token is appended and graded only when the model
+        produced it: a completion cut off at `max_new_tokens` did not choose to stop, and grading a stop there
+        would teach it to stop early whenever a truncated answer happened to be rewarded."""
+        ended = [int(backbone.tokenizer.eos_token_id)] if len(tokens) < self.config.max_new_tokens else []
+        return prompt + tokens + ended, [False] * len(prompt) + [True] * (len(tokens) + len(ended))
+
     # ponytail: one policy update per sampled group, so the PPO ratio is 1 and clipping and the KL term do nothing;
     # keep the sampling-time log-probabilities and add both when a group is reused for several updates.
     def loss(self, backbone: LLMBackbone, rows: list[Row]) -> torch.Tensor:
@@ -82,11 +89,8 @@ class GRPO(LLMMethod):
         rewards = torch.tensor([[self.reward(backbone.text(tokens), row) for tokens in group]
                                 for row, group in zip(rows, groups, strict=True)], device=backbone.device)
         advantages = (rewards - rewards.mean(dim=1, keepdim=True)) / (rewards.std(dim=1, keepdim=True) + EPSILON)
-        end = int(backbone.tokenizer.eos_token_id)
-        encoded: list[Encoded] = [((prompt + tokens + [end])[: self.training.max_length],
-                                   ([False] * len(prompt) + [True] * (len(tokens) + 1))[: self.training.max_length])
-                                  for prompt, group in zip(prompts, groups, strict=True) for tokens in group]
-        scores, counts = self.log_probabilities(backbone, encoded)
+        encoded = [self.graded(backbone, prompt, tokens) for prompt, group in zip(prompts, groups, strict=True) for tokens in group]
+        scores, counts = self.log_probabilities(backbone, encoded, self.config.temperature)
         self.metrics = {"reward": float(rewards.mean())}
         return -(advantages.flatten() * scores / counts.clamp(min=1)).mean()
 

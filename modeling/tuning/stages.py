@@ -71,7 +71,7 @@ class TuneStage(TrainStage[TuningConfig]):
         which points somewhere else once that experiment is rebuilt."""
         model = self.config.model
         return [super().identity(), directory_signature(Path(model.init)) if model.init else None,
-                directory_signature(Path(model.name))]
+                directory_signature(Path(model.name)), self.config.versions()]
 
     def train(self, workdir: Path, inputs: dict[str, Outputs]) -> Outputs:
         checkpoint, summary = workdir / CHECKPOINT, workdir / SUMMARY

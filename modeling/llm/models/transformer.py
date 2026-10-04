@@ -4,10 +4,11 @@ from typing import ClassVar
 
 from transformers import AutoModelForCausalLM
 
-from modeling.llm.models.base import LLMBackbone
+from modeling.llm.models.base import QWEN_MARKERS, LLMBackbone, Markers
 from modeling.llm.models import LLM_BACKBONES
 
 
 @LLM_BACKBONES.register("transformer")
 class TransformerBackbone(LLMBackbone):
     loader: ClassVar = AutoModelForCausalLM
+    markers: ClassVar[Markers | None] = QWEN_MARKERS

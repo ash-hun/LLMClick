@@ -12,6 +12,11 @@ from core.pipeline import recipe
 class LLMPipeline(TuningPipeline):
     """Base of every LLM recipe; a new method is a new subclass with its `kind` and config class."""
 
+    @classmethod
+    def catalogue(cls) -> dict[str, list[str]]:
+        heads = getattr(cls.config_class, "heads", None)
+        return {**super().catalogue(), **({"head": heads.names()} if heads else {})}
+
 
 @recipe
 class SFTPipeline(LLMPipeline):

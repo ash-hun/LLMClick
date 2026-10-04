@@ -1,19 +1,16 @@
 """Decision CISPO (Jeeves, stage 2): the model reasons, then decides; reasoning that leads the head to the right
 option more surely than the rest of its group is reinforced."""
 
-from pathlib import Path
-
 import torch
 from pydantic import Field
 
 from modeling.llm.methods.decision.base import DecisionMethod, items
 from modeling.llm.models.base import LLMBackbone
 from modeling.tuning.method import Row
-from core.progress import Progress
 
 
 class DecisionCISPO(DecisionMethod):
-    """Per question: sample `group_size` reasoning chains, read the head after each, and reward a chain by the
+    """Per question (one step forwards `batch_size` x `group_size` sequences): sample `group_size` reasoning chains, read the head after each, and reward a chain by the
     probability it gave the right option (minus a penalty for running long). Three losses are added: the policy
     gradient on the chain tokens, the head's cross-entropy after reasoning, and the head's cross-entropy without
     reasoning (the anchor that keeps the one-pass answer working). Start it from a decision-SFT checkpoint with
@@ -30,9 +27,6 @@ class DecisionCISPO(DecisionMethod):
 
     def thinks(self) -> bool:
         return True
-
-    def prepare(self, backbone: LLMBackbone, rows: list[Row], workdir: Path, progress: Progress) -> list[Row]:
-        return self.prepare_calibration(rows)
 
     # ponytail: chains are sampled from the weights that are then updated once, so CISPO's importance weight
     # exp(logp - old_logp) is exactly 1 and its clip does nothing; keep the sampling-time log-probabilities and

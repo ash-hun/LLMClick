@@ -12,6 +12,7 @@ from modeling.embedding.models.bi_encoder import BiEncoder
 from modeling.llm.methods.grpo import contains, exact_match, last_number_match
 from modeling.llm.models.transformer import TransformerBackbone
 from modeling.tuning.config import AdapterConfig, BackboneConfig, TrainingConfig
+from modeling.llm.models.config import LLMBackboneConfig
 from modeling.tuning.loop import fit, learning_rate, schedule
 from modeling.llm.methods.dpo import DPO
 from modeling.llm.methods.sft import SFT
@@ -22,7 +23,7 @@ ROWS = [json.loads(line) for line in Path("samples/llm_sft.jsonl").read_text().s
 
 @pytest.fixture
 def backbone(tiny_model: Path) -> TransformerBackbone:
-    loaded = TransformerBackbone(BackboneConfig(architecture="transformer", name=str(tiny_model)))
+    loaded = TransformerBackbone(LLMBackboneConfig(architecture="transformer", name=str(tiny_model)))
     loaded.load("cpu")
     return loaded
 
@@ -57,7 +58,7 @@ def test_interrupted_training_resumes_and_matches_an_uninterrupted_run(adapter: 
     training = TrainingConfig(lr=1e-3, batch_size=4, max_length=64, resume_every=1, adapter=adapter)
 
     def run(workdir: Path, fail_at: int | None) -> list[dict[str, Any]]:
-        loaded = TransformerBackbone(BackboneConfig(architecture="transformer", name=str(tiny_model)))
+        loaded = TransformerBackbone(LLMBackboneConfig(architecture="transformer", name=str(tiny_model)))
         loaded.load("cpu")
         loaded.adapt(adapter)
         method = SFT(SFT.Config(), training)

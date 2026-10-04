@@ -28,7 +28,7 @@ method:
 training:
   epochs: 1
   lr: 5.0e-5
-  batch_size: 4
+  batch_size: 12                    # questions per step
   max_length: 768
   max_steps: 8
   adapter: {name: lora, r: 16, alpha: 32}

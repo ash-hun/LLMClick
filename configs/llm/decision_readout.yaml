@@ -24,7 +24,7 @@ method:
   head_lr: 1.0e-4
   calibration: 0.15                 # share of training rows kept aside to fit the temperature
 
-training: {epochs: 1, lr: 5.0e-6, batch_size: 4, max_length: 768, max_steps: 8}
+training: {epochs: 1, lr: 5.0e-6, batch_size: 12, max_length: 768, max_steps: 8}   # batch_size counts questions
 
 validation:
   min: {accuracy: 0.3}            # accuracy, nll and ece are measured on the held-out rows
