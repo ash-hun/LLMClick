@@ -77,11 +77,24 @@ class LLMBackbone(Backbone):
                                                        add_generation_prompt=True, enable_thinking=True)
         return self.token_ids(text if text.endswith(f"{THINK}\n") else f"{text}{THINK}\n")
 
-    def states(self, sequences: list[list[int]]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Final hidden states, next-token logits and the attention mask of right-padded sequences."""
+    def hidden(self, sequences: list[list[int]]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Final hidden states of right-padded sequences, with their token ids and attention mask. The language-model
+        head is not applied: over a whole batch its output (tokens x vocabulary) is by far the largest tensor."""
         ids, mask = self.padded(sequences)
-        output = self.model(input_ids=ids, attention_mask=mask, output_hidden_states=True)
-        return output.hidden_states[-1], output.logits, mask
+        inner = self.model.get_base_model() if hasattr(self.model, "get_base_model") else self.model  # under LoRA
+        states: torch.Tensor = inner.base_model(input_ids=ids, attention_mask=mask).last_hidden_state
+        return states, ids, mask
+
+    def next_token_log_probabilities(self, hidden: torch.Tensor, ids: torch.Tensor, graded: torch.Tensor,
+                                     temperature: float = 1.0) -> torch.Tensor:
+        """log p(token | everything before it) for the tokens `graded` marks, zero elsewhere; shape (rows, tokens - 1).
+        The language-model head runs only on the marked positions."""
+        selected = graded[:, 1:].bool()
+        out = hidden.new_zeros(selected.shape, dtype=torch.float32)
+        if bool(selected.any()):
+            logits = self.model.get_output_embeddings()(hidden[:, :-1][selected]).float() / temperature
+            out[selected] = torch.log_softmax(logits, dim=-1).gather(-1, ids[:, 1:][selected].unsqueeze(-1)).squeeze(-1)
+        return out
 
     def render(self, messages: list[Message], generation_prompt: bool) -> list[int]:
         """Token ids of a conversation in the model's own chat format."""
@@ -99,12 +112,6 @@ class LLMBackbone(Backbone):
             ids[row, span] = torch.tensor(sequence, dtype=torch.long)
             mask[row, span] = 1
         return ids.to(self.device), mask.to(self.device)
-
-    def logits(self, sequences: list[list[int]]) -> tuple[torch.Tensor, torch.Tensor]:
-        """Next-token logits for right-padded sequences, with their attention mask."""
-        ids, mask = self.padded(sequences)
-        logits: torch.Tensor = self.model(input_ids=ids, attention_mask=mask).logits
-        return logits, mask
 
     @torch.no_grad()
     def generate(self, prompts: list[list[int]], max_new_tokens: int, samples: int = 1, temperature: float = 0.0,

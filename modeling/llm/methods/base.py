@@ -33,9 +33,8 @@ class LLMMethod(TrainingMethod[LLMBackbone]):
 
     def log_probabilities(self, backbone: LLMBackbone, encoded: list[Encoded]) -> tuple[torch.Tensor, torch.Tensor]:
         """Per sequence: the summed log-probability of its target tokens, and how many there are."""
-        logits, mask = backbone.logits([ids for ids, _ in encoded])
-        ids, _ = backbone.padded([ids for ids, _ in encoded])
+        hidden, ids, mask = backbone.hidden([ids for ids, _ in encoded])
         targets, _ = backbone.padded([[int(flag) for flag in flags] for _, flags in encoded])
-        graded = (targets[:, 1:] * mask[:, 1:]).to(logits.dtype)
-        scores = torch.log_softmax(logits[:, :-1].float(), dim=-1).gather(-1, ids[:, 1:].unsqueeze(-1)).squeeze(-1)
-        return (scores * graded).sum(dim=1), graded.sum(dim=1)
+        graded = targets * mask
+        scores = backbone.next_token_log_probabilities(hidden, ids, graded)
+        return scores.sum(dim=1), graded[:, 1:].sum(dim=1).float()

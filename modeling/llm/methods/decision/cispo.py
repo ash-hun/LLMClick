@@ -41,7 +41,7 @@ class DecisionCISPO(DecisionMethod):
         expanded = [entry for entry in entries for _ in range(config.group_size)]
         layouts = [self.layout(backbone, entry, chain, closed)
                    for entry, group in zip(entries, groups, strict=True) for chain, closed in group]
-        scores, logits, mask = self.scores(backbone, layouts)
+        scores, hidden, ids = self.scores(backbone, layouts)
         rollout = self.cross_entropy(scores, expanded)
 
         labels = torch.tensor([entry.label for entry in expanded], device=scores.device)
@@ -55,13 +55,11 @@ class DecisionCISPO(DecisionMethod):
             advantage = (reward - reward.mean(dim=1, keepdim=True)).flatten()
 
         # log-probability of each chain token under the distribution it was sampled from
-        ids, _ = backbone.padded([layout.ids for layout in layouts])
-        chain = torch.zeros_like(mask)
+        chain = torch.zeros_like(ids)
         for row, layout in enumerate(layouts):
             chain[row, layout.reasoning[0]:layout.reasoning[1]] = 1
-        chain = chain[:, 1:] * mask[:, 1:]
-        token = torch.log_softmax(logits[:, :-1].float() / config.temperature, dim=-1).gather(-1, ids[:, 1:].unsqueeze(-1)).squeeze(-1)
-        policy = -(advantage[:, None] * token * chain).sum() / chain.sum().clamp(min=1)
+        token = backbone.next_token_log_probabilities(hidden, ids, chain, config.temperature)
+        policy = -(advantage[:, None] * token).sum() / chain[:, 1:].sum().clamp(min=1)
 
         anchor = self.cross_entropy(self.scores(backbone, [self.layout(backbone, entry) for entry in entries])[0], entries)
         self.metrics = {"reward": float(reward.mean()), "think_accuracy": float((scores.argmax(dim=-1) == labels).float().mean()),

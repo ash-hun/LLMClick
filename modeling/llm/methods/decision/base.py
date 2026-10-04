@@ -120,9 +120,9 @@ class DecisionMethod(LLMMethod):
         return layout
 
     def scores(self, backbone: LLMBackbone, layouts: list[Layout]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Head scores per option, plus the language-model logits and mask of the same forward pass."""
-        hidden, logits, mask = backbone.states([layout.ids for layout in layouts])
-        return self.head(backbone).scores(hidden, layouts), logits, mask
+        """Head scores per option, plus the hidden states and token ids of the same forward pass."""
+        hidden, ids, _ = backbone.hidden([layout.ids for layout in layouts])
+        return self.head(backbone).scores(hidden, layouts), hidden, ids
 
     def cross_entropy(self, scores: torch.Tensor, entries: list[Item]) -> torch.Tensor:
         """Per question; soft targets are supported, so a row may spread mass over several options."""
