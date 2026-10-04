@@ -85,6 +85,8 @@ pipeline:
 - **Fingerprints.** A stage's fingerprint is its own config inputs (plus the content of local files it reads) and
   the fingerprints of the stages it reads. Its directory is `output/_stages/<stage>-<fingerprint>/`, so two configs
   that differ only in training settings share the data stages, and a rerun of the same config builds nothing.
+  Each training method, backbone and head class carries a `version`; bumping one after changing its code rebuilds
+  the experiments that use that part and leaves every other recipe's cache alone.
 - **Reruns.** A stage is recorded only when it finishes. A crashed run is resumed by running the same command
   again; training continues from `resume.pt` in the train stage directory.
 - **Locks.** A stage directory is locked while it is built, so a CLI run and an API job asking for the same stage
@@ -103,6 +105,8 @@ pipeline:
   trained model on data training never saw and checks `validation.min` / `validation.max`; a miss, or a metric
   that is not a finite number, stops the pipeline. A later stage reads the checkpoint from `validate`, never from
   `train`. Without bounds the metrics are only recorded, and a warning says so.
+- **Tracking.** With `tracker.enabled` a training run's metrics go to wandb once per run and project. `tracker` is
+  not part of an experiment's identity, so switching it on later sends the already cached run instead of retraining.
 - **Typos.** Every config section rejects keys it does not know, so `validaton:` or `training.learning_rate` is an
   error instead of a silently ignored setting.
 
@@ -158,8 +162,10 @@ reasoning chains, rewards each by the probability the head then gives the right 
 that beat their group's mean. The head's loss after reasoning and without reasoning is added, so the one-pass
 answer keeps working.
 
-Both keep `method.calibration` of the training rows aside, fit one temperature on them when training ends and
+Both keep `method.calibration` of the training records aside, fit one temperature on them when training ends and
 store it with the head (`head.json` in the checkpoint); validation reports calibrated `accuracy`, `nll` and `ece`.
+The training unit is the question: `training.batch_size` counts questions, however many a record holds, and CISPO
+forwards `batch_size` x `group_size` sequences per step.
 
 ```yaml
 model:
@@ -238,6 +244,7 @@ class MoEBackbone(LLMBackbone):
     loader = AutoModelForCausalLM               # the transformers class that builds it
     frozen = ("router",)                        # parameter-name fragments training must not update
     adapter_targets = ("q_proj", "v_proj")      # layers LoRA adapts by default
+    markers = Markers(...)                      # only for decision recipes: seven single tokens of its tokenizer
 ```
 
 An embedding architecture (for example a cross-encoder) subclasses `EmbeddingBackbone` the same way and overrides
@@ -245,7 +252,9 @@ what differs, such as `pool`.
 
 ### A new decision head
 
-A head owns the prompt it reads and turns hidden states into one score per option.
+A head owns the prompt it reads and turns hidden states into one score per option. The tokens that mark state,
+question and options come from the architecture (`LLMBackbone.markers`), so a head works on any backbone that
+defines them.
 
 ```python
 @HEADS.register("my_head")                      # modeling/llm/models/heads/my_head.py; import it in heads/__init__.py

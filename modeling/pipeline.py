@@ -1,7 +1,9 @@
 """What makes a pipeline a modeling pipeline: it trains, and a trained model is always validated."""
 
 from core.pipeline import Pipeline
+from core.stage import Outputs
 from modeling.stages import ModelingConfigT, TrainStage, ValidateStage
+from modeling.tracker import Tracker
 
 
 class ModelingPipeline(Pipeline[ModelingConfigT]):
@@ -18,3 +20,12 @@ class ModelingPipeline(Pipeline[ModelingConfigT]):
         if TrainStage.name in selected and ValidateStage.name not in selected:
             selected = [name for name in self.stage_names() if name in {*selected, ValidateStage.name}]
         return selected
+
+    def run_stage(self, name: str, done: dict[str, Outputs]) -> Outputs:
+        """After a train stage, built now or taken from cache, its history goes to the tracker if it has not yet."""
+        outputs = super().run_stage(name, done)
+        stage = self.stages[name]
+        if isinstance(stage, TrainStage):
+            run = self.experiment.stage_dir(name, self.fingerprint(name))
+            Tracker(self.config.tracker).sync(run, self.config.name, stage.history(outputs), self.config.model_dump(mode="json"))
+        return outputs

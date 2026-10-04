@@ -9,7 +9,9 @@ from modeling.llm.methods.instruction import InstructionTuning
 from modeling.llm.methods.decision.sft import DecisionSFT
 from modeling.llm.methods.grpo import GRPO, REWARDS
 from modeling.tuning.config import TuningConfig
+from modeling.llm.models.config import LLMBackboneConfig
 from modeling.llm.models.heads import HEADS
+from core.registry import Registry
 from modeling.llm.models import LLM_BACKBONES
 from modeling.llm.methods.dpo import DPO
 from modeling.llm.methods.sft import SFT
@@ -17,6 +19,21 @@ from modeling.llm.methods.sft import SFT
 
 class LLMConfig(TuningConfig):
     backbones: ClassVar = LLM_BACKBONES
+    heads: ClassVar[Registry | None] = None  # set by recipes whose method reads a decision head
+
+    model: LLMBackboneConfig
+
+    @model_validator(mode="after")
+    def _head(self) -> "LLMConfig":
+        if self.heads is None and self.model.head is not None:
+            raise ValueError(f"recipe {self.recipe!r} has no decision head; remove model.head")
+        if self.heads is not None and self.model.head not in self.heads:
+            raise ValueError(f"model.head is {self.model.head!r}; recipe {self.recipe!r} needs one of {self.heads.names()}")
+        return self
+
+    def versions(self) -> dict[str, int]:
+        head = {"head": self.heads.get(str(self.model.head)).version} if self.heads is not None else {}
+        return {**super().versions(), **head}
 
 
 class SFTConfig(LLMConfig):

@@ -31,10 +31,11 @@ class LLMMethod(TrainingMethod[LLMBackbone]):
         limit = self.training.max_length  # rows that do not fit never get here: `fitting` stops or skips them first
         return full[:limit], targets[:limit]
 
-    def log_probabilities(self, backbone: LLMBackbone, encoded: list[Encoded]) -> tuple[torch.Tensor, torch.Tensor]:
+    def log_probabilities(self, backbone: LLMBackbone, encoded: list[Encoded],
+                          temperature: float = 1.0) -> tuple[torch.Tensor, torch.Tensor]:
         """Per sequence: the summed log-probability of its target tokens, and how many there are."""
         hidden, ids, mask = backbone.hidden([ids for ids, _ in encoded])
         targets, _ = backbone.padded([[int(flag) for flag in flags] for _, flags in encoded])
         graded = targets * mask
-        scores = backbone.next_token_log_probabilities(hidden, ids, graded)
+        scores = backbone.next_token_log_probabilities(hidden, ids, graded, temperature)
         return scores.sum(dim=1), graded[:, 1:].sum(dim=1).float()

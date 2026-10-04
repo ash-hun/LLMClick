@@ -3,7 +3,7 @@
 import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Generic, TypeVar
+from typing import Any, ClassVar, Generic, TypeVar
 
 import torch
 
@@ -22,6 +22,8 @@ def chunks(rows: list[Row], size: int) -> list[list[Row]]:
 
 
 class TrainingMethod(ABC, Generic[BackboneT]):
+    version: ClassVar[int] = 1  # bump when this method's code changes what the same config trains or measures
+
     class Config(Section):
         """Method-specific keys of the `method:` section; subclasses replace it."""
 

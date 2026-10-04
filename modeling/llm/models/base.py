@@ -1,6 +1,7 @@
 """What every LLM backbone offers the training methods: chat rendering, token ids, logits and generation."""
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -8,6 +9,7 @@ import torch
 from safetensors.torch import load_file, save_file
 from transformers import AutoTokenizer
 
+from modeling.llm.models.config import LLMBackboneConfig
 from modeling.tuning.backbone import Backbone
 from core.utils.device import Device
 from core.utils.files import write_json
@@ -16,13 +18,30 @@ if TYPE_CHECKING:
     from modeling.llm.models.heads.base import DecisionHead
 
 Message = dict[str, str]
-THINK, THINK_END = "<think>", "</think>"
 HEAD_WEIGHTS, HEAD_CONFIG = "head.safetensors", "head.json"
+
+
+@dataclass(frozen=True)
+class Markers:
+    """Single tokens that give a decision prompt its structure. An architecture names tokens its tokenizer already
+    has and ordinary text hardly uses; plain words in their place score worse (Jeeves)."""
+    state: str
+    question: str
+    option: str
+    option_end: str
+    decide: str
+    think: str
+    think_end: str
+
+
+QWEN_MARKERS = Markers("<|fim_prefix|>", "<|fim_middle|>", "<|box_start|>", "<|box_end|>", "<|fim_suffix|>", "<think>", "</think>")
 
 
 class LLMBackbone(Backbone):
     loader: ClassVar[Any]                        # the transformers Auto class that builds this architecture
     frozen: ClassVar[tuple[str, ...]] = ()       # parameter-name fragments that text training must not update
+    markers: ClassVar[Markers | None] = None     # needed by decision recipes; set by architectures that support them
+    config: LLMBackboneConfig
     head: "DecisionHead | None" = None           # set when `model.head` names one
 
     def load(self, device: Device, checkpoint: Path | None = None) -> None:
@@ -70,12 +89,26 @@ class LLMBackbone(Backbone):
         ids: list[int] = self.tokenizer(text, add_special_tokens=False)["input_ids"]
         return ids
 
+    def decision_markers(self) -> Markers:
+        if self.markers is None:
+            raise ValueError(f"architecture {self.config.architecture!r} defines no decision markers; decision recipes "
+                             "need the backbone class to set `markers`")
+        return self.markers
+
+    def neutral(self, text: str) -> str:
+        """User text with every control token of this tokenizer broken up, so it cannot forge a marker or a turn."""
+        for token in sorted({*self.tokenizer.all_special_tokens, *self.tokenizer.get_added_vocab()}, key=len, reverse=True):
+            if token in text:
+                text = text.replace(token, f"{token[:1]}\u200b{token[1:]}")
+        return text
+
     def think_prompt(self, content: str) -> list[int]:
-        """One user turn followed by an open reasoning block. Qwen3.5's template opens the block itself; Qwen3's
-        leaves that to the model, so it is added here."""
+        """One user turn followed by an open reasoning block. Some templates open the block themselves (Qwen3.5);
+        others leave that to the model (Qwen3), so it is added here."""
+        think = self.decision_markers().think
         text: str = self.tokenizer.apply_chat_template([{"role": "user", "content": content}], tokenize=False,
-                                                       add_generation_prompt=True, enable_thinking=True)
-        return self.token_ids(text if text.endswith(f"{THINK}\n") else f"{text}{THINK}\n")
+                                                       add_generation_prompt=True, **{**self.config.template, "enable_thinking": True})
+        return self.token_ids(text if text.endswith(f"{think}\n") else f"{text}{think}\n")
 
     def hidden(self, sequences: list[list[int]]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Final hidden states of right-padded sequences, with their token ids and attention mask. The language-model

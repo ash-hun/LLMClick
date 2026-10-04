@@ -10,7 +10,7 @@ from typing import Any, ClassVar, TypeVar
 from core.stage import Outputs, Stage
 from core.utils.files import write_json
 from modeling.config import ModelingConfig, ValidationConfig
-from modeling.tracker import History, Tracker
+from modeling.tracker import History
 
 ModelingConfigT = TypeVar("ModelingConfigT", bound=ModelingConfig)
 logger = logging.getLogger(__name__)
@@ -21,7 +21,8 @@ class ValidationFailed(RuntimeError):
 
 
 class TrainStage(Stage[ModelingConfigT]):
-    """Template: the recipe trains and reports its history; tracking is handled here. Outputs carry `checkpoint`."""
+    """Template: the recipe trains and reports its history; the pipeline sends that history to the tracker.
+    Outputs carry `checkpoint`."""
     name: ClassVar[str] = "train"
 
     @abstractmethod
@@ -32,10 +33,7 @@ class TrainStage(Stage[ModelingConfigT]):
         return []
 
     def run(self, workdir: Path, inputs: dict[str, Outputs]) -> Outputs:
-        outputs = self.train(workdir, inputs)
-        Tracker(self.config.tracker).sync(workdir.name, self.config.name, self.history(outputs),
-                                          self.config.model_dump(mode="json"))
-        return outputs
+        return self.train(workdir, inputs)
 
 
 def violations(metrics: dict[str, float], bounds: ValidationConfig) -> list[str]:

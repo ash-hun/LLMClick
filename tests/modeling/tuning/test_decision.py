@@ -10,7 +10,9 @@ import torch
 from modeling.llm.methods.decision.base import expected_calibration_error, item, items
 from modeling.llm.models.transformer import TransformerBackbone
 from modeling.llm.methods.decision.sft import DecisionSFT
-from modeling.tuning.config import BackboneConfig, TrainingConfig
+from modeling.llm.methods.decision.base import single_questions, split_calibration
+from modeling.llm.models.config import LLMBackboneConfig
+from modeling.tuning.config import TrainingConfig
 from core import pipeline
 
 ROWS = [json.loads(line) for line in Path("samples/llm_decision.jsonl").read_text().splitlines()]
@@ -27,7 +29,7 @@ def raw(recipe: str, model: Path, out: Path, head: str, method: dict[str, Any] |
 
 
 def backbone(tiny_model: Path, head: str) -> TransformerBackbone:
-    loaded = TransformerBackbone(BackboneConfig(architecture="transformer", name=str(tiny_model), head=head))
+    loaded = TransformerBackbone(LLMBackboneConfig(architecture="transformer", name=str(tiny_model), head=head))
     loaded.load("cpu")
     return loaded
 
@@ -74,7 +76,7 @@ def test_decision_sft_trains_calibrates_and_reloads_its_head(head: str, tiny_mod
     assert validate["metrics"]["temperature"] == train["temperature"]  # validate read the head back from the checkpoint
     with pytest.raises(ValueError, match="trained with head"):
         other = "readout" if head == "pointer" else "pointer"
-        backbone_config = BackboneConfig(architecture="transformer", name=str(tiny_model), head=other)
+        backbone_config = LLMBackboneConfig(architecture="transformer", name=str(tiny_model), head=other)
         TransformerBackbone(backbone_config).load("cpu", checkpoint)
 
 
@@ -86,8 +88,10 @@ def test_gradients_reach_backbone_and_head(tiny_model: Path) -> None:
     optimizer = torch.optim.AdamW(method.parameter_groups(loaded), lr=3e-3)
     assert [group["lr"] for group in optimizer.param_groups] == [3e-3, 1e-4]  # the head keeps its own rate
     loaded.model.train()
+    questions = single_questions(ROWS[:6])
+    assert len(questions) == 18 and all(len(row["questions"]) == 1 for row in questions)
     for _ in range(80):
-        loss = method.loss(loaded, ROWS[:6])
+        loss = method.loss(loaded, questions)
         loss.backward()
         optimizer.step()
         optimizer.zero_grad()
@@ -148,3 +152,53 @@ def test_decision_config_rules(tiny_model: Path, tmp_path: Path) -> None:
 def test_expected_calibration_error() -> None:
     assert expected_calibration_error([0.9, 0.9, 0.9, 0.9], [1, 1, 1, 0]) == pytest.approx(0.15)
     assert expected_calibration_error([1.0, 0.5], [1, 0]) == pytest.approx(0.25)
+
+
+def test_batch_size_counts_questions_in_training(tiny_model: Path, tmp_path: Path) -> None:
+    config = raw("llm_decision_sft", tiny_model, tmp_path, "pointer")
+    config["training"].update(batch_size=5, max_steps=None)
+    result = pipeline.build(config).run()
+    train = result["stages"]["train"]
+    records = result["stages"]["data"]["rows"]["train"] - int(train["calibration_rows"])
+    assert train["rows"] == records * 3 and train["steps"] == -(-train["rows"] // 5)  # 3 questions per record
+
+
+def test_calibration_split_is_never_empty_and_never_everything() -> None:
+    for count in range(2, 40):
+        kept, aside = split_calibration([{"i": i} for i in range(count)], 0.1)
+        assert kept and aside and len(kept) + len(aside) == count
+    with pytest.raises(ValueError, match="cannot be split"):
+        split_calibration([{"i": 0}], 0.1)
+
+
+def test_a_decision_method_cannot_skip_calibration(tiny_model: Path, tmp_path: Path) -> None:
+    from core.progress import Progress
+    from modeling.llm.methods.decision.base import DecisionMethod
+
+    class Bare(DecisionMethod):  # adds nothing of its own: `prepare` is inherited whole
+        def loss(self, backbone: Any, rows: Any) -> Any:
+            raise NotImplementedError
+
+    method = Bare(DecisionMethod.Config(), TrainingConfig(max_length=250))
+    with pytest.raises(RuntimeError, match="`prepare` must run before `finish`"):
+        method.finish(backbone(tiny_model, "pointer"), Progress())
+    prepared = method.prepare(backbone(tiny_model, "pointer"), ROWS[:10], tmp_path, Progress())
+    assert method.calibration_rows and len(prepared) == (10 - len(method.calibration_rows)) * 3
+
+
+def test_markers_come_from_the_architecture(tiny_model: Path) -> None:
+    from modeling.llm.models.base import Markers
+
+    class Plain(TransformerBackbone):
+        markers = None
+
+    class Renamed(TransformerBackbone):
+        markers = Markers("<|im_start|>", "<|im_end|>", "<|box_start|>", "<|box_end|>", "<|fim_suffix|>", "<think>", "</think>")
+
+    config = LLMBackboneConfig(architecture="transformer", name=str(tiny_model), head="pointer")
+    with pytest.raises(ValueError, match="defines no decision markers"):
+        Plain(config).load("cpu")
+    renamed = Renamed(config)
+    renamed.load("cpu")
+    ids = renamed.head.prompt(renamed, "s", "q", ["a", "b"])
+    assert renamed.token_ids("<|fim_prefix|>")[0] not in ids and renamed.token_ids("<|im_start|>")[0] in ids

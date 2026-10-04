@@ -515,7 +515,7 @@ $ curl -s http://localhost:8000/health
 스키마에 없는 키는 최상위든 섹션 안이든 422 (`data.sources[*]` 와 `method.reward` 처럼 `name` + 임의 파라미터인 항목 제외).
 
 LLM, Embedding 계열 레시피는 `modeling/tuning/config.py` 의 `TuningConfig` 를 공유한다: `model`(architecture, name,
-revision, template, head, init), `data`(sources, validation), `training`(epochs, lr, weight_decay, batch_size, accumulation,
+revision, init. LLM 계열은 여기에 template, head 가 더 있고 임베딩 계열에서 쓰면 422), `data`(sources, validation), `training`(epochs, lr, weight_decay, batch_size, accumulation,
 warmup_ratio, max_grad_norm, max_length, overflow, max_steps, resume_every, adapter), `validation`(min, max, batch_size), `method`.
 `training.adapter`(name, r, alpha, dropout, targets)가 있으면 LoRA 로 학습하고, 없으면 전체 가중치를 학습한다.
 `method` 섹션의 키는 레시피마다 다르며 `modeling/llm/config.py`, `modeling/embedding/config.py` 가 정본이다.

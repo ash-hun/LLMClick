@@ -3,6 +3,7 @@
 import json
 import hashlib
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -10,6 +11,7 @@ from pydantic import Field
 
 from modeling.llm.models.heads.base import DecisionHead, Layout
 from modeling.tuning.method import Row, chunks
+from modeling.tuning.config import TrainingConfig
 from modeling.llm.models.base import LLMBackbone
 from modeling.llm.methods.base import LLMMethod
 from core.config.schema import Section
@@ -72,9 +74,24 @@ def items(row: Row) -> list[Item]:
     return [item("question", row["state"], row["question"], row["label"], row.get("target"))]
 
 
-def held_out(index: int, share: float) -> bool:
-    """A stable pseudo-random share of row positions, used to keep calibration rows out of training."""
-    return int(hashlib.sha256(f"calibration:{index}".encode()).hexdigest(), 16) % 10_000 < share * 10_000
+def split_calibration(rows: list[Row], share: float) -> tuple[list[Row], list[Row]]:
+    """(training rows, calibration rows): a stable pseudo-random `share` of the rows, at least one and never all."""
+    if len(rows) < 2:
+        raise ValueError(f"{len(rows)} training row cannot be split into training and calibration rows")
+    ranked = sorted(range(len(rows)), key=lambda i: hashlib.sha256(f"calibration:{i}".encode()).hexdigest())
+    aside = set(ranked[: min(len(rows) - 1, max(1, round(len(rows) * share)))])
+    return [row for i, row in enumerate(rows) if i not in aside], [row for i, row in enumerate(rows) if i in aside]
+
+
+def single_questions(rows: list[Row]) -> list[Row]:
+    """One row per question, so `training.batch_size` counts questions in training exactly as it does in evaluation."""
+    out: list[Row] = []
+    for row in rows:
+        if "questions" in row:
+            out += [{**row, "questions": {key: question}} for key, question in row["questions"].items()]
+        else:
+            out.append(row)
+    return out
 
 
 def expected_calibration_error(confidence: list[float], correct: list[float]) -> float:
@@ -87,15 +104,18 @@ def expected_calibration_error(confidence: list[float], correct: list[float]) ->
 
 class DecisionMethod(LLMMethod):
     """Rows: {"state", "questions": {id: {"type", "instructions", "criteria", "label", "target"?}}} (Jev), or
-    {"state", "question": {...}, "label", "target"?} (jeff Example)."""
+    {"state", "question": {...}, "label", "target"?} (jeff Example). The training unit is the question:
+    `training.batch_size` counts questions, however many a record holds."""
 
     class Config(Section):
         head_lr: float = Field(default=1e-4, gt=0, description="Learning rate of the head, which starts untrained")
-        calibration: float = Field(default=0.1, gt=0, lt=1, description="Share of training rows kept for fitting the temperature")
+        calibration: float = Field(default=0.1, gt=0, lt=1, description="Share of training records kept for fitting the temperature")
         max_think: int = Field(default=256, ge=1, description="Reasoning tokens per question before the model must decide")
         eval_think: bool = Field(default=False, description="Also measure accuracy when the model reasons first")
 
-    calibration_rows: list[Row]
+    def __init__(self, config: Any, training: TrainingConfig) -> None:
+        super().__init__(config, training)
+        self.calibration_rows: list[Row] = []
 
     def check(self, row: Row) -> None:
         if not items(row):
@@ -180,16 +200,21 @@ class DecisionMethod(LLMMethod):
         return {"accuracy": float(correct.mean()), "nll": float(nll.mean()),
                 "ece": expected_calibration_error(confidence.tolist(), correct.tolist())}
 
-    def prepare_calibration(self, rows: list[Row]) -> list[Row]:
-        """Keep a share of the training rows aside; the temperature is fitted on rows the weights never saw."""
-        self.calibration_rows = [row for index, row in enumerate(rows) if held_out(index, self.config.calibration)]
-        kept = [row for index, row in enumerate(rows) if not held_out(index, self.config.calibration)]
-        if not self.calibration_rows or not kept:
-            raise ValueError(f"{len(rows)} training rows cannot be split into training and calibration rows")
-        return kept
+    def prepare(self, backbone: LLMBackbone, rows: list[Row], workdir: Path, progress: Progress) -> list[Row]:
+        """The same for every decision method, so none can forget a step `finish` relies on: keep calibration rows
+        aside (the temperature is fitted on rows the weights never saw), make each question its own row, then let
+        the method add what it needs through `annotate`."""
+        kept, self.calibration_rows = split_calibration(rows, self.config.calibration)
+        return self.annotate(backbone, single_questions(kept), workdir, progress)
+
+    def annotate(self, backbone: LLMBackbone, rows: list[Row], workdir: Path, progress: Progress) -> list[Row]:
+        """Hook for a method's own preparation; `rows` hold one question each."""
+        return rows
 
     def finish(self, backbone: LLMBackbone, progress: Progress) -> dict[str, float]:
         """Fit one temperature on the calibration rows (answers without reasoning) and store it in the head."""
+        if not self.calibration_rows:
+            raise RuntimeError("no calibration rows: `prepare` must run before `finish`")
         scores, entries = self.collect(backbone, self.calibration_rows, self.training.batch_size, progress, False,
                                        "fitting temperature")
         labels = torch.tensor([entry.label for entry in entries], device=scores.device)
