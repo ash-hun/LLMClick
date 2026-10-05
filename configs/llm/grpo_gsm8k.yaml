@@ -27,6 +27,8 @@ method:
   max_new_tokens: 256               # the model works step by step; at 128 it is cut off before the result
   temperature: 1.0
   reward: {name: last_number}
+  # iterations: 2                   # optimizer steps per sampled group; clip (default 0.2) bounds the policy ratio
+  # beta: 0.05                      # KL penalty towards the base model; needs training.adapter
 
 training: {epochs: 1, lr: 2.0e-6, batch_size: 2, max_length: 512, max_steps: 6}
 

@@ -50,6 +50,11 @@ class TrainingMethod(ABC, Generic[BackboneT]):
         """Once before training, with the untouched base weights; may cache into `workdir` and annotate rows."""
         return rows
 
+    @property
+    def repeats(self) -> int:
+        """Optimizer steps taken on each batch before moving on; above 1 for methods that reuse what they sampled."""
+        return 1
+
     def parameter_groups(self, backbone: BackboneT) -> list[dict[str, Any]]:
         """Optimizer groups; a group may carry its own `lr`, which follows the same warmup and decay."""
         return [{"params": backbone.trainable()}]

@@ -32,7 +32,7 @@
 
 YAML 설정 하나를 커스텀 모델 하나로 실행하는 서버. config 의 `pipeline.recipe` 가 레시피(서브모델)를 고르고,
 `pipeline.stages` 가 수행 단계를 고른다. 정본은 `output/_stages/<stage>-<fingerprint>/` 의 스테이지 산출물과
-`output/<name>-<hash>/manifest.json` 이며, API 는 파이프라인(`core/pipeline.py`)을 백그라운드 워커 하나로 실행하고
+`output/<name>-<hash>/manifest.json` 이며, API 는 파이프라인(`core/pipeline.py`)을 백그라운드 워커(`JOB_WORKERS`, 기본 1)로 실행하고
 상태와 진행률을 돌려준다. 라우터: `core/api/routers/`.
 
 ---
@@ -53,7 +53,7 @@ YAML 설정 하나를 커스텀 모델 하나로 실행하는 서버. config 의
 | 422 | 요청 본문 또는 config 가 스키마에 안 맞음 (Pydantic 메시지가 `detail`) |
 | 500 | 서버 처리 실패 |
 
-**페이지네이션** — 없음. Job 은 프로세스 메모리에 있고 개수가 작다.
+**페이지네이션** — 없음. Job 은 SQLite 테이블(`JOBS_DB`, 기본 `./output/_jobs.sqlite`)에 있고 접수 순으로 전부 돌려준다.
 
 **공통 헤더** — 없음.
 
@@ -226,7 +226,8 @@ $ curl -s http://localhost:8000/api/jobs
 
 #### 특이사항
 
-**재호출** — 상태를 바꾸지 않음. 서버 재시작 후에는 비어 있다(메모리 저장).
+**재호출** — 상태를 바꾸지 않음. Job 은 서버를 재시작해도 남는다. 서버가 멈출 때 대기 중이거나 실행 중이던 Job 은
+`interrupted` 로 표시되며, 다시 제출하면 이미 만들어진 스테이지를 건너뛰고 이어서 실행된다.
 
 ---
 
@@ -291,8 +292,10 @@ $ curl -s -X POST http://localhost:8000/api/jobs -H 'content-type: application/j
 바뀌었거나 산출물이 지워졌으면 그 스테이지부터 다시 만든다(CLI 를 다시 실행한 것과 같다). validate 스테이지가 기준 미달로 실패한 Job 은
 재호출해도 같은 이유로 실패한다(config 의 `validation` 기준이나 학습 설정을 바꿔야 한다).
 
-동시성: Job 은 워커 하나가 접수 순서대로 실행한다(학습 두 개가 가속기를 나눠 쓰지 않도록). 스테이지 디렉토리는
-파일 잠금으로 보호되므로 CLI 와 서버가 같은 스테이지를 동시에 요청하면 한쪽이 기다렸다가 결과를 재사용한다.
+동시성: Job 은 `JOB_WORKERS` 개의 워커가 접수 순서대로 실행한다(기본 1, 학습 두 개가 가속기 하나를 나눠 쓰지 않도록).
+워커는 Job 하나를 실행하는 동안 가속기 하나를 맡는다. GPU 가 여러 개인 서버에서는 `JOB_WORKERS` 를 GPU 수로 두면
+워커 N 이 `cuda:N` 에서 학습한다. GPU 하나나 Mac 에서 값을 올리면 여러 Job 이 같은 가속기를 나눠 쓴다. 스테이지
+디렉토리는 파일 잠금으로 보호되므로 CLI 와 서버가 같은 스테이지를 동시에 요청하면 한쪽이 기다렸다가 결과를 재사용한다.
 
 ---
 
@@ -488,12 +491,13 @@ $ curl -s http://localhost:8000/health
 | 필드 | 타입 | 널 허용 | 설명 |
 |---|---|---|---|
 | `job_id` | string | 아니오 | `<experiment>-<stages sha256[:6]>` |
-| `status` | string | 아니오 | `pending` / `running` / `done` / `failed` |
+| `status` | string | 아니오 | `pending` / `running` / `done` / `failed` / `interrupted`(서버가 멈춰 끝나지 못함) |
 | `recipe` | string | 아니오 | 레시피 키 |
 | `experiment` | string | 아니오 | 실험 키 |
 | `directory` | string | 아니오 | 실험 디렉토리 |
 | `stages` | string[] | 아니오 | 스테이지 계획 (ConfigSummary 의 `stages` 와 같음) |
-| `progress` | object | 아니오 | [Progress](#progress) |
+| `progress` | object | 아니오 | [Progress](#progress). 실행 중에는 실시간 값, 끝난 뒤에는 마지막 값 |
+| `device_slot` | int | 예 | Job 을 실행한 워커 번호. GPU 가 여러 개면 `cuda:<번호>` 를 씀. 대기 중에는 null |
 | `result` | object | 예 | `done` 일 때 `{"experiment","directory","stages":{stage: outputs}}` |
 | `error` | string | 예 | `failed` 일 때 메시지 + traceback |
 

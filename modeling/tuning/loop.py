@@ -4,6 +4,7 @@ import json
 import math
 import random
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -22,14 +23,16 @@ SUMMARY = "summary.json"
 CHECKPOINT = "checkpoint"
 
 
-def schedule(count: int, training: TrainingConfig, seed: int) -> list[list[list[int]]]:
-    """Row indices per optimizer step: reshuffled every epoch from the seed, so a resumed run sees the same batches."""
+def schedule(count: int, training: TrainingConfig, seed: int, repeats: int = 1) -> list[list[list[int]]]:
+    """Row indices per optimizer step: reshuffled every epoch from the seed, so a resumed run sees the same batches.
+    With `repeats`, each step's batches come up that many times in a row."""
     batches: list[list[int]] = []
     for epoch in range(training.epochs):
         order = list(range(count))
         random.Random(seed + epoch).shuffle(order)
         batches += [order[start:start + training.batch_size] for start in range(0, count, training.batch_size)]
     steps = [batches[start:start + training.accumulation] for start in range(0, len(batches), training.accumulation)]
+    steps = [step for step in steps for _ in range(repeats)]
     return steps[: training.max_steps] if training.max_steps else steps
 
 
@@ -46,9 +49,9 @@ def history(run: Path) -> list[dict[str, Any]]:
 
 
 def fit(backbone: Backbone, method: TrainingMethod[Any], rows: list[Row], training: TrainingConfig, workdir: Path,
-        seed: int, progress: Progress) -> dict[str, Any]:
+        seed: int, progress: Progress, on_step: Callable[[int, dict[str, float]], None] | None = None) -> dict[str, Any]:
     """Train `backbone` in place and write `checkpoint/` and `summary.json`; a rerun continues from `resume.pt`."""
-    steps = schedule(len(rows), training, seed)
+    steps = schedule(len(rows), training, seed, method.repeats)
     optimizer = torch.optim.AdamW(method.parameter_groups(backbone), lr=training.lr, weight_decay=training.weight_decay)
     peaks = [group["lr"] for group in optimizer.param_groups]
     start, events = 0, []
@@ -61,7 +64,7 @@ def fit(backbone: Backbone, method: TrainingMethod[Any], rows: list[Row], traini
         events = [event for event in history(workdir) if event["step"] <= start]
         logger.info("resuming from step %d of %d", start, len(steps))
     (workdir / LOG).write_text("".join(json.dumps(event) + "\n" for event in events))
-    autocast = torch.autocast("cuda", dtype=torch.bfloat16, enabled=backbone.device == "cuda")
+    autocast = torch.autocast("cuda", dtype=torch.bfloat16, enabled=backbone.device.startswith("cuda"))
     backbone.model.train()
     progress.update(start, len(steps))
     for index in range(start, len(steps)):
@@ -83,6 +86,8 @@ def fit(backbone: Backbone, method: TrainingMethod[Any], rows: list[Row], traini
         event = {"step": index + 1, "loss": total, "lr": rate, **method.metrics}
         with (workdir / LOG).open("a") as stream:
             stream.write(json.dumps(event) + "\n")
+        if on_step is not None:
+            on_step(index + 1, {f"train/{key}": float(value) for key, value in event.items() if key != "step"})
         progress.update(index + 1, len(steps), ", ".join(f"{k} {v:.4f}" for k, v in event.items() if k not in {"step", "lr"}))
         if training.resume_every and (index + 1) % training.resume_every == 0 and index + 1 < len(steps):
             temporary = resume.with_suffix(".tmp")

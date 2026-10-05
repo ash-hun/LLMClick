@@ -44,6 +44,8 @@ def test_schedule_is_deterministic_and_covers_every_row() -> None:
     assert steps == schedule(10, training, seed=1) and len(steps) == 3  # 6 batches, 2 per step
     assert sorted(i for step in steps for batch in step for i in batch) == sorted(list(range(10)) * 2)
     assert len(schedule(10, TrainingConfig(batch_size=4, max_steps=1), seed=1)) == 1
+    twice = schedule(10, TrainingConfig(batch_size=4), seed=1, repeats=2)
+    assert len(twice) == 6 and twice[0] == twice[1] and twice[2] == twice[3] and twice[0] != twice[2]
 
 
 def test_learning_rate_warms_up_then_decays() -> None:

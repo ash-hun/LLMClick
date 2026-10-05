@@ -33,5 +33,6 @@ class JobResponse(BaseModel):
     directory: str
     stages: list[str]
     progress: dict[str, Any]
+    device_slot: int | None = Field(default=None, description="Which worker, and so which accelerator, ran the job")
     result: dict[str, Any] | None = None
     error: str | None = None

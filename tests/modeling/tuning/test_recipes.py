@@ -242,35 +242,124 @@ def test_bumping_one_parts_version_rebuilds_only_its_recipes(tiny_model: Path, t
     assert after["llm_dpo"] != before["llm_dpo"] and after["llm_sft"] == before["llm_sft"]
 
 
-def test_tracker_is_synced_once_even_when_switched_on_after_training(tiny_model: Path, tmp_path: Path,
-                                                                     monkeypatch: pytest.MonkeyPatch) -> None:
+class FakeWandb:
+    """Stands in for the wandb module: records every run that is opened, each logged step, and each finish."""
+
+    def __init__(self) -> None:
+        self.runs: list[dict[str, Any]] = []
+        self.steps: list[int] = []
+        self.finished = 0
+        outer = self
+
+        class Session:
+            def log(self, metrics: dict[str, float], step: int) -> None:
+                assert all(key.startswith("train/") for key in metrics)
+                outer.steps.append(step)
+
+            def finish(self) -> None:
+                outer.finished += 1
+
+        self.session = Session
+
+    def init(self, **keys: Any) -> Any:
+        self.runs.append(keys)
+        return self.session()
+
+
+@pytest.fixture
+def wandb(monkeypatch: pytest.MonkeyPatch) -> FakeWandb:
     import sys
-    import types
 
-    calls: dict[str, Any] = {"init": [], "log": 0, "finish": 0}
+    fake = FakeWandb()
+    monkeypatch.setitem(sys.modules, "wandb", fake)
+    return fake
 
-    class Session:
-        def finish(self) -> None:
-            calls["finish"] += 1
 
-    def init(**keys: Any) -> Session:
-        calls["init"].append(keys)
-        return Session()
-
-    def log(metrics: dict[str, float], step: int) -> None:
-        calls["log"] += 1
-
-    monkeypatch.setitem(sys.modules, "wandb", types.SimpleNamespace(init=init, log=log))
+def test_tracker_is_synced_once_even_when_switched_on_after_training(tiny_model: Path, tmp_path: Path, wandb: FakeWandb) -> None:
     plain = pipeline.build(raw("llm_sft", tiny_model, tmp_path)).run()
-    assert calls["init"] == []  # tracker off
+    assert wandb.runs == []  # tracker off
     tracked = {**raw("llm_sft", tiny_model, tmp_path), "tracker": {"enabled": True, "project": "p"}}
-    again = pipeline.build(tracked).run()  # same experiment, training comes from cache
-    assert again["experiment"] == plain["experiment"] and len(calls["init"]) == 1 and calls["log"] == 3
-    assert calls["init"][0]["id"] == Path(plain["stages"]["train"]["run"]).name
+    again = pipeline.build(tracked).run()  # same experiment, training comes from cache: the history is replayed
+    assert again["experiment"] == plain["experiment"] and len(wandb.runs) == 1 and wandb.steps == [1, 2, 3]
+    assert wandb.runs[0]["id"] == Path(plain["stages"]["train"]["run"]).name
     pipeline.build(tracked).run()
-    assert len(calls["init"]) == 1  # already sent to this project
+    assert len(wandb.runs) == 1  # already sent to this project
     pipeline.build({**tracked, "tracker": {"enabled": True, "project": "other"}}).run()
-    assert [call["project"] for call in calls["init"]] == ["p", "other"]
+    assert [run["project"] for run in wandb.runs] == ["p", "other"]
+
+
+def test_tracker_logs_each_step_while_training_runs(tiny_model: Path, tmp_path: Path, wandb: FakeWandb,
+                                                    monkeypatch: pytest.MonkeyPatch) -> None:
+    from modeling.llm.methods.sft import SFT
+
+    seen_during_training: list[int] = []
+    original = SFT.loss
+
+    def watching(self: Any, backbone: Any, rows: Any) -> Any:
+        seen_during_training.append(len(wandb.steps))  # steps already sent when the next one starts
+        return original(self, backbone, rows)
+
+    monkeypatch.setattr(SFT, "loss", watching)
+    tracked = {**raw("llm_sft", tiny_model, tmp_path), "tracker": {"enabled": True, "project": "p"}}
+    result = pipeline.build(tracked).run()
+    assert seen_during_training == [0, 1, 2] and wandb.steps == [1, 2, 3] and wandb.finished == 1
+    marker = json.loads((Path(result["stages"]["train"]["run"]) / "tracker.json").read_text())
+    assert marker == {"synced": ["/p"]}
+    pipeline.build(tracked).run()
+    assert len(wandb.runs) == 1 and wandb.steps == [1, 2, 3]  # nothing is replayed on top of the live run
+
+
+def test_interrupted_tracked_training_is_not_marked_as_sent(tiny_model: Path, tmp_path: Path, wandb: FakeWandb,
+                                                            monkeypatch: pytest.MonkeyPatch) -> None:
+    from modeling.llm.methods.sft import SFT
+
+    original, calls = SFT.loss, {"n": 0}
+
+    def failing(self: Any, backbone: Any, rows: Any) -> Any:
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise KeyboardInterrupt
+        return original(self, backbone, rows)
+
+    monkeypatch.setattr(SFT, "loss", failing)
+    tracked = {**raw("llm_sft", tiny_model, tmp_path), "tracker": {"enabled": True, "project": "p"}}
+    with pytest.raises(KeyboardInterrupt):
+        pipeline.build(tracked).run()
+    assert wandb.finished == 1 and not list(tmp_path.glob("_stages/train-*/tracker.json"))  # closed, not marked
+    pipeline.build(tracked).run()  # the rerun opens the same wandb run again and completes it
+    assert len(wandb.runs) == 2 and wandb.runs[0]["id"] == wandb.runs[1]["id"] and wandb.runs[1]["resume"] == "allow"
+    assert list(tmp_path.glob("_stages/train-*/tracker.json"))
+
+
+def test_grpo_reuses_a_sampled_group_for_several_updates(tiny_model: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from modeling.llm.models.base import LLMBackbone
+
+    sampled, original = {"n": 0}, LLMBackbone.generate
+
+    def counting(self: Any, prompts: Any, max_new_tokens: int, samples: int = 1, *args: Any, **keys: Any) -> Any:
+        sampled["n"] += samples > 1  # training samples groups; validation decodes one completion
+        return original(self, prompts, max_new_tokens, samples, *args, **keys)
+
+    monkeypatch.setattr(LLMBackbone, "generate", counting)
+    config = raw("llm_grpo", tiny_model, tmp_path, max_steps=6)
+    config["method"]["iterations"] = 3
+    result = pipeline.build(config).run()
+    log = [json.loads(line) for line in (Path(result["stages"]["train"]["run"]) / "training.jsonl").read_text().splitlines()]
+    assert result["stages"]["train"]["steps"] == 6 and sampled["n"] == 2  # two groups, three updates each
+    assert [event["reward"] for event in log[:3]] == [log[0]["reward"]] * 3  # the same group, so the same reward
+    assert log[0]["ratio"] == pytest.approx(1.0) and log[3]["ratio"] == pytest.approx(1.0)  # first use of each group
+
+
+def test_grpo_kl_needs_an_adapter_and_starts_at_zero(tiny_model: Path, tmp_path: Path) -> None:
+    config = raw("llm_grpo", tiny_model, tmp_path)
+    config["method"]["beta"] = 0.5
+    with pytest.raises(ValueError, match="method.beta needs training.adapter"):
+        pipeline.build(config)
+    config["training"]["adapter"] = {"r": 4, "targets": ["c_attn"]}
+    result = pipeline.build(config).run()
+    log = [json.loads(line) for line in (Path(result["stages"]["train"]["run"]) / "training.jsonl").read_text().splitlines()]
+    assert log[0]["kl"] == pytest.approx(0.0, abs=1e-6)  # an untrained adapter is the base model
+    assert all(event["kl"] >= -1e-6 for event in log)
 
 
 def test_stage_two_config_points_at_the_stage_one_experiment() -> None:
