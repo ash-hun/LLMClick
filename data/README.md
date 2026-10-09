@@ -1,8 +1,49 @@
 # Data channel
 
-Status: designed, not built. This directory holds no code yet; this file is the design and the plan to build it,
-written after a short survey of open datasets, synthetic-data methods and tooling (October 2026). The survey's
-sources are at the end.
+Status: `data_synthetic` built (seeds, prompts, evolve, respond, verify, select; four teachers); `data_open` is
+designed below and not built. The survey (October 2026) and its sources follow the usage section.
+
+## Built: `data_synthetic`
+
+```yaml
+pipeline: {recipe: data_synthetic, name: topics-ko-sft}
+teacher: {name: ollama, model: qwen3.5:0.8b}               # anthropic (claude-opus-5-5), openai (base_url), ollama, local (experiment)
+seeds:
+  - {kind: topic, values: [tides, yeast]}
+  - {kind: persona, source: {name: huggingface, dataset: ..., revision: <commit>, split: train, limit: 200}, field: persona}
+prompts: {generator: topic_questions, per_seed: 1, params: {n: 3, language: Korean}, constraints: [...]}
+evolve: {rounds: 1, operators: {constraints: 1, deepen: 1, concretize: 1, reasoning: 1, breadth: 0.5}}   # optional
+respond: {answers_per_question: 2, max_tokens: 512, temperature: 0.7}
+verify: {schema_recipe: llm_sft, majority: null, reward: null, judge: {rubric: ..., min_score: 6}}
+select: {assemble: sft, dedup: {near: 0.75, ngram: 5}, leak: {against: [{name: local_jsonl, path: eval.jsonl}]}}
+budget: {max_usd: 5}
+```
+
+Six stages, each a `Stage` with its own fingerprint, so a changed `verify` section reruns verification on the
+cached answers and nothing before it:
+
+| Stage | Does | Idempotent because |
+|---|---|---|
+| `seeds` | inline values and source rows become `{id, kind, text, row}`; the same text is one seed | pure function of the config and the source files; ids are content hashes |
+| `prompts` | a generator (`topic_questions`, `persona_task`, `document_qa`, `passthrough`) makes instructions per seed; `constraints` appends a verifiable one | every generator job is cached under `key(seed, generator, index, params)` in `cache/`; a rerun makes only the missing ones |
+| `evolve` | Evol-Instruct operators (five in-depth, breadth, WizardCoder's code heuristics, WizardMath's `easier`) per round with a seeded draw; rules 3 and 4 and an optional judged "no gain" drop failures; originals and every round are kept | the operator draw is seeded by the prompt's key; each rewrite is cached under `key(parent, round, operator)` |
+| `respond` | the teacher answers each prompt `answers_per_question` times | each answer is cached under `key(prompt, sample, teacher identity, settings)`; the budget is checked before every uncached call and the cache is the ledger, so a crash or a budget stop costs nothing twice |
+| `verify` | empty and "sorry" answers out, the target recipe's `check`, a `REWARDS` function against the prompt's answer, majority agreement, a judge score (cached per candidate) | pure rules over the candidates file plus a cached judge |
+| `select` | exact and n-gram near-duplicates out, leaks against evaluation items out (an item is leaked when a row holds half of its 8-grams), one row per prompt assembled as `sft`, `dpo` (judge gap `margin`) or `grpo`; `manifest.json` with every stage's counts, the teacher and the cost | pure function of the verified rows and the leak sources |
+
+Rows and files are written through a temporary name and renamed, so a reader never sees a half file. Running the
+same config twice builds nothing the second time; running it after a crash finishes the remaining teacher calls
+only (the tests kill the fake teacher mid-stage and count the calls). The manifest's `stages` trail carries each
+stage's summary downstream, so `select` can report the whole run from its own inputs.
+
+Teachers (`data/teachers.py`): `anthropic` (official SDK, `ANTHROPIC_API_KEY`, default `claude-opus-5-5`, cost from
+a small price table or `price: [in, out]` per million tokens), `openai` (chat-completions shape: OpenAI, vLLM, LM
+Studio, gateways; `base_url`, `api_key_env`), `ollama` (native `/api/chat`, `keep_alive`), `local` (a checkpoint of
+a modeling experiment or a Hub model, seeded, free). A teacher's `identity` (name, model, generation-relevant
+parameters; never keys or prices) is part of the fingerprints of the stages that call it.
+
+Not yet (next milestone): multi-turn dialogues and reasoning on/off pairs in `respond`, judge verdicts with swapped
+order for pairs, the student's pass rate as a difficulty filter, arena-style selection, `data_open`.
 
 ## Purpose
 

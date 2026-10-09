@@ -594,6 +594,9 @@ Evaluation 채널 레시피의 필드: `evaluation_custom` 은 `stages`(`["rows"
 `stages`(`["mteb","report"]`; 실제 실행에서는 태스크마다 `score:<task>`), `checkpoint`. 평가 config 의 `model` 은 실험
 (`experiment` + `checkpoint`) 또는 Hub 모델(`name` + `revision`, 임베딩은 `architecture` 추가) 중 하나다.
 
+Data 채널 레시피(`data_synthetic`)의 필드: `stages`(`["seeds","prompts","evolve","respond","verify","select"]`; `evolve`
+섹션이 없으면 그 스테이지는 빠진다), `teacher`(`anthropic`, `local`, `ollama`, `openai`), `generator`, `evolver`.
+
 #### 응답 코드
 
 | 코드 | 의미 | 본문 |

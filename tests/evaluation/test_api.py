@@ -15,11 +15,12 @@ from tests.modeling.tuning.test_recipes import FakeWandb, wandb  # noqa: F401
 
 
 @pytest.fixture
-def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
     monkeypatch.setenv("API_PATHS", f".:{tmp_path.parent.parent}")
     monkeypatch.delenv("API_TOKEN", raising=False)
     get_settings.cache_clear()
-    return TestClient(app)
+    yield TestClient(app)
+    get_settings.cache_clear()
 
 
 def test_reports_are_listed_filtered_and_shown(trained: dict[str, Any], tmp_path: Path, client: TestClient) -> None:  # noqa: F811

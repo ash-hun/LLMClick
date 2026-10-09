@@ -18,6 +18,7 @@ what is already built, shows progress, and never hands on a trained model that h
 | Evaluation | `evaluation_compare` | nothing: several checkpoints (the base model among them) on the same benchmarks and rows; table, deltas with intervals, polygon chart | the experiments' |
 | Evaluation | `evaluation_decision` | nothing: a decision checkpoint on Jev rows or the JevBench tiers, without and with reasoning; accuracy, NLL, ECE, per tier, latency | the experiment's (decision) |
 | Evaluation | `evaluation_embedding` | nothing: an embedding checkpoint on MTEB tasks (mteb), one cached stage per task | the experiment's (embedding) |
+| Data | `data_synthetic` | nothing: rows for the recipes above from seeds through a teacher model (seeds, prompts, evolve, respond, verify, select) | teachers: anthropic, openai, ollama, local |
 
 The decision recipes follow the Jev request format. The readout head and one-pass training follow
 [jeff](https://github.com/firelex/jeff); the pointer head, reasoning chains and CISPO follow
@@ -63,7 +64,9 @@ LLMClick/
 │       ├── models/               #     Model Catalog: base.py (EmbeddingBackbone), bi_encoder.py
 │       ├── methods/              #     Training Method: contrastive.py
 │       └── config.py pipeline.py
-├── data/                         # Data channel (designed, not built): README with the survey and the plan
+├── data/                         # Data channel: seeds -> prompts -> evolve -> respond -> verify -> select (data_synthetic)
+│   ├── teachers.py               #   anthropic, openai, ollama, local behind one complete()
+│   └── config.py rows.py ...     #   one module per stage; rows.py: natural keys, atomic files, per-item caches
 ├── evaluation/                   # Evaluation channel: config -> scores of a trained model, report.json
 │   ├── source.py                 #   SourceExperiment: an experiment's config read back, its checkpoint located
 │   ├── stages.py                 #   rows, score, report (evaluation_custom)
@@ -89,7 +92,7 @@ polygon chart and a Markdown summary; `evaluation_decision` measures a decision 
 tiers without and with reasoning (accuracy, NLL, ECE, per tier against chance, latency); `evaluation_embedding`
 runs an embedding model on MTEB tasks. All write `report.json` with the overlap between the evaluation items and
 the experiment's training rows (exact matches and n-gram near-duplicates) next to the scores, send the report to
-wandb with `tracker.enabled`, and are listed by `GET /api/evaluations` (`evaluation/README.md` has the details). `data/` (open datasets converted into recipe rows, and synthetic rows from a teacher model, both with leak removal) is designed in `data/README.md` and not built yet. A channel is a
+wandb with `tracker.enabled`, and are listed by `GET /api/evaluations` (`evaluation/README.md` has the details). `data/` produces rows: `data_synthetic` makes them from seeds through a teacher model (Anthropic, OpenAI-format, Ollama or a local checkpoint), evolves and verifies them, removes duplicates and leaks, and writes a recipe's rows with a manifest; every stage is cached by its inputs and safe to rerun, so a crash or a spent budget resumes where it stopped (`data/README.md`). Loading open datasets (`data_open`) is designed there and not built. A channel is a
 package that registers recipes; it joins by adding its name to `CHANNELS` in `core/registry.py` and reuses `Stage`,
 `Pipeline`, `Progress` and `Experiment` as they are.
 
@@ -251,6 +254,7 @@ curl -X POST localhost:8000/api/jobs -H 'content-type: application/json' \
 | `evaluation/compare.yaml` | base model against the trained checkpoint on the preset and the sample rows, with a four-axis chart |
 | `evaluation/decision.yaml` | the `llm/decision_pointer.yaml` checkpoint on the JevBench tiers, without and with reasoning |
 | `evaluation/embedding.yaml` | the `embedding/contrastive.yaml` checkpoint on three MTEB tasks (needs `uv sync --extra eval`) |
+| `data/synthetic.yaml` | Korean conversation rows for `llm_sft` from four topic seeds through a local Ollama model, evolved, judged, deduplicated |
 
 The `llm/` and `embedding/` configs ship as pilots: sample rows from `samples/` and `max_steps: 4`. Point
 `data.sources` at your rows and remove `max_steps` for a real run.
