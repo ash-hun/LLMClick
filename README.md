@@ -70,7 +70,8 @@ LLMClick/
 
 Two more channels are planned next to `modeling/`: `data/` (training and synthetic data pipelines) and
 `evaluation/` (custom and benchmark evaluation with reports). Each has a README that states its scope; neither has
-code yet. A channel is a package that registers recipes; it joins by adding its name to `CHANNELS` in
+code yet, and `evaluation/README.md` holds the design and milestones of the first one to be built. A channel is a
+package that registers recipes; it joins by adding its name to `CHANNELS` in
 `core/registry.py` and reuses `Stage`, `Pipeline`, `Progress` and `Experiment` as they are.
 
 ## 02. How a run works
