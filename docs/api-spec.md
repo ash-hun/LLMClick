@@ -2,7 +2,7 @@
 
 | 항목 | 값 |
 |---|---|
-| Last Updated | 2026-10-09 |
+| Last Updated | 2026-10-10 |
 | Base URL | `http://localhost:8000` |
 | 데이터 포맷 | JSON (UTF-8) |
 | 인증 | `API_TOKEN` 이 설정되면 `/api/*` 전부 `Authorization: Bearer <token>`, 비어 있으면 없음 |
@@ -469,6 +469,9 @@ LLM, Embedding 계열 레시피(`llm_sft`, `llm_instruction`, `llm_dpo`, `llm_gr
 | `method_keys` | string[] | 아니오 | `method` 섹션에 쓸 수 있는 키 |
 | `reward` | string[] | 아니오 | `llm_grpo` 에만 있음. `method.reward.name` 에 쓸 수 있는 키 |
 | `head` | string[] | 아니오 | `llm_decision_sft`, `llm_decision_cispo` 에만 있음. `model.head` 에 쓸 수 있는 키 |
+
+Evaluation 채널 레시피(`evaluation_custom`)의 필드: `stages`(`["rows","score","report"]`), `source`, `checkpoint`
+(`model.checkpoint` 에 쓸 수 있는 값: `validate`, `train`, `base`, 또는 체크포인트 디렉토리).
 
 #### 응답 코드
 

@@ -13,6 +13,7 @@ what is already built, shows progress, and never hands on a trained model that h
 | LLM | `llm_decision_sft` | decision questions: a head scores the options (Jev, jeff, Jeeves stage 1) | same, plus `model.head`: `readout` or `pointer` |
 | LLM | `llm_decision_cispo` | the same questions with reasoning before the decision, by reinforcement (Jeeves stage 2) | same |
 | Embedding | `embedding_contrastive` | query/positive/negative triples (InfoNCE) | `bi_encoder` (Qwen3-Embedding-0.6B) |
+| Evaluation | `evaluation_custom` | nothing: scores a checkpoint of any experiment above on any rows, with that recipe's metrics | the experiment's |
 
 The decision recipes follow the Jev request format. The readout head and one-pass training follow
 [jeff](https://github.com/firelex/jeff); the pointer head, reasoning chains and CISPO follow
@@ -59,7 +60,10 @@ LLMClick/
 │       ├── methods/              #     Training Method: contrastive.py
 │       └── config.py pipeline.py
 ├── data/                         # Data channel (planned): README only
-├── evaluation/                   # Evaluation channel (planned): README only
+├── evaluation/                   # Evaluation channel: config -> scores of a trained model, report.json
+│   ├── source.py                 #   SourceExperiment: an experiment's config read back, its checkpoint located
+│   ├── stages.py pipeline.py     #   rows, score, report; evaluation_custom (README: design and milestones)
+│   └── config.py
 ├── tests/core/  tests/modeling/
 ├── docs/                         # api-spec.md, screen-spec.md
 ├── environment/                  # Dockerfile, docker-compose.yml, .env.sample
@@ -68,11 +72,12 @@ LLMClick/
     └── <name>-<hash>/                   # one experiment: config.yaml, manifest.json, pipeline.log, links to its stages
 ```
 
-Two more channels are planned next to `modeling/`: `data/` (training and synthetic data pipelines) and
-`evaluation/` (custom and benchmark evaluation with reports). Each has a README that states its scope; neither has
-code yet, and `evaluation/README.md` holds the design and milestones of the first one to be built. A channel is a
-package that registers recipes; it joins by adding its name to `CHANNELS` in
-`core/registry.py` and reuses `Stage`, `Pipeline`, `Progress` and `Experiment` as they are.
+`evaluation/` scores what `modeling/` built: `evaluation_custom` measures any checkpoint of an experiment (`validate`,
+`train`, `base`, or a directory) on any rows with the metrics of the recipe that trained it, and writes
+`report.json`; benchmark, decision, embedding and comparison recipes follow (`evaluation/README.md` has the design
+and milestones). `data/` (training and synthetic data pipelines) is planned and has a README only. A channel is a
+package that registers recipes; it joins by adding its name to `CHANNELS` in `core/registry.py` and reuses `Stage`,
+`Pipeline`, `Progress` and `Experiment` as they are.
 
 ## 02. How a run works
 
@@ -133,6 +138,7 @@ pipeline:
 | `data` | read every `data.sources[*]`, check each row against the recipe's method, hold out `data.validation` of them |
 | `train` | load the backbone, run the training loop with the method's loss; resumes from `resume.pt` after a crash |
 | `validate` | the method's metrics on the held-out rows against `validation.min`/`max` |
+| `rows`, `score`, `report` | `evaluation_custom`: read and check the rows, measure the chosen checkpoint with the experiment's method, write `report.json` |
 
 | Recipe | Row keys | Metrics for `validation.min`/`max` |
 |---|---|---|
@@ -222,6 +228,7 @@ curl -X POST localhost:8000/api/jobs -H 'content-type: application/json' \
 | `llm/decision_pointer.yaml` | reasoning decision model, stage 1: LoRA, pointer head, reasoning chains as context (Jeeves SFT) |
 | `llm/decision_cispo.yaml` | reasoning decision model, stage 2: CISPO from the stage-1 checkpoint |
 | `embedding/contrastive.yaml` | contrastive learning of Qwen3-Embedding-0.6B |
+| `evaluation/custom.yaml` | the `llm/sft.yaml` experiment's validated checkpoint scored on the sample rows |
 
 The `llm/` and `embedding/` configs ship as pilots: sample rows from `samples/` and `max_steps: 4`. Point
 `data.sources` at your rows and remove `max_steps` for a real run.

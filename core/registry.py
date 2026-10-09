@@ -4,7 +4,7 @@ import importlib
 from collections.abc import Callable
 from typing import Any
 
-CHANNELS = ("modeling",)  # packages whose import registers their recipes; Data and Evaluation join here
+CHANNELS = ("modeling", "evaluation")  # packages whose import registers their recipes; Data joins here
 
 
 class Registry:
