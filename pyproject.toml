@@ -43,10 +43,25 @@ build-backend = "hatchling.build"
 packages = ["core", "modeling"]
 
 [dependency-groups]
-dev = ["pytest>=8.4", "mypy>=1.14", "types-pyyaml>=6.0", "types-tqdm>=4.66"]
+dev = [
+    "pytest>=8.4",
+    "mypy>=1.14",
+    "types-pyyaml>=6.0",
+    "types-tqdm>=4.66",
+    "ruff>=0.14",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "UP"]
+# E501: the code predates the linter and runs wider than 120 in places; UP046: Generic[T] is kept for mypy strict
+ignore = ["E501", "UP046"]
 
 [tool.mypy]
 files = ["core", "modeling"]

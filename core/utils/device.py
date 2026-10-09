@@ -15,3 +15,17 @@ def resolve_device(wanted: str | None) -> Device:
     if device == "cuda" and index is not None and torch.cuda.device_count() > 1:
         return f"cuda:{index % torch.cuda.device_count()}"
     return device
+
+
+def seed(device: Device, value: int) -> None:
+    """Seed the random generator of `device` only. `torch.manual_seed` would seed the CPU and every CUDA device at
+    once, which is not this worker's business when another job trains on another card of the same server: it would
+    reset that job's sampling mid-run. On a CPU run the CPU generator is the device's generator."""
+    import torch
+    if device.startswith("cuda"):
+        with torch.cuda.device(device):
+            torch.cuda.manual_seed(value)
+    elif device == "mps":
+        torch.mps.manual_seed(value)
+    else:
+        torch.manual_seed(value)

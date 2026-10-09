@@ -2,6 +2,7 @@
 
 import os
 import logging
+import threading
 from pathlib import Path
 from typing import Any
 from collections.abc import Iterator
@@ -84,9 +85,13 @@ class Experiment:
 
     @contextmanager
     def logging(self) -> Iterator[None]:
-        """Copy log records to `<experiment>/pipeline.log` for the duration of one run only."""
+        """Copy this run's log records to `<experiment>/pipeline.log` for the duration of one run only. Only records
+        from the thread that runs the pipeline are copied: the API runs several jobs at once in one process, each
+        on its own worker thread, and the root logger is shared by all of them."""
         handler = logging.FileHandler(self.root / "pipeline.log")
         handler.setFormatter(logging.Formatter(LOG_FORMAT))
+        thread = threading.get_ident()
+        handler.addFilter(lambda record: record.thread == thread)
         logging.getLogger().addHandler(handler)
         try:
             yield

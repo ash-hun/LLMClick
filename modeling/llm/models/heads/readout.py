@@ -40,7 +40,7 @@ class ReadoutHead(DecisionHead):
     def option_block(self, options: list[str]) -> str:
         if len(options) > len(self.codes):
             raise ValueError(f"{len(options)} options, but this tokenizer yields only {len(self.codes)} one-token codes")
-        return "".join(f"{code}: {option}\n" for code, option in zip(self.codes, options))
+        return "".join(f"{code}: {option}\n" for code, option in zip(self.codes, options, strict=False))
 
     def scores(self, hidden: torch.Tensor, layouts: list[Layout]) -> torch.Tensor:
         last = torch.tensor([len(layout.ids) - 1 for layout in layouts], device=hidden.device)

@@ -30,7 +30,7 @@ class DecisionHead(torch.nn.Module, ABC):
         names = [self.markers.state, self.markers.question, self.markers.option, self.markers.option_end,
                  self.markers.decide, self.markers.think_end]
         ids = backbone.tokenizer.convert_tokens_to_ids(names)
-        missing = [name for name, i in zip(names, ids) if i is None or i == backbone.tokenizer.unk_token_id]
+        missing = [name for name, i in zip(names, ids, strict=True) if i is None or i == backbone.tokenizer.unk_token_id]
         if missing:
             raise ValueError(f"tokenizer of {backbone.config.name} lacks the marker tokens {missing}")
         self.option_end, self.think_end = int(ids[3]), int(ids[5])

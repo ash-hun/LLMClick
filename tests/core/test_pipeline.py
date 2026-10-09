@@ -123,3 +123,28 @@ def test_recipe_with_a_backward_dependency_is_rejected() -> None:
 def test_unknown_config_keys_are_rejected(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="Extra inputs"):
         ToyConfig(name="t", output_dir=str(tmp_path), txet="typo")
+
+
+def test_concurrent_runs_keep_their_own_pipeline_logs(tmp_path: Path) -> None:
+    """Two jobs in one process (the API's workers) log through the same root logger; each experiment's
+    pipeline.log must hold its own records only."""
+    import logging
+    import threading
+
+    started = threading.Barrier(2, timeout=5)
+
+    def run(text: str) -> None:
+        pipeline = Toy(ToyConfig(name=text, output_dir=str(tmp_path), text=text))
+        pipeline.experiment.ensure()
+        with pipeline.experiment.logging():
+            started.wait()  # both handlers are attached before either records
+            logging.getLogger("test").warning("record of %s", text)  # above the root level pytest leaves
+
+    threads = [threading.Thread(target=run, args=(text,)) for text in ("left", "right")]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    for text, other in (("left", "right"), ("right", "left")):
+        log = next(tmp_path.glob(f"{text}-*")) / "pipeline.log"
+        assert f"record of {text}" in log.read_text() and f"record of {other}" not in log.read_text()

@@ -13,6 +13,7 @@ import torch
 from modeling.tuning.method import Row, TrainingMethod
 from modeling.tuning.config import TrainingConfig
 from modeling.tuning.backbone import Backbone
+from core.utils import device
 from core.utils.files import write_json
 from core.progress import Progress
 
@@ -50,7 +51,10 @@ def history(run: Path) -> list[dict[str, Any]]:
 
 def fit(backbone: Backbone, method: TrainingMethod[Any], rows: list[Row], training: TrainingConfig, workdir: Path,
         seed: int, progress: Progress, on_step: Callable[[int, dict[str, float]], None] | None = None) -> dict[str, Any]:
-    """Train `backbone` in place and write `checkpoint/` and `summary.json`; a rerun continues from `resume.pt`."""
+    """Train `backbone` in place and write `checkpoint/` and `summary.json`; a rerun continues from `resume.pt`.
+    Resume snapshots are taken only between groups of repeated steps (`method.repeats`): a method that reuses what it
+    sampled keeps those samples in memory, so a snapshot inside a group would resume with fresh samples and a
+    different run. Between groups nothing is kept, and the resumed run repeats the uninterrupted one exactly."""
     steps = schedule(len(rows), training, seed, method.repeats)
     optimizer = torch.optim.AdamW(method.parameter_groups(backbone), lr=training.lr, weight_decay=training.weight_decay)
     peaks = [group["lr"] for group in optimizer.param_groups]
@@ -66,9 +70,11 @@ def fit(backbone: Backbone, method: TrainingMethod[Any], rows: list[Row], traini
     (workdir / LOG).write_text("".join(json.dumps(event) + "\n" for event in events))
     autocast = torch.autocast("cuda", dtype=torch.bfloat16, enabled=backbone.device.startswith("cuda"))
     backbone.model.train()
+    every = training.resume_every or 0  # 0: no snapshots
+    next_snapshot = start + every
     progress.update(start, len(steps))
     for index in range(start, len(steps)):
-        torch.manual_seed(seed + index)  # methods that sample (GRPO) repeat exactly after a resume
+        device.seed(backbone.device, seed + index)  # methods that sample (GRPO) repeat exactly after a resume
         rate = learning_rate(index, len(steps), training)
         for group, peak in zip(optimizer.param_groups, peaks, strict=True):
             group["lr"] = peak * rate / training.lr
@@ -89,10 +95,12 @@ def fit(backbone: Backbone, method: TrainingMethod[Any], rows: list[Row], traini
         if on_step is not None:
             on_step(index + 1, {f"train/{key}": float(value) for key, value in event.items() if key != "step"})
         progress.update(index + 1, len(steps), ", ".join(f"{k} {v:.4f}" for k, v in event.items() if k not in {"step", "lr"}))
-        if training.resume_every and (index + 1) % training.resume_every == 0 and index + 1 < len(steps):
+        done = index + 1
+        if every and done >= next_snapshot and done % method.repeats == 0 and done < len(steps):
             temporary = resume.with_suffix(".tmp")
-            torch.save({"step": index + 1, "model": backbone.snapshot(), "optimizer": optimizer.state_dict()}, temporary)
+            torch.save({"step": done, "model": backbone.snapshot(), "optimizer": optimizer.state_dict()}, temporary)
             temporary.replace(resume)
+            next_snapshot = done + every
     backbone.model.eval()
     finished = method.finish(backbone, progress)
     progress.update(len(steps), len(steps), "saving checkpoint")

@@ -88,7 +88,10 @@ pipeline:
   Each training method, backbone and head class carries a `version`; bumping one after changing its code rebuilds
   the experiments that use that part and leaves every other recipe's cache alone.
 - **Reruns.** A stage is recorded only when it finishes. A crashed run is resumed by running the same command
-  again; training continues from `resume.pt` in the train stage directory.
+  again; training continues from `resume.pt` in the train stage directory and ends with the same weights as an
+  uninterrupted run: batches, learning rates and the samples of a sampling method (`llm_grpo`, `llm_decision_cispo`)
+  are all derived from the seed and the step. With `method.iterations` above 1 a snapshot is written only between
+  groups of steps that share samples, so a resume never lands inside such a group.
 - **Locks.** A stage directory is locked while it is built, so a CLI run and an API job asking for the same stage
   never build it twice.
 - **Identity.** The experiment directory is `<name>-<hash>`; `stages`, `output_dir` and `tracker` are not part of
@@ -109,8 +112,12 @@ pipeline:
   resumed continues the same wandb run. `tracker` is not part of an experiment's identity, so switching it on later
   replays the already cached run once instead of retraining. A run is sent to a given project only once.
 - **Jobs.** The API keeps its jobs in a SQLite table (`JOBS_DB`), so they survive a restart; a job the server was
-  running when it stopped is marked `interrupted` and resumes when submitted again. `JOB_WORKERS` jobs run at once,
-  each worker on its own accelerator: set it to the number of GPUs on a multi-GPU server and keep 1 otherwise.
+  running when it stopped is marked `interrupted` and resumes when submitted again. `DELETE /api/jobs/<id>` cancels
+  a pending or running job: it stops at its next progress report, keeps what it built, and continues from there
+  when submitted again. `JOB_WORKERS` jobs run at once, each worker on its own accelerator: set it to the number of
+  GPUs on a multi-GPU server and keep 1 otherwise. On a server others can reach, set `API_TOKEN` (every `/api` call
+  then needs `Authorization: Bearer <token>`) and `API_PATHS` (the directories the API may read configs and rows
+  from and write output to; any other path is refused).
 - **Typos.** Every config section rejects keys it does not know, so `validaton:` or `training.learning_rate` is an
   error instead of a silently ignored setting.
 
@@ -186,7 +193,7 @@ the fingerprint, so rebuilding the earlier experiment rebuilds the one that cont
 
 ```bash
 uv sync                                                    # Python 3.12
-cp environment/.env.sample environment/.env                # HF_TOKEN, only for gated models and datasets
+cp environment/.env.sample environment/.env                # HF_TOKEN for gated models; API_TOKEN, API_PATHS for a shared server
 
 uv run llmclick recipes                                    # recipes, their stages and registry keys
 uv run llmclick validate configs/llm/sft.yaml              # experiment key and stage plan
@@ -353,6 +360,7 @@ Inside a stage, `self.progress.update(done, total, note)` drives the progress ba
 
 ```bash
 uv run pytest tests/core tests/modeling  # runner, progress, validation gate, API, every recipe on a tiny random model
+uv run ruff check . && uv run mypy      # what CI runs on every pull request, besides the tests
 ```
 
 Licence: MIT. Models and datasets a config names keep their own licences.

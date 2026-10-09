@@ -28,3 +28,7 @@ class BaseConfig(Section):
 
     def identity(self) -> dict[str, Any]:
         return self.model_dump(mode="json", exclude=set(self.identity_exclude))
+
+    def paths(self) -> list[str]:
+        """Every local path this config reads or writes; a recipe adds its own. The API confines them to `API_PATHS`."""
+        return [self.output_dir]

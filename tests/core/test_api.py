@@ -7,6 +7,7 @@ import threading
 import pytest
 from fastapi.testclient import TestClient
 
+from config import get_settings
 from core.api import store as job_store
 from core.api.store import JobStore
 from core.progress import StateProgress
@@ -17,7 +18,11 @@ client = TestClient(app)
 
 
 @pytest.fixture(autouse=True)
-def temporary_job_table(tmp_path: Path) -> None:
+def temporary_job_table(tmp_path: Path, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+    # the tests keep their model and output under pytest's temporary directory, so the API may reach it too
+    monkeypatch.setenv("API_PATHS", f".:{tmp_path_factory.getbasetemp()}")
+    monkeypatch.delenv("API_TOKEN", raising=False)
+    get_settings.cache_clear()
     job_store.configure(tmp_path / "jobs.sqlite", workers=1)
 
 
@@ -120,3 +125,71 @@ def test_a_failed_job_keeps_its_error_and_frees_its_slot(tmp_path: Path) -> None
     assert "ZeroDivisionError" in wait(store, "bad")["error"]
     store.submit("good", lambda: "ok", {"recipe": "r"}, StateProgress())
     assert wait(store, "good")["result"] == "ok"
+
+
+DETAIL: dict[str, Any] = {"recipe": "r", "experiment": "e", "directory": "d", "stages": ["train"]}
+
+
+def test_a_running_job_is_cancelled_at_its_next_progress_report(tmp_path: Path) -> None:
+    progress, started = StateProgress(), threading.Event()
+
+    def work() -> None:
+        for step in range(10_000):
+            progress.update(step, 10_000)  # raises once cancelled
+            started.set()
+            time.sleep(0.001)
+
+    job_store.configure(tmp_path / "table.sqlite", workers=1)
+    store = job_store.store()
+    store.submit("long", work, DETAIL, progress)
+    assert started.wait(5)
+    assert client.delete("/api/jobs/long").status_code == 202
+    job = wait(store, "long")
+    assert job["status"] == "cancelled" and job["error"] is None and job["progress"]["done"] < 10_000
+    assert client.delete("/api/jobs/long").status_code == 202  # cancelling again is harmless
+    store.submit("long", lambda: "again", DETAIL, StateProgress())  # a cancelled job can be resubmitted
+    assert wait(store, "long")["result"] == "again"
+    assert client.delete("/api/jobs/long").status_code == 409 and client.delete("/api/jobs/nope").status_code == 404
+
+
+def test_a_pending_job_cancelled_before_its_turn_never_runs(tmp_path: Path) -> None:
+    store = JobStore(tmp_path / "table.sqlite", workers=1)
+    release, ran = threading.Event(), []
+    store.submit("first", lambda: {"waited": release.wait(5)}, DETAIL, StateProgress())
+    store.submit("second", lambda: ran.append(1), DETAIL, StateProgress())
+    assert store.get("second")["status"] == "pending"
+    store.cancel("second")
+    release.set()
+    assert wait(store, "second")["status"] == "cancelled" and ran == []
+    assert [job["job_id"] for job in store.all(status="cancelled")] == ["second"]
+    assert [job["job_id"] for job in store.all(limit=1)] == ["second"]
+    job_store.configure(tmp_path / "table.sqlite", workers=1)
+    assert [job["job_id"] for job in client.get("/api/jobs", params={"status": "done"}).json()] == ["first"]
+    assert client.get("/api/jobs", params={"status": "nope"}).status_code == 422
+
+
+def test_paths_outside_api_paths_are_refused(tiny_model: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    body = config(tiny_model, tmp_path)
+    assert client.post("/api/config/validate", json=body).status_code == 200
+    outside = str(Path("/").resolve())
+    for section, keys in [("pipeline", {"output_dir": outside}), ("model", {"init": f"{tmp_path}/../../escape"}),
+                          ("data", {"sources": [{"name": "local_jsonl", "path": "/etc/hosts"}]})]:
+        refused = client.post("/api/config/validate", json={**body, section: {**body[section], **keys}})
+        assert refused.status_code == 403 and "outside API_PATHS" in refused.json()["detail"], section
+    assert client.post("/api/jobs", json={"config": {**body, "pipeline": {**body["pipeline"], "output_dir": outside}}}).status_code == 403
+    assert client.post("/api/config/load", params={"config_path": "../../../etc/passwd"}).status_code == 403
+    assert client.post("/api/config/load", params={"config_path": "/etc/passwd"}).status_code == 403
+    monkeypatch.setenv("API_PATHS", "configs")  # rows under samples/ are then out of reach, the config file is not
+    get_settings.cache_clear()
+    assert client.post("/api/config/load", params={"config_path": "configs/llm/sft.yaml"}).status_code == 403
+
+
+def test_api_token_guards_every_api_route_but_not_health(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("API_TOKEN", "s3cret")
+    get_settings.cache_clear()
+    assert client.get("/health").status_code == 200
+    for request in (lambda h: client.get("/api/jobs", headers=h), lambda h: client.get("/api/system/recipes", headers=h),
+                    lambda h: client.post("/api/config/validate", json={}, headers=h)):
+        assert request({}).status_code == 401 and request({"Authorization": "Bearer wrong"}).status_code == 401
+        assert request({"Authorization": "Bearer s3cret"}).status_code != 401
+    assert client.get("/api/jobs", headers={"Authorization": "Bearer s3cret"}).json() == []

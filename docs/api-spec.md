@@ -2,10 +2,10 @@
 
 | 항목 | 값 |
 |---|---|
-| Last Updated | 2026-10-04 |
+| Last Updated | 2026-10-09 |
 | Base URL | `http://localhost:8000` |
 | 데이터 포맷 | JSON (UTF-8) |
-| 인증 | 없음 |
+| 인증 | `API_TOKEN` 이 설정되면 `/api/*` 전부 `Authorization: Bearer <token>`, 비어 있으면 없음 |
 
 > `Last Updated`는 **문서 내용이 실제로 바뀐 날**만 적는다. 코드가 그대로인 채로 문서를
 > 다시 생성했다면 이 값도 그대로다. 시각은 적지 않는다.
@@ -22,6 +22,7 @@
    - [GET /api/jobs](#get-apijobs)
    - [POST /api/jobs](#post-apijobs)
    - [GET /api/jobs/{job_id}](#get-apijobsjob_id)
+   - [DELETE /api/jobs/{job_id}](#delete-apijobsjob_id)
    - [GET /api/system/recipes](#get-apisystemrecipes)
    - [GET /health](#get-health)
 4. [데이터 모델](#데이터-모델)
@@ -48,14 +49,21 @@ YAML 설정 하나를 커스텀 모델 하나로 실행하는 서버. config 의
 | 상태 코드 | 언제 |
 |---|---|
 | 200 | 정상 |
-| 202 | Job 접수 (대기 중이거나 실행 중인 같은 Job 이 있으면 그 Job 을 반환) |
+| 202 | Job 접수 (대기 중이거나 실행 중인 같은 Job 이 있으면 그 Job 을 반환), 또는 취소 접수 |
+| 401 | `API_TOKEN` 이 설정된 서버에 토큰 없이, 또는 틀린 토큰으로 호출 |
+| 403 | `config_path`, 또는 config 가 적은 경로(`output_dir`, `model.name`, `model.init`, `data.sources[*].path`)가 `API_PATHS` 밖 |
 | 404 | config 파일 또는 job_id 없음 |
+| 409 | 끝난 Job 을 취소하려 함 |
 | 422 | 요청 본문 또는 config 가 스키마에 안 맞음 (Pydantic 메시지가 `detail`) |
 | 500 | 서버 처리 실패 |
 
-**페이지네이션** — 없음. Job 은 SQLite 테이블(`JOBS_DB`, 기본 `./output/_jobs.sqlite`)에 있고 접수 순으로 전부 돌려준다.
+**페이지네이션** — `GET /api/jobs` 의 `limit` 가 최근 N 건으로 줄인다. Job 은 SQLite 테이블(`JOBS_DB`, 기본
+`./output/_jobs.sqlite`)에 있고 접수 순으로 돌려준다.
 
-**공통 헤더** — 없음.
+**공통 헤더** — `API_TOKEN` 이 설정된 서버에서는 `/api/*` 전부 `Authorization: Bearer <API_TOKEN>`. `/health` 는 예외.
+
+**경로 제한** — API 가 읽거나 쓰는 모든 경로는 `API_PATHS`(콜론으로 구분한 디렉토리 목록, 기본 `.` 즉 서버의 작업
+디렉토리) 안에 있어야 한다. `..` 과 심볼릭 링크를 푼 실제 위치로 판정하며, 밖이면 403. CLI 에는 적용되지 않는다.
 
 ---
 
@@ -78,10 +86,10 @@ POST /api/config/load?config_path=configs/llm/sft.yaml
 | 항목 | 값 |
 |---|---|
 | Method | `POST` |
-| 인증 | 없음 |
+| 인증 | `API_TOKEN` 설정 시 Bearer |
 | 요청 Content-Type | 없음 (본문 없음) |
 | 응답 Content-Type | `application/json` |
-| 필수 헤더 | 없음 |
+| 필수 헤더 | `API_TOKEN` 설정 시 `Authorization` |
 
 #### Request Body
 
@@ -135,10 +143,10 @@ POST /api/config/validate
 | 항목 | 값 |
 |---|---|
 | Method | `POST` |
-| 인증 | 없음 |
+| 인증 | `API_TOKEN` 설정 시 Bearer |
 | 요청 Content-Type | `application/json` |
 | 응답 Content-Type | `application/json` |
-| 필수 헤더 | 없음 |
+| 필수 헤더 | `API_TOKEN` 설정 시 `Authorization` |
 
 #### Request Body
 
@@ -179,7 +187,7 @@ $ curl -s -X POST http://localhost:8000/api/config/validate -H 'content-type: ap
 
 ### GET /api/jobs
 
-접수된 모든 Job.
+접수된 Job 목록. 상태로 거르거나 최근 N 건으로 줄일 수 있다.
 
 #### Endpoint
 
@@ -192,10 +200,10 @@ GET /api/jobs
 | 항목 | 값 |
 |---|---|
 | Method | `GET` |
-| 인증 | 없음 |
+| 인증 | `API_TOKEN` 설정 시 Bearer |
 | 요청 Content-Type | 없음 (본문 없음) |
 | 응답 Content-Type | `application/json` |
-| 필수 헤더 | 없음 |
+| 필수 헤더 | `API_TOKEN` 설정 시 `Authorization` |
 
 #### Request Body
 
@@ -205,7 +213,8 @@ GET /api/jobs
 
 | 파라미터 | 위치 | 타입 | 필수 | 기본값 | 설명 |
 |---|---|---|---|---|---|
-| — | — | — | — | — | 없음 |
+| `status` | query | string | 아니오 | 없음 | 이 상태의 Job 만. `pending` / `running` / `done` / `failed` / `cancelled` / `interrupted` 중 하나, 그 외는 422 |
+| `limit` | query | int (1 이상) | 아니오 | 없음 | 접수 순으로 마지막 N 건만 |
 
 #### Response Body
 
@@ -216,11 +225,12 @@ GET /api/jobs
 | 코드 | 의미 | 본문 |
 |---|---|---|
 | `200` | 정상 | 배열 (비어 있을 수 있음) |
+| `422` | `status` 가 목록에 없는 값이거나 `limit` 가 1 미만 | `{"detail": "..."}` |
 
 #### 호출 예시
 
 ```bash
-$ curl -s http://localhost:8000/api/jobs
+$ curl -s 'http://localhost:8000/api/jobs?status=running&limit=5'
 []
 ```
 
@@ -246,10 +256,10 @@ POST /api/jobs
 | 항목 | 값 |
 |---|---|
 | Method | `POST` |
-| 인증 | 없음 |
+| 인증 | `API_TOKEN` 설정 시 Bearer |
 | 요청 Content-Type | `application/json` |
 | 응답 Content-Type | `application/json` |
-| 필수 헤더 | 없음 |
+| 필수 헤더 | `API_TOKEN` 설정 시 `Authorization` |
 
 #### Request Body
 
@@ -314,10 +324,10 @@ GET /api/jobs/{job_id}
 | 항목 | 값 |
 |---|---|
 | Method | `GET` |
-| 인증 | 없음 |
+| 인증 | `API_TOKEN` 설정 시 Bearer |
 | 요청 Content-Type | 없음 (본문 없음) |
 | 응답 Content-Type | `application/json` |
-| 필수 헤더 | 없음 |
+| 필수 헤더 | `API_TOKEN` 설정 시 `Authorization` |
 
 #### Request Body
 
@@ -353,6 +363,67 @@ $ curl -s http://localhost:8000/api/jobs/nope
 
 ---
 
+### DELETE /api/jobs/{job_id}
+
+대기 중이거나 실행 중인 Job 을 취소한다.
+
+#### Endpoint
+
+```
+DELETE /api/jobs/{job_id}
+```
+
+#### 호출 규약
+
+| 항목 | 값 |
+|---|---|
+| Method | `DELETE` |
+| 인증 | `API_TOKEN` 설정 시 Bearer |
+| 요청 Content-Type | 없음 (본문 없음) |
+| 응답 Content-Type | `application/json` |
+| 필수 헤더 | `API_TOKEN` 설정 시 `Authorization` |
+
+#### Request Body
+
+없음.
+
+#### Query / Path 파라미터
+
+| 파라미터 | 위치 | 타입 | 필수 | 기본값 | 설명 |
+|---|---|---|---|---|---|
+| `job_id` | path | string | 예 | — | `POST /api/jobs` 가 돌려준 값 |
+
+#### Response Body
+
+[JobResponse](#jobresponse). 취소 요청 직후의 상태이므로 아직 `pending` 이나 `running` 일 수 있다.
+
+#### 응답 코드
+
+| 코드 | 의미 | 본문 |
+|---|---|---|
+| `202` | 취소 접수 (이미 `cancelled` 인 Job 도 202) | JobResponse |
+| `404` | 없음 | `{"detail": "No such job: ..."}` |
+| `409` | `done` / `failed` / `interrupted` 인 Job 은 취소할 수 없음 | `{"detail": "..."}` |
+
+#### 호출 예시
+
+```bash
+$ curl -s -X DELETE http://localhost:8000/api/jobs/sft-qwen3.5-0.8b-<hash>-<stages>
+{"job_id":"sft-qwen3.5-0.8b-<hash>-<stages>","status":"running",...}
+```
+
+#### 특이사항
+
+**취소 시점** — 스레드는 밖에서 멈출 수 없으므로 파이프라인이 다음 진행 보고(학습이면 다음 스텝, 검사면 다음 묶음)에서
+스스로 멈춘다. 모델 다운로드처럼 진행을 보고하지 않는 구간은 그 구간이 끝난 뒤 멈춘다. 멈추면 `status` 가
+`cancelled` 가 되고 `error` 는 null 이다. `GET /api/jobs/{job_id}` 로 확인한다.
+
+**산출물** — 끝난 스테이지와 학습 중 `resume.pt` 는 남는다. 같은 config 를 다시 제출하면 거기서 이어서 실행된다.
+
+**재호출** — 취소 중이거나 이미 취소된 Job 에 다시 보내도 202, 상태는 그대로.
+
+---
+
 ### GET /api/system/recipes
 
 이 서버가 만들 수 있는 레시피와, 레시피별 스테이지 순서 및 YAML 의 `name:` 키로 쓸 수 있는 값 목록.
@@ -368,10 +439,10 @@ GET /api/system/recipes
 | 항목 | 값 |
 |---|---|
 | Method | `GET` |
-| 인증 | 없음 |
+| 인증 | `API_TOKEN` 설정 시 Bearer |
 | 요청 Content-Type | 없음 (본문 없음) |
 | 응답 Content-Type | `application/json` |
-| 필수 헤더 | 없음 |
+| 필수 헤더 | `API_TOKEN` 설정 시 `Authorization` |
 
 #### Request Body
 
@@ -433,7 +504,7 @@ GET /health
 | 항목 | 값 |
 |---|---|
 | Method | `GET` |
-| 인증 | 없음 |
+| 인증 | 없음 (컨테이너 healthcheck 가 부름) |
 | 요청 Content-Type | 없음 (본문 없음) |
 | 응답 Content-Type | `application/json` |
 | 필수 헤더 | 없음 |
@@ -491,7 +562,7 @@ $ curl -s http://localhost:8000/health
 | 필드 | 타입 | 널 허용 | 설명 |
 |---|---|---|---|
 | `job_id` | string | 아니오 | `<experiment>-<stages sha256[:6]>` |
-| `status` | string | 아니오 | `pending` / `running` / `done` / `failed` / `interrupted`(서버가 멈춰 끝나지 못함) |
+| `status` | string | 아니오 | `pending` / `running` / `done` / `failed` / `cancelled`(`DELETE /api/jobs/{job_id}` 로 멈춤) / `interrupted`(서버가 멈춰 끝나지 못함) |
 | `recipe` | string | 아니오 | 레시피 키 |
 | `experiment` | string | 아니오 | 실험 키 |
 | `directory` | string | 아니오 | 실험 디렉토리 |
@@ -499,7 +570,7 @@ $ curl -s http://localhost:8000/health
 | `progress` | object | 아니오 | [Progress](#progress). 실행 중에는 실시간 값, 끝난 뒤에는 마지막 값 |
 | `device_slot` | int | 예 | Job 을 실행한 워커 번호. GPU 가 여러 개면 `cuda:<번호>` 를 씀. 대기 중에는 null |
 | `result` | object | 예 | `done` 일 때 `{"experiment","directory","stages":{stage: outputs}}` |
-| `error` | string | 예 | `failed` 일 때 메시지 + traceback |
+| `error` | string | 예 | `failed` 일 때 메시지 + traceback, `interrupted` 일 때 안내문 |
 
 ### Progress
 
