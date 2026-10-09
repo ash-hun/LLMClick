@@ -15,6 +15,7 @@ what is already built, shows progress, and never hands on a trained model that h
 | Embedding | `embedding_contrastive` | query/positive/negative triples (InfoNCE) | `bi_encoder` (Qwen3-Embedding-0.6B) |
 | Evaluation | `evaluation_custom` | nothing: scores a checkpoint of any experiment above on any rows, with that recipe's metrics | the experiment's |
 | Evaluation | `evaluation_benchmark` | nothing: scores a checkpoint on public benchmarks (lm-evaluation-harness), one cached stage per benchmark | the experiment's (LLM) |
+| Evaluation | `evaluation_compare` | nothing: several checkpoints (the base model among them) on the same benchmarks and rows; table, deltas with intervals, polygon chart | the experiments' |
 
 The decision recipes follow the Jev request format. The readout head and one-pass training follow
 [jeff](https://github.com/firelex/jeff); the pointer head, reasoning chains and CISPO follow
@@ -65,6 +66,7 @@ LLMClick/
 │   ├── source.py                 #   SourceExperiment: an experiment's config read back, its checkpoint located
 │   ├── stages.py                 #   rows, score, report (evaluation_custom)
 │   ├── benchmark.py              #   presets, one score stage per benchmark over lm-evaluation-harness (evaluation_benchmark)
+│   ├── compare.py                #   runs, verdicts against the base, polygon SVG, Markdown summary (evaluation_compare)
 │   └── config.py pipeline.py     #   (README: design and milestones)
 ├── tests/core/  tests/modeling/
 ├── docs/                         # api-spec.md, screen-spec.md
@@ -77,8 +79,10 @@ LLMClick/
 `evaluation/` scores what `modeling/` built: `evaluation_custom` measures any checkpoint of an experiment (`validate`,
 `train`, `base`, or a directory) on any rows with the metrics of the recipe that trained it; `evaluation_benchmark`
 scores it on public benchmarks through lm-evaluation-harness (`uv sync --extra eval`), one cached stage per
-benchmark, with presets for the small-model panel and Korean. Both write `report.json`; decision, embedding and
-comparison recipes follow (`evaluation/README.md` has the design and milestones). `data/` (training and synthetic data pipelines) is planned and has a README only. A channel is a
+benchmark, with presets for the small-model panel and Korean; `evaluation_compare` puts several checkpoints, the
+base model among them, through the same benchmarks and rows and reports the differences with their intervals, a
+polygon chart and a Markdown summary. All write `report.json`; decision and embedding recipes follow
+(`evaluation/README.md` has the design and milestones). `data/` (training and synthetic data pipelines) is planned and has a README only. A channel is a
 package that registers recipes; it joins by adding its name to `CHANNELS` in `core/registry.py` and reuses `Stage`,
 `Pipeline`, `Progress` and `Experiment` as they are.
 
@@ -143,6 +147,7 @@ pipeline:
 | `validate` | the method's metrics on the held-out rows against `validation.min`/`max` |
 | `rows`, `score`, `report` | `evaluation_custom`: read and check the rows, measure the chosen checkpoint with the experiment's method, write `report.json` |
 | `score:<task>`..., `report` | `evaluation_benchmark`: one lm-evaluation-harness run per benchmark (fingerprint: checkpoint content, task, few-shot, limit, decoding, harness version), then one report |
+| `score:<run>:<task>`..., `rows`, `rows:<run>`..., `report` | `evaluation_compare`: the stages above per run, shared with the single-model recipes; the report compares every run with the base |
 
 | Recipe | Row keys | Metrics for `validation.min`/`max` |
 |---|---|---|
@@ -234,6 +239,7 @@ curl -X POST localhost:8000/api/jobs -H 'content-type: application/json' \
 | `embedding/contrastive.yaml` | contrastive learning of Qwen3-Embedding-0.6B |
 | `evaluation/custom.yaml` | the `llm/sft.yaml` experiment's validated checkpoint scored on the sample rows |
 | `evaluation/benchmark.yaml` | the same checkpoint on the `small_general` preset plus KMMLU, 100 items each (needs `uv sync --extra eval`) |
+| `evaluation/compare.yaml` | base model against the trained checkpoint on the preset and the sample rows, with a four-axis chart |
 
 The `llm/` and `embedding/` configs ship as pilots: sample rows from `samples/` and `max_steps: 4`. Point
 `data.sources` at your rows and remove `max_steps` for a real run.

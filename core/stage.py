@@ -16,6 +16,10 @@ class Stage(ABC, Generic[ConfigT]):
     requires: ClassVar[tuple[str, ...]] = ()   # stages whose outputs this one reads
     sections: ClassVar[tuple[str, ...]] = ()   # config sections that decide the result
     version: ClassVar[int] = 1                 # bump when the code changes what the same inputs produce
+    # A scope makes the stage's directory shared across recipes and stage names: two stages of one scope with the
+    # same identity (and upstream) are the same work, whichever pipeline asks. Without it, recipe and name are part
+    # of the fingerprint. A scoped stage must put everything that decides its result into `identity`.
+    scope: ClassVar[str | None] = None
 
     def __init__(self, config: ConfigT, progress: Progress) -> None:
         self.config = config
