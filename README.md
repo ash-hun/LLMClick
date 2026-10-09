@@ -93,7 +93,7 @@ pipeline:
   are all derived from the seed and the step. With `method.iterations` above 1 a snapshot is written only between
   groups of steps that share samples, so a resume never lands inside such a group.
 - **Locks.** A stage directory is locked while it is built, so a CLI run and an API job asking for the same stage
-  never build it twice.
+  never build it twice; the second one says that it is waiting (progress note, log) and then reuses the result.
 - **Identity.** The experiment directory is `<name>-<hash>`; `stages`, `output_dir` and `tracker` are not part of
   the hash, because they say how to run, not what to build.
 - **Progress.** The CLI shows two bars (stages, and steps inside the running stage); API jobs report the same

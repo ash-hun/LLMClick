@@ -82,9 +82,14 @@ class Pipeline(ABC, Generic[ConfigT]):
         stage, key = self.stages[name], self.fingerprint(name)
         workdir = self.experiment.stage_dir(name, key)
         self.progress.stage_started(name)
+
+        def waiting() -> None:  # another run (CLI or job) holds this stage; its result is reused when it is done
+            logger.info("[%s] %s: waiting for another run that is building it", self.experiment.key, name)
+            self.progress.update(0, None, "waiting for another run that is building this stage")
+
         try:
             # The lock makes "is it built?" and "build it" one step, across threads and processes.
-            with locked(workdir.parent / f"{workdir.name}.lock"):
+            with locked(workdir.parent / f"{workdir.name}.lock", waiting):
                 outputs = self.experiment.stage_outputs(workdir, key)
                 status = "cached"
                 if outputs is None:
