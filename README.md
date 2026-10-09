@@ -353,6 +353,7 @@ Inside a stage, `self.progress.update(done, total, note)` drives the progress ba
 
 ```bash
 uv run pytest tests/core tests/modeling  # runner, progress, validation gate, API, every recipe on a tiny random model
+uv run ruff check . && uv run mypy      # what CI runs on every pull request, besides the tests
 ```
 
 Licence: MIT. Models and datasets a config names keep their own licences.

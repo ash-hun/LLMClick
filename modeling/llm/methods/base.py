@@ -12,7 +12,7 @@ Encoded = tuple[list[int], list[bool]]  # token ids, and which of them are targe
 
 
 def common_prefix(a: list[int], b: list[int]) -> int:
-    return next((i for i, (x, y) in enumerate(zip(a, b)) if x != y), min(len(a), len(b)))
+    return next((i for i, (x, y) in enumerate(zip(a, b, strict=False)) if x != y), min(len(a), len(b)))
 
 
 def conversation(prompt: str | list[Message]) -> list[Message]:
