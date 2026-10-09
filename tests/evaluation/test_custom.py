@@ -87,3 +87,10 @@ def test_shipped_evaluation_config_points_at_the_sft_experiment() -> None:
     sft = pipeline.load("configs/llm/sft.yaml")
     custom = pipeline.load("configs/evaluation/custom.yaml")
     assert custom.config.model.experiment == f"output/{sft.experiment.key}"  # edit one config, update the other
+
+
+def test_shipped_decision_and_embedding_configs_point_at_their_experiments() -> None:
+    for config, source in [("configs/evaluation/decision.yaml", "configs/llm/decision_pointer.yaml"),
+                           ("configs/evaluation/embedding.yaml", "configs/embedding/contrastive.yaml")]:
+        trained = pipeline.load(source)
+        assert pipeline.load(config).config.model.experiment == f"output/{trained.experiment.key}"

@@ -1,7 +1,8 @@
 # Evaluation channel
 
-Status: milestones 1 to 3 built (`evaluation_custom`, `evaluation_benchmark`, `evaluation_compare`); the rest is
-designed below, after a short survey of the benchmark landscape (October 2026). The survey's sources are at the end.
+Status: milestones 1 to 4 built (`evaluation_custom`, `evaluation_benchmark`, `evaluation_compare`,
+`evaluation_decision`, `evaluation_embedding`); milestone 5 is designed below, after a short survey of the benchmark
+landscape (October 2026). The survey's sources are at the end.
 
 ## Built: `evaluation_custom`
 
@@ -68,6 +69,44 @@ acc, prompt_level_strict_acc, f1, ...), its standard error and item count; per r
 `comparison`: the difference of every run to the base, with `decided` true when it lies outside the 95% interval of
 the two measurements, false when inside (the Markdown marks it `~`: not decided), null when no standard error exists
 (the recipes' own metrics; marked `?`). `axes.svg` is the polygon chart, `summary.md` the tables.
+
+## Built: `evaluation_decision`
+
+```yaml
+pipeline: {recipe: evaluation_decision, name: decision-on-jevbench}
+model: {experiment: output/decision-pointer-qwen3.5-0.8b-<hash>, checkpoint: validate}
+data: {sources: [{name: jevbench, path: data/jevbench}]}   # or local_jsonl rows in the Jev format
+think: both            # off | on | both
+max_think: 256         # null: the experiment's method.max_think
+evaluation: {batch_size: 8}
+```
+
+The `jevbench` source reads PostHog's public tier files (`easy.jsonl`, `original.jsonl`, `hard.jsonl`, the format
+`jevbench.py` of the Jeeves repository reads; `tiers` and `limit` per tier are optional) into Jev records with a
+`tier` and `family`. Every question goes through the head without reasoning and, with `think`, after greedy
+reasoning. The report holds per mode (`nothink`, `think`): accuracy, NLL, ECE (calibrated with the checkpoint's
+temperature), reasoning tokens, the share of chains that closed themselves, latency per question (p50, p95 at the
+batch size used) and, when rows carry tiers, per tier the accuracy against the chance level of its option counts
+and the chance-corrected share. `items.jsonl` keeps every question's prediction, confidence and timing.
+Not yet: the JevBench coherence suite on the Hub (`JevBench/jevbench`, a different benchmark: metamorphic relations
+between rewordings), and the Jeeves transfer panel (MMLU, PAWS, QNLI, SciQ, TweetEval, Emotion as decision rows),
+which the Data channel's converters will produce.
+
+## Built: `evaluation_embedding`
+
+```yaml
+pipeline: {recipe: evaluation_embedding, name: contrastive-on-mteb}
+model: {experiment: output/contrastive-qwen3-embedding-0.6b-<hash>, checkpoint: validate}
+tasks: [STSBenchmark, NFCorpus, Banking77Classification]
+max_length: null       # tokens per text; null: the experiment's training.max_length
+evaluation: {batch_size: 32}
+```
+
+Needs `uv sync --extra eval` (mteb). One stage per task (`score:<task>`, scope `mteb`), fingerprinted by the
+checkpoint's content, the task, `max_length` and the mteb version. The experiment's backbone is wrapped as an MTEB
+encoder (texts in, unit vectors out; cosine similarity), so pooling and instructions are the recipe's own. The report
+holds per task the main score and metric, the task type and every split's scores; `results.json` keeps mteb's full
+result. mteb's mock tasks (`MockSTSTask`, ...) are accepted for smoke tests without downloads.
 
 ## Purpose
 
@@ -216,7 +255,7 @@ Each milestone ends green on CI with tests on the tiny random model, as the mode
 | 1. Skeleton and `evaluation_custom` (built) | the `evaluation` package, `EvaluationConfig`, `rows` and `score` stages that call a modeling method's `evaluate` on a checkpoint, `report.json`, `CHANNELS` entry | `llmclick run configs/evaluation/custom.yaml` scores an SFT checkpoint on a JSONL file; the API lists the recipe; cached rerun builds nothing |
 | 2. `evaluation_benchmark` (built; the GPU run is still to do) | lm-evaluation-harness behind an optional extra (`uv sync --extra eval`), a `benchmarks` section with presets (`small_general`, `korean`), harness version in the fingerprint, `limit` for smoke runs, settings recorded in results | the preset runs on Qwen3.5-0.8B on one GPU with `limit`; results carry stderr and settings; a missing extra gives one clear error |
 | 3. `evaluation_compare` (built) | several checkpoints, the base model required, the table, the polygon SVG, Markdown summary, "not decided" marking from intervals; stage scopes so single-model evaluations and comparisons share their runs | one command compares base, mid-training and final checkpoints of one experiment |
-| 4. Decision and embedding | `evaluation_decision` (JevBench reader, think and no-think rows, ECE, latency), `evaluation_embedding` (mteb) | the decision pointer pilot reproduces the metrics `validate` reports, plus the JevBench tiers; the embedding pilot runs one MTEB retrieval task |
+| 4. Decision and embedding (built) | `evaluation_decision` (JevBench reader, think and no-think rows, ECE, latency), `evaluation_embedding` (mteb) | the decision pointer pilot reproduces the metrics `validate` reports, plus the JevBench tiers; the embedding pilot runs one MTEB retrieval task |
 | 5. Contamination and surfacing | exact and near-duplicate overlap between an experiment's training rows and the benchmark items, in the report; `GET /api/evaluations`; tracker table | a deliberately contaminated pilot shows the overlap; the API returns the reports |
 
 Order of 4 and 5 can swap depending on which models are trained first.

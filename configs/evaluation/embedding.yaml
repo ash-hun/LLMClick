@@ -1,0 +1,13 @@
+# An embedding model on MTEB tasks through the mteb package (`uv sync --extra eval`), one cached stage per task.
+pipeline:
+  recipe: evaluation_embedding
+  name: contrastive-on-mteb
+  output_dir: ./output
+
+model:
+  experiment: output/contrastive-qwen3-embedding-0.6b-c68f80f0
+  checkpoint: validate              # validate | train | base | a checkpoint directory
+
+tasks: [STSBenchmark, NFCorpus, Banking77Classification]   # any mteb task name; `python -c "import mteb; print(mteb.get_tasks())"`
+max_length: null                    # tokens per text; null: the experiment's training.max_length
+evaluation: {batch_size: 32}

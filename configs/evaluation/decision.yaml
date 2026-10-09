@@ -1,0 +1,19 @@
+# A decision model on the JevBench public tiers (easy, standard, hard), without and with reasoning.
+# `data.sources` can also be local_jsonl rows in the Jev format (state, questions) or jeff Example rows.
+# The tier files are the ones PostHog's jevbench.py reads (easy.jsonl, original.jsonl, hard.jsonl); point `path` at them.
+pipeline:
+  recipe: evaluation_decision
+  name: decision-pointer-on-jevbench
+  output_dir: ./output
+
+model:
+  experiment: output/decision-pointer-qwen3.5-0.8b-e442dea1
+  checkpoint: validate              # validate | train | base | a checkpoint directory
+
+data:
+  sources:
+    - {name: jevbench, path: data/jevbench}     # tiers: [easy, standard, hard] and limit: N per tier are optional
+
+think: both                         # off: decide at once; on: reason first; both: two rows in the report
+max_think: 256                      # reasoning tokens per question; null: the experiment's method.max_think
+evaluation: {batch_size: 8}         # latency per question is measured at this batch size
