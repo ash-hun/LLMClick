@@ -7,6 +7,8 @@ from core.stage import ConfigT, Stage
 from evaluation.benchmark import PRESETS, BenchmarkConfig, BenchmarkReport, BenchmarkStage
 from evaluation.compare import CompareConfig, CompareReport
 from evaluation.config import BUILT, EvaluationConfig
+from evaluation.decision import DecisionConfig, DecisionReport, DecisionScoreStage
+from evaluation.embedding import EmbeddingConfig, EmbeddingReport, EmbeddingStage
 from evaluation.stages import ReportStage, RowsStage, ScoreStage
 from modeling.tuning.sources import SOURCES
 
@@ -91,3 +93,37 @@ class CompareEvaluation(EvaluationPipeline[CompareConfig]):
     @classmethod
     def catalogue(cls) -> dict[str, list[str]]:
         return {**super().catalogue(), "preset": sorted(PRESETS), "source": SOURCES.names()}
+
+
+@recipe
+class DecisionEvaluation(EvaluationPipeline[DecisionConfig]):
+    """A decision model on Jev rows or the JevBench tiers (`jevbench` source): accuracy, NLL, ECE, per tier, without
+    and with reasoning, with reasoning length and latency per question."""
+    kind: ClassVar[str] = "evaluation_decision"
+    config_class = DecisionConfig
+    stage_classes = (RowsStage, DecisionScoreStage, DecisionReport)
+
+    def build_stages(self) -> dict[str, Stage[Any]]:
+        config: DecisionConfig = self.config
+        rows = RowsStage.for_(config, self.progress, config.data, config.model)
+        return {rows.name: rows, DecisionScoreStage.name: DecisionScoreStage(config, self.progress),
+                DecisionReport.name: DecisionReport(config, self.progress)}
+
+    @classmethod
+    def catalogue(cls) -> dict[str, list[str]]:
+        return {**super().catalogue(), "source": SOURCES.names(), "think": ["off", "on", "both"]}
+
+
+@recipe
+class EmbeddingEvaluation(EvaluationPipeline[EmbeddingConfig]):
+    """An embedding model on MTEB tasks through the `mteb` package, one cached stage per task."""
+    kind: ClassVar[str] = "evaluation_embedding"
+    config_class = EmbeddingConfig
+    stage_classes = (EmbeddingStage, EmbeddingReport)
+
+    def build_stages(self) -> dict[str, Stage[Any]]:
+        config: EmbeddingConfig = self.config
+        scores = [EmbeddingStage.for_(config, self.progress, task) for task in config.tasks]
+        report = EmbeddingReport(config, self.progress)
+        report.scores = tuple(stage.name for stage in scores)
+        return {**{stage.name: stage for stage in scores}, report.name: report}
