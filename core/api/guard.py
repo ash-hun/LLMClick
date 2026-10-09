@@ -5,7 +5,7 @@ from typing import Annotated
 
 from fastapi import Header, HTTPException
 
-from config import get_settings
+from core.settings import get_settings
 
 
 def authorized(authorization: Annotated[str | None, Header()] = None) -> None:

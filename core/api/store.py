@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
-from config import get_settings
+from core.settings import get_settings
 from core.progress import Cancelled, StateProgress
 from core.utils.files import sha256_json
 from core.utils import device

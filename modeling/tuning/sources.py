@@ -7,7 +7,7 @@ from typing import Any
 from datasets import load_dataset
 
 from core.registry import Registry
-from config import get_settings
+from core.settings import get_settings
 
 SOURCES = Registry("source")
 Row = dict[str, Any]

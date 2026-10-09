@@ -12,11 +12,11 @@ ENV UV_PROJECT_ENVIRONMENT=/app/.venv PATH="/app/.venv/bin:$PATH"
 COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --frozen --no-dev --no-install-project
 
-COPY main.py config.py ./
+COPY main.py ./
 COPY core/ ./core/
 COPY modeling/ ./modeling/
 COPY samples/ ./samples/
 COPY configs/ ./configs/
 RUN uv sync --frozen --no-dev
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["llmclick", "serve", "--host", "0.0.0.0", "--port", "8000"]

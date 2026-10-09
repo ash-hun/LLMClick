@@ -1,4 +1,4 @@
-"""CLI: `llmclick run CONFIG`, `llmclick validate CONFIG`, `llmclick recipes`."""
+"""CLI: `llmclick run CONFIG`, `llmclick validate CONFIG`, `llmclick recipes`, `llmclick serve`."""
 
 import argparse
 import json
@@ -11,9 +11,8 @@ from tqdm.contrib.logging import logging_redirect_tqdm
 from core.config.experiment import LOG_FORMAT
 from core.progress import BarProgress
 from core.registry import catalogue
+from core.settings import ENV_FILE
 from core import pipeline
-
-ENV_FILE = "environment/.env"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -23,10 +22,17 @@ def main(argv: list[str] | None = None) -> int:
                        ("validate", "Check a config and print its experiment key and stage plan")]:
         commands.add_parser(name, help=text).add_argument("config")
     commands.add_parser("recipes", help="List the recipes, their stages and the keys their registries accept")
+    serve = commands.add_parser("serve", help="Run the API server (the same as `uvicorn core.api.app:app`)")
+    serve.add_argument("--host", default="127.0.0.1")
+    serve.add_argument("--port", type=int, default=8000)
     args = parser.parse_args(argv)
     load_dotenv(ENV_FILE)  # Hugging Face downloads read HF_TOKEN from the environment
     logging.basicConfig(level=logging.INFO, format=LOG_FORMAT, stream=sys.stderr)
 
+    if args.command == "serve":
+        import uvicorn
+        uvicorn.run("core.api.app:app", host=args.host, port=args.port)
+        return 0
     if args.command == "recipes":
         print(json.dumps(catalogue(), indent=2))
         return 0

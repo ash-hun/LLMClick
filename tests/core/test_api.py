@@ -7,12 +7,12 @@ import threading
 import pytest
 from fastapi.testclient import TestClient
 
-from config import get_settings
+from core.settings import get_settings
 from core.api import store as job_store
 from core.api.store import JobStore
 from core.progress import StateProgress
 from core.utils import device
-from main import app
+from core.api.app import app
 
 client = TestClient(app)
 
