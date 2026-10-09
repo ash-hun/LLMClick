@@ -1,9 +1,11 @@
 """Config of the evaluation recipes: which trained model, which rows, how to measure."""
 
+from typing import ClassVar
+
 from pydantic import Field
 
 from core.config.schema import BaseConfig, Section
-from modeling.config import Keyed
+from modeling.config import Keyed, TrackerConfig
 
 BUILT = ("validate", "train", "base")  # `model.checkpoint` values that name a checkpoint of the experiment
 
@@ -30,8 +32,11 @@ class EvaluationSettings(Section):
 
 
 class MeasureSettings(BaseConfig):
-    """What every evaluation recipe shares: how the rows are measured."""
+    """What every evaluation recipe shares: how the rows are measured, and whether the report goes to the tracker."""
+    identity_exclude: ClassVar[frozenset[str]] = BaseConfig.identity_exclude | {"tracker"}
+
     evaluation: EvaluationSettings = Field(default_factory=EvaluationSettings)
+    tracker: TrackerConfig = Field(default_factory=TrackerConfig)
 
 
 class EvaluationConfig(MeasureSettings):

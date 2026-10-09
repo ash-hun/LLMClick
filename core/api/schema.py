@@ -25,6 +25,16 @@ class JobRequest(BaseModel):
         return self
 
 
+class EvaluationSummary(BaseModel):
+    experiment: str = Field(description="The evaluation experiment's key")
+    recipe: str
+    directory: str
+    report: str = Field(description="Path of report.json")
+    model: dict[str, Any] = Field(description="The evaluated model (experiment, checkpoint, recipe), or the runs of a comparison")
+    scores: dict[str, Any] = Field(description="The headline numbers; the report holds everything")
+    contamination: dict[str, Any] | None = None
+
+
 class JobResponse(BaseModel):
     job_id: str
     status: str

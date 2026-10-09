@@ -8,6 +8,7 @@ from typing import Any, ClassVar
 import numpy as np
 from pydantic import Field
 
+from core.config.schema import Section
 from core.progress import Progress
 from core.stage import Outputs, Stage
 from core.utils.device import resolve_device
@@ -22,10 +23,13 @@ RESULTS = "results.json"
 REPORT = "report.json"
 
 
-class EmbeddingConfig(MeasureSettings):
-    model: SourceModel
+class EmbeddingSettings(Section):
     tasks: list[str] = Field(min_length=1, description="MTEB task names, e.g. STSBenchmark, NFCorpus, Banking77Classification")
     max_length: int | None = Field(default=None, ge=8, description="Tokens per text; null: the experiment's training.max_length")
+
+
+class EmbeddingConfig(MeasureSettings, EmbeddingSettings):
+    model: SourceModel
 
     def paths(self) -> list[str]:
         return [*super().paths(), *self.model.paths()]
@@ -96,30 +100,33 @@ def model_meta(mteb: Any, source: SourceExperiment, max_length: int) -> Any:
                      framework=["PyTorch"], similarity_fn_name=ScoringFunction.COSINE, use_instructions=False, training_datasets=None)
 
 
-class EmbeddingStage(Stage[EmbeddingConfig]):
+class EmbeddingStage(Stage[MeasureSettings]):
     """One MTEB task on one checkpoint; its scope makes the run shared by every recipe asking for the same."""
     name: ClassVar[str] = "mteb"
     scope: ClassVar[str] = "mteb"
-    sections: ClassVar[tuple[str, ...]] = ("evaluation", "device", "max_length")
+    sections: ClassVar[tuple[str, ...]] = ("evaluation", "device")
     task: str
+    model: SourceModel
+    max_length: int | None = None
 
     @classmethod
-    def for_(cls, config: EmbeddingConfig, progress: Progress, task: str, name: str | None = None) -> "EmbeddingStage":
+    def for_(cls, config: MeasureSettings, progress: Progress, task: str, model: SourceModel, max_length: int | None,
+             name: str | None = None) -> "EmbeddingStage":
         stage: EmbeddingStage = named(cls, name or f"score:{task}")(config, progress)
-        stage.task = task
+        stage.task, stage.model, stage.max_length = task, model, max_length
         return stage
 
     def identity(self) -> Any:
-        return [super().identity(), self.task, package_version(), SourceExperiment(self.config.model).identity()]
+        return [super().identity(), self.task, self.max_length, package_version(), SourceExperiment(self.model).identity()]
 
     def run(self, workdir: Path, inputs: dict[str, Outputs]) -> Outputs:
         mteb, config = mteb_module(), self.config
         task = resolve_task(mteb, self.task)
-        source = SourceExperiment(config.model)
+        source = SourceExperiment(self.model)
         backbone, _, trained = source.build()
         if not isinstance(backbone, EmbeddingBackbone):
-            raise ValueError(f"{config.model.experiment!r} is not an embedding experiment (its recipe is {trained.recipe!r})")
-        max_length = config.max_length or trained.training.max_length
+            raise ValueError(f"{self.model.experiment!r} is not an embedding experiment (its recipe is {trained.recipe!r})")
+        max_length = self.max_length or trained.training.max_length
         checkpoint = source.checkpoint()
         self.progress.update(0, None, f"{self.task}: loading " + ("checkpoint" if checkpoint else "base model"))
         backbone.load(resolve_device(config.device), checkpoint)

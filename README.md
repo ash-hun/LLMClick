@@ -87,8 +87,9 @@ benchmark, with presets for the small-model panel and Korean; `evaluation_compar
 base model among them, through the same benchmarks and rows and reports the differences with their intervals, a
 polygon chart and a Markdown summary; `evaluation_decision` measures a decision model on Jev rows or the JevBench
 tiers without and with reasoning (accuracy, NLL, ECE, per tier against chance, latency); `evaluation_embedding`
-runs an embedding model on MTEB tasks. All write `report.json` (`evaluation/README.md` has the design and what is
-left). `data/` (training and synthetic data pipelines) is planned and has a README only. A channel is a
+runs an embedding model on MTEB tasks. All write `report.json` with the overlap between the evaluation items and
+the experiment's training rows (exact matches and n-gram near-duplicates) next to the scores, send the report to
+wandb with `tracker.enabled`, and are listed by `GET /api/evaluations` (`evaluation/README.md` has the details). `data/` (training and synthetic data pipelines) is planned and has a README only. A channel is a
 package that registers recipes; it joins by adding its name to `CHANNELS` in `core/registry.py` and reuses `Stage`,
 `Pipeline`, `Progress` and `Experiment` as they are.
 

@@ -33,7 +33,9 @@ def test_scores_a_checkpoint_on_rows_with_the_recipes_own_metrics(trained: dict[
     assert report["scores"] == pytest.approx(trained["stages"]["validate"]["metrics"])
     assert report["model"] == {"experiment": trained["directory"], "checkpoint": f"{trained['directory']}/validate/checkpoint",
                                "recipe": "llm_sft"}
-    assert report["rows"]["scored"] == 16 and report["rows"]["skipped"] == 0 and report["contamination"] is None
+    assert report["rows"]["scored"] == 16 and report["rows"]["skipped"] == 0
+    overlap = report["contamination"]  # held-out rows: none of them trained, so no exact match; short rows may share n-grams
+    assert overlap["items"] == 16 and overlap["exact"] == 0 and overlap["training_rows"] == 64 and overlap["ngram"] == 8
     assert report["settings"] == {"batch_size": 8, "max_length": 64, "device": "cpu"}
     progress = StateProgress()
     again = pipeline.build(evaluation(trained["directory"], held_out, tmp_path), progress).run()

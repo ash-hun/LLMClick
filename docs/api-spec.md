@@ -2,7 +2,7 @@
 
 | 항목 | 값 |
 |---|---|
-| Last Updated | 2026-10-10 |
+| Last Updated | 2026-10-11 |
 | Base URL | `http://localhost:8000` |
 | 데이터 포맷 | JSON (UTF-8) |
 | 인증 | `API_TOKEN` 이 설정되면 `/api/*` 전부 `Authorization: Bearer <token>`, 비어 있으면 없음 |
@@ -23,6 +23,8 @@
    - [POST /api/jobs](#post-apijobs)
    - [GET /api/jobs/{job_id}](#get-apijobsjob_id)
    - [DELETE /api/jobs/{job_id}](#delete-apijobsjob_id)
+   - [GET /api/evaluations](#get-apievaluations)
+   - [GET /api/evaluations/{experiment}](#get-apievaluationsexperiment)
    - [GET /api/system/recipes](#get-apisystemrecipes)
    - [GET /health](#get-health)
 4. [데이터 모델](#데이터-모델)
@@ -424,6 +426,119 @@ $ curl -s -X DELETE http://localhost:8000/api/jobs/sft-qwen3.5-0.8b-<hash>-<stag
 
 ---
 
+### GET /api/evaluations
+
+평가 레시피가 쓴 보고서 목록. `output_dir` 아래 실험 디렉토리의 `manifest.json` 을 훑어 레시피가 `evaluation_` 으로
+시작하고 `report` 스테이지가 끝난 것만 돌려준다.
+
+#### Endpoint
+
+```
+GET /api/evaluations
+```
+
+#### 호출 규약
+
+| 항목 | 값 |
+|---|---|
+| Method | `GET` |
+| 인증 | `API_TOKEN` 설정 시 Bearer |
+| 요청 Content-Type | 없음 (본문 없음) |
+| 응답 Content-Type | `application/json` |
+| 필수 헤더 | `API_TOKEN` 설정 시 `Authorization` |
+
+#### Request Body
+
+없음.
+
+#### Query / Path 파라미터
+
+| 파라미터 | 위치 | 타입 | 필수 | 기본값 | 설명 |
+|---|---|---|---|---|---|
+| `output_dir` | query | string | 아니오 | `./output` | 실험 디렉토리들이 있는 곳. `API_PATHS` 안이어야 함 |
+| `recipe` | query | string | 아니오 | 없음 | 이 평가 레시피만 (`evaluation_custom`, `evaluation_benchmark`, ...) |
+| `experiment` | query | string | 아니오 | 없음 | 이 모델링 실험 디렉토리를 평가한 것만 (비교는 run 중 하나가 맞으면 포함) |
+
+#### Response Body
+
+[EvaluationSummary](#evaluationsummary) 배열.
+
+#### 응답 코드
+
+| 코드 | 의미 | 본문 |
+|---|---|---|
+| `200` | 정상 | 배열 (비어 있을 수 있음) |
+| `403` | `output_dir` 가 `API_PATHS` 밖 | `{"detail": "..."}` |
+
+#### 호출 예시
+
+```bash
+$ curl -s 'http://localhost:8000/api/evaluations?recipe=evaluation_custom'
+[{"experiment":"sft-qwen3.5-0.8b-on-samples-<hash>","recipe":"evaluation_custom","directory":"output/...","report":"output/_stages/report-<fp>/report.json","model":{"experiment":"output/sft-qwen3.5-0.8b-<hash>","checkpoint":"output/sft-qwen3.5-0.8b-<hash>/validate/checkpoint","recipe":"llm_sft"},"scores":{"loss":2.1,"perplexity":8.2,"tokens":512.0},"contamination":{"training_rows":64,"items":16,"exact":0,"near":0,...}}]
+```
+
+#### 특이사항
+
+**재호출** — 상태를 바꾸지 않음. 보고서 파일을 매번 읽는다.
+
+---
+
+### GET /api/evaluations/{experiment}
+
+평가 보고서 하나를 전부.
+
+#### Endpoint
+
+```
+GET /api/evaluations/{experiment}
+```
+
+#### 호출 규약
+
+| 항목 | 값 |
+|---|---|
+| Method | `GET` |
+| 인증 | `API_TOKEN` 설정 시 Bearer |
+| 요청 Content-Type | 없음 (본문 없음) |
+| 응답 Content-Type | `application/json` |
+| 필수 헤더 | `API_TOKEN` 설정 시 `Authorization` |
+
+#### Request Body
+
+없음.
+
+#### Query / Path 파라미터
+
+| 파라미터 | 위치 | 타입 | 필수 | 기본값 | 설명 |
+|---|---|---|---|---|---|
+| `experiment` | path | string | 예 | — | 평가 실험 키 (`GET /api/evaluations` 의 `experiment`) |
+| `output_dir` | query | string | 아니오 | `./output` | 실험 디렉토리들이 있는 곳 |
+
+#### Response Body
+
+[EvaluationSummary](#evaluationsummary) 의 필드에 더해 `report` 가 경로 대신 `report.json` 의 내용.
+
+#### 응답 코드
+
+| 코드 | 의미 | 본문 |
+|---|---|---|
+| `200` | 정상 | 위 스키마 |
+| `403` | `output_dir` 가 `API_PATHS` 밖 | `{"detail": "..."}` |
+| `404` | 그런 평가 실험 없음 | `{"detail": "No evaluation report for experiment ..."}` |
+
+#### 호출 예시
+
+```bash
+$ curl -s http://localhost:8000/api/evaluations/nope
+{"detail":"No evaluation report for experiment 'nope' under ./output"}
+```
+
+#### 특이사항
+
+**재호출** — 상태를 바꾸지 않음.
+
+---
+
 ### GET /api/system/recipes
 
 이 서버가 만들 수 있는 레시피와, 레시피별 스테이지 순서 및 YAML 의 `name:` 키로 쓸 수 있는 값 목록.
@@ -564,6 +679,18 @@ $ curl -s http://localhost:8000/health
 | `directory` | string | 아니오 | `output_dir/experiment` |
 | `stages` | string[] | 아니오 | 실행하거나 재사용할 스테이지, 순서대로. 요청한 스테이지가 읽는 상위 스테이지와 `train` 에 따라붙는 `validate` 포함 |
 | `config` | object | 아니오 | 기본값이 채워진 정규화 config |
+
+### EvaluationSummary
+
+| 필드 | 타입 | 널 허용 | 설명 |
+|---|---|---|---|
+| `experiment` | string | 아니오 | 평가 실험 키 |
+| `recipe` | string | 아니오 | 평가 레시피 |
+| `directory` | string | 아니오 | 평가 실험 디렉토리 |
+| `report` | string | 아니오 | `report.json` 경로 |
+| `model` | object | 아니오 | 평가한 모델(`experiment`, `checkpoint`, `recipe`), 비교는 `runs` 와 `base` |
+| `scores` | object | 아니오 | 대표 수치: custom 과 decision 은 레시피 지표, benchmark 는 벤치마크별 점수, embedding 은 태스크별 주 점수, compare 는 `comparison` 과 `axes` |
+| `contamination` | object | 예 | 학습 행과의 겹침(`exact`, `near`, `share_mean`, ...). `base` 체크포인트와 MTEB 는 null |
 
 ### JobResponse
 

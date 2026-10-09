@@ -248,12 +248,16 @@ class FakeWandb:
     def __init__(self) -> None:
         self.runs: list[dict[str, Any]] = []
         self.steps: list[int] = []
+        self.reports: list[dict[str, Any]] = []
         self.finished = 0
         outer = self
 
         class Session:
-            def log(self, metrics: dict[str, float], step: int) -> None:
-                assert all(key.startswith("train/") for key in metrics)
+            def log(self, metrics: dict[str, Any], step: int | None = None) -> None:
+                if step is None:
+                    outer.reports.append(metrics)  # an evaluation report: numbers, then a table
+                    return
+                assert all(key.startswith(("train/", "eval/")) for key in metrics)
                 outer.steps.append(step)
 
             def finish(self) -> None:
@@ -264,6 +268,10 @@ class FakeWandb:
     def init(self, **keys: Any) -> Any:
         self.runs.append(keys)
         return self.session()
+
+    class Table:
+        def __init__(self, columns: list[str], data: list[list[Any]]) -> None:
+            self.columns, self.data = columns, data
 
 
 @pytest.fixture
