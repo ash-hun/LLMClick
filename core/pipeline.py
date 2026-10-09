@@ -85,12 +85,13 @@ class Pipeline(ABC, Generic[ConfigT]):
         if name not in self._fingerprints:
             stage = self.stages[name]
             upstream = [self.fingerprint(dependency) for dependency in stage.dependencies()]
-            self._fingerprints[name] = sha256_json([self.kind, name, stage.version, stage.identity(), upstream])
+            owner = [stage.scope] if stage.scope else [self.kind, name]
+            self._fingerprints[name] = sha256_json([owner, stage.version, stage.identity(), upstream])
         return self._fingerprints[name]
 
     def run_stage(self, name: str, done: dict[str, Outputs]) -> Outputs:
         stage, key = self.stages[name], self.fingerprint(name)
-        workdir = self.experiment.stage_dir(name, key)
+        workdir = self.experiment.stage_dir(stage.scope or name, key)
         self.progress.stage_started(name)
 
         def waiting() -> None:  # another run (CLI or job) holds this stage; its result is reused when it is done

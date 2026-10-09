@@ -14,21 +14,30 @@ class SourceModel(Section):
     checkpoint: str = Field(default="validate", description="validate (passed validation), train (as trained), base "
                                                             "(the weights the experiment started from), or a checkpoint directory")
 
+    def paths(self) -> list[str]:
+        return [self.experiment, *([] if self.checkpoint in BUILT else [self.checkpoint])]
+
 
 class EvaluationData(Section):
     sources: list[Keyed] = Field(min_length=1, description="Rows in the format of the experiment's recipe")
+
+    def paths(self) -> list[str]:
+        return [str(path) for source in self.sources if (path := source.params.get("path")) is not None]
 
 
 class EvaluationSettings(Section):
     batch_size: int = Field(default=8, ge=1)
 
 
-class EvaluationConfig(BaseConfig):
-    model: SourceModel
-    data: EvaluationData
+class MeasureSettings(BaseConfig):
+    """What every evaluation recipe shares: how the rows are measured."""
     evaluation: EvaluationSettings = Field(default_factory=EvaluationSettings)
 
+
+class EvaluationConfig(MeasureSettings):
+    """`evaluation_custom`: one model, any rows, the metrics of the recipe that trained it."""
+    model: SourceModel
+    data: EvaluationData
+
     def paths(self) -> list[str]:
-        local = [str(path) for source in self.data.sources if (path := source.params.get("path")) is not None]
-        checkpoint = [] if self.model.checkpoint in BUILT else [self.model.checkpoint]
-        return [*super().paths(), self.model.experiment, *checkpoint, *local]
+        return [*super().paths(), *self.model.paths(), *self.data.paths()]

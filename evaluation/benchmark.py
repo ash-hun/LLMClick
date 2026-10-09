@@ -7,13 +7,14 @@ from typing import Any, ClassVar
 
 from pydantic import Field, model_validator
 
-from core.config.schema import BaseConfig, Section
+from core.config.schema import Section
 from core.progress import Progress
 from core.stage import Outputs, Stage
 from core.utils.device import resolve_device
 from core.utils.files import write_json
-from evaluation.config import BUILT, EvaluationSettings, SourceModel
+from evaluation.config import MeasureSettings, SourceModel
 from evaluation.source import SourceExperiment
+from evaluation.stages import named
 from modeling.llm.models.base import LLMBackbone
 
 HARNESS = "lm_eval"
@@ -64,16 +65,18 @@ class Decoding(Section):
     max_new_tokens: int = Field(default=1024, ge=1)
 
 
-class BenchmarkConfig(BaseConfig):
-    model: SourceModel
-    benchmarks: Benchmarks
+class HarnessSettings(MeasureSettings):
+    """What a benchmark run depends on besides the model and the task."""
     decoding: Decoding = Field(default_factory=Decoding)
     chat_template: bool = Field(default=False, description="Wrap prompts in the tokenizer's chat template (instruction-tuned models)")
-    evaluation: EvaluationSettings = Field(default_factory=EvaluationSettings)
+
+
+class BenchmarkConfig(HarnessSettings):
+    model: SourceModel
+    benchmarks: Benchmarks
 
     def paths(self) -> list[str]:
-        checkpoint = [] if self.model.checkpoint in BUILT else [self.model.checkpoint]
-        return [*super().paths(), self.model.experiment, *checkpoint]
+        return [*super().paths(), *self.model.paths()]
 
 
 def harness_version() -> str | None:
@@ -98,22 +101,25 @@ def flat(scores: dict[str, Any]) -> dict[str, float]:
             if isinstance(value, (int, float)) and not isinstance(value, bool)}
 
 
-class BenchmarkStage(Stage[BenchmarkConfig]):
-    """One benchmark on one checkpoint. Built per task by `for_task`; the task name is part of the stage name, so each
-    benchmark has its own fingerprint and cache directory."""
-    name: ClassVar[str] = "score"
+class BenchmarkStage(Stage[HarnessSettings]):
+    """One benchmark on one checkpoint. Built per task (and per model, in a comparison) by `for_`; its scope makes the
+    run shared by every recipe that asks for the same checkpoint, task and settings."""
+    name: ClassVar[str] = "benchmark"  # instances are named score:<task> (and score:<label>:<task> in a comparison)
+    scope: ClassVar[str] = "benchmark"
     sections: ClassVar[tuple[str, ...]] = ("decoding", "chat_template", "evaluation", "device", "seed")
     task: Task
+    model: SourceModel
 
     @classmethod
-    def for_task(cls, config: BenchmarkConfig, progress: Progress, task: Task) -> "BenchmarkStage":
-        stage: BenchmarkStage = type(f"Score_{task.name}", (cls,), {"name": f"score:{task.name}"})(config, progress)
-        stage.task = task
+    def for_(cls, config: HarnessSettings, progress: Progress, task: Task, model: SourceModel,
+             name: str | None = None) -> "BenchmarkStage":
+        stage: BenchmarkStage = named(cls, name or f"score:{task.name}")(config, progress)
+        stage.task, stage.model = task, model
         return stage
 
     def identity(self) -> Any:
         return [super().identity(), self.task.model_dump(mode="json"), harness_version(),
-                SourceExperiment(self.config.model).identity()]
+                SourceExperiment(self.model).identity()]
 
     def model_args(self, source: SourceExperiment) -> dict[str, Any]:
         backbone, _, _ = source.build()
@@ -128,7 +134,7 @@ class BenchmarkStage(Stage[BenchmarkConfig]):
         manager = TaskManager()
         if task.name not in manager.all_tasks:
             raise ValueError(f"unknown benchmark {task.name!r}; `lm_eval --tasks list` names the available ones")
-        source = SourceExperiment(config.model)
+        source = SourceExperiment(self.model)
         self.progress.update(0, None, f"{task.name}: loading model")
         decoding = {"max_gen_toks": config.decoding.max_new_tokens, "temperature": config.decoding.temperature,
                     "do_sample": config.decoding.temperature > 0}

@@ -472,8 +472,9 @@ LLM, Embedding 계열 레시피(`llm_sft`, `llm_instruction`, `llm_dpo`, `llm_gr
 
 Evaluation 채널 레시피의 필드: `evaluation_custom` 은 `stages`(`["rows","score","report"]`), `source`, `checkpoint`
 (`model.checkpoint` 에 쓸 수 있는 값: `validate`, `train`, `base`, 또는 체크포인트 디렉토리). `evaluation_benchmark` 는
-`stages`(`["score","report"]`; 실제 실행에서는 벤치마크마다 `score:<task>` 스테이지 하나), `checkpoint`, `preset`
-(`benchmarks.preset` 에 쓸 수 있는 값).
+`stages`(`["benchmark","report"]`; 실제 실행에서는 벤치마크마다 `score:<task>` 스테이지 하나), `checkpoint`, `preset`
+(`benchmarks.preset` 에 쓸 수 있는 값). `evaluation_compare` 는 `stages`(`["rows","score","benchmark","report"]`; 실제
+실행에서는 run 마다 `score:<label>:<task>` 와 `rows:<label>`), `checkpoint`, `preset`, `source`.
 
 #### 응답 코드
 

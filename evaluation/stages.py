@@ -1,12 +1,14 @@
-"""The stages of `evaluation_custom`: rows -> score -> report."""
+"""The stages of `evaluation_custom`: rows -> score -> report. The rows and score stages are built per model and
+row set (`for_`), so a comparison can hold several of them; their scope makes the work shared across recipes."""
 
 from pathlib import Path
 from typing import Any, ClassVar
 
+from core.progress import Progress
 from core.stage import Outputs, Stage
 from core.utils.device import resolve_device
 from core.utils.files import write_json
-from evaluation.config import EvaluationConfig
+from evaluation.config import EvaluationConfig, EvaluationData, MeasureSettings, SourceModel
 from evaluation.source import SourceExperiment
 from modeling.config import keyed_identity
 from modeling.tuning.method import Row, fitting
@@ -17,17 +19,32 @@ SCORES = "scores.json"
 REPORT = "report.json"
 
 
-class RowsStage(Stage[EvaluationConfig]):
+def named(cls: type[Stage[Any]], name: str) -> type[Any]:
+    """A subclass with another stage name, so one stage class serves several instances of a pipeline."""
+    return type(f"{cls.__name__}_{name}", (cls,), {"name": name})
+
+
+class RowsStage(Stage[MeasureSettings]):
     """Read every source and check each row against the recipe of the experiment under evaluation."""
     name: ClassVar[str] = "rows"
+    scope: ClassVar[str] = "rows"
+    data: EvaluationData
+    model: SourceModel
+
+    @classmethod
+    def for_(cls, config: MeasureSettings, progress: Progress, data: EvaluationData, model: SourceModel,
+             name: str = "rows") -> "RowsStage":
+        stage: RowsStage = named(cls, name)(config, progress)
+        stage.data, stage.model = data, model
+        return stage
 
     def identity(self) -> Any:
-        source = SourceExperiment(self.config.model)
-        return [keyed_identity(self.config.data.sources), source.config().recipe if source.exists() else None]
+        source = SourceExperiment(self.model)
+        return [keyed_identity(self.data.sources), source.config().recipe if source.exists() else None]
 
     def run(self, workdir: Path, inputs: dict[str, Outputs]) -> Outputs:
-        sources = self.config.data.sources
-        _, method, _ = SourceExperiment(self.config.model).build()
+        sources = self.data.sources
+        _, method, _ = SourceExperiment(self.model).build()
         rows: list[Row] = []
         for index, source in enumerate(sources):
             self.progress.update(index, len(sources), source.name)
@@ -44,23 +61,35 @@ class RowsStage(Stage[EvaluationConfig]):
         return {"rows": str(workdir / "rows.jsonl"), "count": len(rows)}
 
 
-class ScoreStage(Stage[EvaluationConfig]):
+class ScoreStage(Stage[MeasureSettings]):
     """Load the checkpoint and measure it on the rows with the recipe's own `evaluate`."""
     name: ClassVar[str] = "score"
-    requires: ClassVar[tuple[str, ...]] = ("rows",)
+    scope: ClassVar[str] = "measure"
     sections: ClassVar[tuple[str, ...]] = ("evaluation", "device")
+    model: SourceModel
+    rows_stage: str = "rows"
+
+    @classmethod
+    def for_(cls, config: MeasureSettings, progress: Progress, model: SourceModel, name: str = "score",
+             rows_stage: str = "rows") -> "ScoreStage":
+        stage: ScoreStage = named(cls, name)(config, progress)
+        stage.model, stage.rows_stage = model, rows_stage
+        return stage
+
+    def dependencies(self) -> tuple[str, ...]:
+        return (self.rows_stage,)
 
     def identity(self) -> Any:
-        return [super().identity(), SourceExperiment(self.config.model).identity()]
+        return [super().identity(), SourceExperiment(self.model).identity()]
 
     def run(self, workdir: Path, inputs: dict[str, Outputs]) -> Outputs:
-        source = SourceExperiment(self.config.model)
+        source = SourceExperiment(self.model)
         backbone, method, trained = source.build()
         checkpoint = source.checkpoint()
         self.progress.update(0, None, "loading checkpoint" if checkpoint else "loading base model")
         backbone.load(resolve_device(self.config.device), checkpoint)
         try:
-            rows = read_rows(Path(inputs["rows"]["rows"]))
+            rows = read_rows(Path(inputs[self.rows_stage]["rows"]))
             kept = fitting(backbone, method, rows, trained.training, self.progress, "evaluation")
             metrics = method.evaluate(backbone, kept, self.config.evaluation.batch_size, self.progress)
         finally:

@@ -1,7 +1,7 @@
 # Evaluation channel
 
-Status: milestones 1 and 2 built (`evaluation_custom`, `evaluation_benchmark`); the rest is designed below, after a
-short survey of the benchmark landscape (October 2026). The survey's sources are at the end.
+Status: milestones 1 to 3 built (`evaluation_custom`, `evaluation_benchmark`, `evaluation_compare`); the rest is
+designed below, after a short survey of the benchmark landscape (October 2026). The survey's sources are at the end.
 
 ## Built: `evaluation_custom`
 
@@ -46,6 +46,28 @@ Presets: `small_general` (mmlu, mmlu_pro, gsm8k, ifeval, hellaswag, arc_challeng
 and `korean` (kmmlu, haerae, kobest, click, hrm8k). Any other lm-evaluation-harness task name works in `tasks`.
 Not yet: thinking mode on or off for Qwen3 checkpoints (the harness is run with the chat template as it is), and
 a Hub model without an experiment (use `checkpoint: base` of an experiment that starts from it).
+
+## Built: `evaluation_compare`
+
+```yaml
+pipeline: {recipe: evaluation_compare, name: sft-vs-base}
+runs:
+  - {label: base, experiment: output/sft-qwen3.5-0.8b-<hash>, checkpoint: base}     # required: the starting weights
+  - {label: final, experiment: output/sft-qwen3.5-0.8b-<hash>, checkpoint: validate}
+  - {label: other, experiment: output/sft-lora-qwen3.5-0.8b-<hash>, checkpoint: validate}
+benchmarks: {preset: small_general, limit: 100}                   # optional
+rows: {sources: [{name: local_jsonl, path: my-rows.jsonl}]}        # optional: the recipes' own metrics
+axes: {knowledge: [mmlu, mmlu_pro], math: [gsm8k]}                 # optional: polygon chart, entries 0..1 averaged
+```
+
+Every run gets the benchmark stages of `evaluation_benchmark` (`score:<label>:<task>`) and the row stages of
+`evaluation_custom` (`rows`, `rows:<label>`). Stages carry a scope, so their directories are shared across recipes
+and names: what a single-model evaluation already measured is reused as it is, and adding a run scores only that
+run. The report (`report.json`) holds per benchmark and run the primary metric (the first of exact_match, acc_norm,
+acc, prompt_level_strict_acc, f1, ...), its standard error and item count; per row metric the value per run; and
+`comparison`: the difference of every run to the base, with `decided` true when it lies outside the 95% interval of
+the two measurements, false when inside (the Markdown marks it `~`: not decided), null when no standard error exists
+(the recipes' own metrics; marked `?`). `axes.svg` is the polygon chart, `summary.md` the tables.
 
 ## Purpose
 
@@ -193,7 +215,7 @@ Each milestone ends green on CI with tests on the tiny random model, as the mode
 |---|---|---|
 | 1. Skeleton and `evaluation_custom` (built) | the `evaluation` package, `EvaluationConfig`, `rows` and `score` stages that call a modeling method's `evaluate` on a checkpoint, `report.json`, `CHANNELS` entry | `llmclick run configs/evaluation/custom.yaml` scores an SFT checkpoint on a JSONL file; the API lists the recipe; cached rerun builds nothing |
 | 2. `evaluation_benchmark` (built; the GPU run is still to do) | lm-evaluation-harness behind an optional extra (`uv sync --extra eval`), a `benchmarks` section with presets (`small_general`, `korean`), harness version in the fingerprint, `limit` for smoke runs, settings recorded in results | the preset runs on Qwen3.5-0.8B on one GPU with `limit`; results carry stderr and settings; a missing extra gives one clear error |
-| 3. `evaluation_compare` | `collect` over several checkpoints, the base model required, the table, the polygon SVG, Markdown summary, "not decided" marking from intervals | one command compares base, mid-training and final checkpoints of one experiment |
+| 3. `evaluation_compare` (built) | several checkpoints, the base model required, the table, the polygon SVG, Markdown summary, "not decided" marking from intervals; stage scopes so single-model evaluations and comparisons share their runs | one command compares base, mid-training and final checkpoints of one experiment |
 | 4. Decision and embedding | `evaluation_decision` (JevBench reader, think and no-think rows, ECE, latency), `evaluation_embedding` (mteb) | the decision pointer pilot reproduces the metrics `validate` reports, plus the JevBench tiers; the embedding pilot runs one MTEB retrieval task |
 | 5. Contamination and surfacing | exact and near-duplicate overlap between an experiment's training rows and the benchmark items, in the report; `GET /api/evaluations`; tracker table | a deliberately contaminated pilot shows the overlap; the API returns the reports |
 

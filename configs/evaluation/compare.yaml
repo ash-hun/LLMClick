@@ -1,0 +1,28 @@
+# Several checkpoints on the same benchmarks and rows: the base model (required), the trained one, any other.
+# Every score stage is the one evaluation_benchmark or evaluation_custom would run, so measured results are reused.
+pipeline:
+  recipe: evaluation_compare
+  name: sft-qwen3.5-0.8b-vs-base
+  output_dir: ./output
+
+runs:
+  - {label: base, experiment: output/sft-qwen3.5-0.8b-14fc97a0, checkpoint: base}
+  - {label: final, experiment: output/sft-qwen3.5-0.8b-14fc97a0, checkpoint: validate}
+
+benchmarks:
+  preset: small_general
+  limit: 100
+
+rows:                               # the recipe's own metrics (here: loss, perplexity) on rows none of the runs trained on
+  sources:
+    - {name: local_jsonl, path: samples/llm_sft.jsonl}
+
+axes:                               # polygon chart: each axis averages its entries (0..1 values; benchmark names or rows:<metric>)
+  knowledge: [mmlu, mmlu_pro]
+  math: [gsm8k]
+  instructions: [ifeval]
+  commonsense: [hellaswag, arc_challenge, truthfulqa_mc2, winogrande]
+
+decoding: {temperature: 0, max_new_tokens: 1024}
+chat_template: false
+evaluation: {batch_size: 8}
