@@ -49,8 +49,7 @@ class LLMBackbone(Backbone):
         self.tokenizer = AutoTokenizer.from_pretrained(origin, revision=revision)
         if self.tokenizer.pad_token_id is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
-        # FP32 weights: at fine-tuning learning rates a bf16 weight is too coarse to register an update.
-        self.model = self.loader.from_pretrained(origin, revision=revision, dtype=torch.float32).to(device)
+        self.model = self.loader.from_pretrained(origin, revision=revision, dtype=self.dtype).to(device)
         for name, parameter in self.model.named_parameters():
             if any(fragment in name for fragment in self.frozen):
                 parameter.requires_grad_(False)

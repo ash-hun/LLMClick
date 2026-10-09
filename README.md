@@ -104,6 +104,10 @@ pipeline:
   A row that does not fit stops the run there (`training.overflow: error`, the default) or is left out
   (`overflow: skip`); nothing is cut silently and nothing fails hours into training. Embedding texts are the
   exception: they are truncated, as usual for retrieval.
+- **Evaluation while training.** `training.eval_every: N` measures the model on the held-out rows every N steps
+  with the validate stage's own metrics (`training.eval_rows` caps how many rows), and records them as
+  `eval/<metric>` next to the loss in `training.jsonl` and in the tracker. The weights are as they are at that step:
+  for the decision recipes the temperature is not fitted yet, so `nll` and `ece` there are uncalibrated.
 - **Validation.** In the Modeling channel `validate` follows `train` and cannot be left out. It measures the
   trained model on data training never saw and checks `validation.min` / `validation.max`; a miss, or a metric
   that is not a finite number, stops the pipeline. A later stage reads the checkpoint from `validate`, never from

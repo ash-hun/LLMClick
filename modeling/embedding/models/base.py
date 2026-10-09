@@ -16,7 +16,7 @@ class EmbeddingBackbone(Backbone):
         self.tokenizer = AutoTokenizer.from_pretrained(origin, revision=revision)
         if self.tokenizer.pad_token_id is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
-        self.model = AutoModel.from_pretrained(origin, revision=revision, dtype=torch.float32).to(device)
+        self.model = AutoModel.from_pretrained(origin, revision=revision, dtype=self.dtype).to(device)
         self.device = device
 
     def save(self, path: Path) -> None:

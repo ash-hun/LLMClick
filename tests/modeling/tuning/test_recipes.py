@@ -366,3 +366,11 @@ def test_stage_two_config_points_at_the_stage_one_experiment() -> None:
     stage_one = pipeline.load("configs/llm/decision_pointer.yaml")
     init = pipeline.load("configs/llm/decision_cispo.yaml").config.model.init
     assert init == f"output/{stage_one.experiment.key}/validate/checkpoint"  # edit one config, update the other
+
+
+def test_eval_every_records_held_out_metrics_in_the_history(tiny_model: Path, tmp_path: Path) -> None:
+    result = pipeline.build(raw("llm_dpo", tiny_model, tmp_path, eval_every=3, eval_rows=8)).run()
+    log = [json.loads(line) for line in (Path(result["stages"]["train"]["run"]) / "training.jsonl").read_text().splitlines()]
+    assert [sorted(k for k in event if k.startswith("eval/")) for event in log] == [[], [], ["eval/accuracy", "eval/margin"]]
+    stage = pipeline.build(raw("llm_dpo", tiny_model, tmp_path, eval_every=3, eval_rows=8)).stages["train"]
+    assert stage.history(result["stages"]["train"])[-1][1].keys() >= {"train/loss", "train/accuracy", "eval/accuracy"}

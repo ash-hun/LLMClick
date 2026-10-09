@@ -5,7 +5,7 @@ import hashlib
 from pathlib import Path
 from typing import Any, ClassVar
 
-from modeling.tuning.loop import CHECKPOINT, SUMMARY, fit, history
+from modeling.tuning.loop import CHECKPOINT, SUMMARY, fit, history, tracked
 from modeling.stages import TrainStage, ValidateStage
 from modeling.tuning.sources import SOURCES
 from modeling.tuning.config import TuningConfig
@@ -81,19 +81,23 @@ class TuneStage(TrainStage[TuningConfig]):
             backbone.load(resolve_device(self.config.device))
             try:
                 # Both folds are checked now: a held-out row that does not fit would otherwise fail after training.
-                fitting(backbone, method, read_rows(Path(inputs["data"]["validation"])), training, self.progress, "validation")
+                held_out = fitting(backbone, method, read_rows(Path(inputs["data"]["validation"])), training, self.progress, "validation")
                 rows = fitting(backbone, method, read_rows(Path(inputs["data"]["train"])), training, self.progress, "training")
                 rows = method.prepare(backbone, rows, workdir, self.progress)
                 backbone.adapt(training.adapter)
+                sample, batch_size = held_out[: training.eval_rows], self.config.validation.batch_size
+
+                def evaluation() -> dict[str, float]:  # the validate stage's measurement, on the weights as they are
+                    return method.evaluate(backbone, sample, batch_size, self.progress)
+
                 with self.tracking(workdir) as log:
-                    fit(backbone, method, rows, training, workdir, self.config.seed, self.progress, log)
+                    fit(backbone, method, rows, training, workdir, self.config.seed, self.progress, log, evaluation)
             finally:
                 backbone.release()
         return {"checkpoint": str(checkpoint), "run": str(workdir), **read_json(summary)}
 
     def history(self, outputs: Outputs) -> History:
-        return [(int(event["step"]), {f"train/{key}": float(value) for key, value in event.items() if key != "step"})
-                for event in history(Path(outputs["run"]))]
+        return [(int(event["step"]), tracked(event)) for event in history(Path(outputs["run"]))]
 
 
 class MeasureStage(ValidateStage[TuningConfig]):
