@@ -39,13 +39,15 @@ jobs:
       - name: Build
         run: npm run build --prefix website
       - uses: actions/upload-pages-artifact@v3
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' && vars.DOCS_DEPLOY == 'true'
         with:
           path: website/build
 
   deploy:
+    # GitHub Pages needs a public repository or a paid plan: set the repository variable DOCS_DEPLOY=true once
+    # Pages is available (Settings -> Pages -> Source: GitHub Actions), and pushes to main deploy.
     needs: build
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && vars.DOCS_DEPLOY == 'true'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
