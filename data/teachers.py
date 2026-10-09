@@ -55,12 +55,17 @@ def post_json(url: str, body: dict[str, Any], headers: dict[str, str], timeout: 
 
 @TEACHERS.register("ollama")
 class Ollama(Teacher):
-    """A local Ollama server through its native chat API (`base_url`, default http://localhost:11434)."""
+    """A local Ollama server through its native chat API (`base_url`, default http://localhost:11434). Thinking is
+    off unless `think: true`: a thinking model (Qwen3, Qwen3.5) otherwise spends `max_tokens` on its reasoning and
+    returns an empty answer."""
     name = "ollama"
+
+    def __init__(self, params: dict[str, Any]) -> None:
+        super().__init__({"think": False, **params})  # explicit, so the identity says whether the model thought
 
     def complete(self, messages: list[Message], *, max_tokens: int, temperature: float, seed: int) -> Completion:
         base = str(self.params.get("base_url", "http://localhost:11434")).rstrip("/")
-        body = {"model": self.model, "messages": messages, "stream": False,
+        body = {"model": self.model, "messages": messages, "stream": False, "think": bool(self.params["think"]),
                 "options": {"temperature": temperature, "num_predict": max_tokens, "seed": seed},
                 **({"keep_alive": self.params["keep_alive"]} if "keep_alive" in self.params else {})}
         payload = post_json(f"{base}/api/chat", body, {}, float(self.params.get("timeout", 600)))
