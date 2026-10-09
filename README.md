@@ -112,7 +112,9 @@ pipeline:
   running when it stopped is marked `interrupted` and resumes when submitted again. `DELETE /api/jobs/<id>` cancels
   a pending or running job: it stops at its next progress report, keeps what it built, and continues from there
   when submitted again. `JOB_WORKERS` jobs run at once, each worker on its own accelerator: set it to the number of
-  GPUs on a multi-GPU server and keep 1 otherwise.
+  GPUs on a multi-GPU server and keep 1 otherwise. On a server others can reach, set `API_TOKEN` (every `/api` call
+  then needs `Authorization: Bearer <token>`) and `API_PATHS` (the directories the API may read configs and rows
+  from and write output to; any other path is refused).
 - **Typos.** Every config section rejects keys it does not know, so `validaton:` or `training.learning_rate` is an
   error instead of a silently ignored setting.
 
@@ -188,7 +190,7 @@ the fingerprint, so rebuilding the earlier experiment rebuilds the one that cont
 
 ```bash
 uv sync                                                    # Python 3.12
-cp environment/.env.sample environment/.env                # HF_TOKEN, only for gated models and datasets
+cp environment/.env.sample environment/.env                # HF_TOKEN for gated models; API_TOKEN, API_PATHS for a shared server
 
 uv run llmclick recipes                                    # recipes, their stages and registry keys
 uv run llmclick validate configs/llm/sft.yaml              # experiment key and stage plan

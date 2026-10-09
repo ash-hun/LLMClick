@@ -5,7 +5,7 @@
 | Last Updated | 2026-10-09 |
 | Base URL | `http://localhost:8000` |
 | 데이터 포맷 | JSON (UTF-8) |
-| 인증 | 없음 |
+| 인증 | `API_TOKEN` 이 설정되면 `/api/*` 전부 `Authorization: Bearer <token>`, 비어 있으면 없음 |
 
 > `Last Updated`는 **문서 내용이 실제로 바뀐 날**만 적는다. 코드가 그대로인 채로 문서를
 > 다시 생성했다면 이 값도 그대로다. 시각은 적지 않는다.
@@ -50,6 +50,8 @@ YAML 설정 하나를 커스텀 모델 하나로 실행하는 서버. config 의
 |---|---|
 | 200 | 정상 |
 | 202 | Job 접수 (대기 중이거나 실행 중인 같은 Job 이 있으면 그 Job 을 반환), 또는 취소 접수 |
+| 401 | `API_TOKEN` 이 설정된 서버에 토큰 없이, 또는 틀린 토큰으로 호출 |
+| 403 | `config_path`, 또는 config 가 적은 경로(`output_dir`, `model.name`, `model.init`, `data.sources[*].path`)가 `API_PATHS` 밖 |
 | 404 | config 파일 또는 job_id 없음 |
 | 409 | 끝난 Job 을 취소하려 함 |
 | 422 | 요청 본문 또는 config 가 스키마에 안 맞음 (Pydantic 메시지가 `detail`) |
@@ -58,7 +60,10 @@ YAML 설정 하나를 커스텀 모델 하나로 실행하는 서버. config 의
 **페이지네이션** — `GET /api/jobs` 의 `limit` 가 최근 N 건으로 줄인다. Job 은 SQLite 테이블(`JOBS_DB`, 기본
 `./output/_jobs.sqlite`)에 있고 접수 순으로 돌려준다.
 
-**공통 헤더** — 없음.
+**공통 헤더** — `API_TOKEN` 이 설정된 서버에서는 `/api/*` 전부 `Authorization: Bearer <API_TOKEN>`. `/health` 는 예외.
+
+**경로 제한** — API 가 읽거나 쓰는 모든 경로는 `API_PATHS`(콜론으로 구분한 디렉토리 목록, 기본 `.` 즉 서버의 작업
+디렉토리) 안에 있어야 한다. `..` 과 심볼릭 링크를 푼 실제 위치로 판정하며, 밖이면 403. CLI 에는 적용되지 않는다.
 
 ---
 
@@ -81,10 +86,10 @@ POST /api/config/load?config_path=configs/llm/sft.yaml
 | 항목 | 값 |
 |---|---|
 | Method | `POST` |
-| 인증 | 없음 |
+| 인증 | `API_TOKEN` 설정 시 Bearer |
 | 요청 Content-Type | 없음 (본문 없음) |
 | 응답 Content-Type | `application/json` |
-| 필수 헤더 | 없음 |
+| 필수 헤더 | `API_TOKEN` 설정 시 `Authorization` |
 
 #### Request Body
 
@@ -138,10 +143,10 @@ POST /api/config/validate
 | 항목 | 값 |
 |---|---|
 | Method | `POST` |
-| 인증 | 없음 |
+| 인증 | `API_TOKEN` 설정 시 Bearer |
 | 요청 Content-Type | `application/json` |
 | 응답 Content-Type | `application/json` |
-| 필수 헤더 | 없음 |
+| 필수 헤더 | `API_TOKEN` 설정 시 `Authorization` |
 
 #### Request Body
 
@@ -195,10 +200,10 @@ GET /api/jobs
 | 항목 | 값 |
 |---|---|
 | Method | `GET` |
-| 인증 | 없음 |
+| 인증 | `API_TOKEN` 설정 시 Bearer |
 | 요청 Content-Type | 없음 (본문 없음) |
 | 응답 Content-Type | `application/json` |
-| 필수 헤더 | 없음 |
+| 필수 헤더 | `API_TOKEN` 설정 시 `Authorization` |
 
 #### Request Body
 
@@ -251,10 +256,10 @@ POST /api/jobs
 | 항목 | 값 |
 |---|---|
 | Method | `POST` |
-| 인증 | 없음 |
+| 인증 | `API_TOKEN` 설정 시 Bearer |
 | 요청 Content-Type | `application/json` |
 | 응답 Content-Type | `application/json` |
-| 필수 헤더 | 없음 |
+| 필수 헤더 | `API_TOKEN` 설정 시 `Authorization` |
 
 #### Request Body
 
@@ -319,10 +324,10 @@ GET /api/jobs/{job_id}
 | 항목 | 값 |
 |---|---|
 | Method | `GET` |
-| 인증 | 없음 |
+| 인증 | `API_TOKEN` 설정 시 Bearer |
 | 요청 Content-Type | 없음 (본문 없음) |
 | 응답 Content-Type | `application/json` |
-| 필수 헤더 | 없음 |
+| 필수 헤더 | `API_TOKEN` 설정 시 `Authorization` |
 
 #### Request Body
 
@@ -373,10 +378,10 @@ DELETE /api/jobs/{job_id}
 | 항목 | 값 |
 |---|---|
 | Method | `DELETE` |
-| 인증 | 없음 |
+| 인증 | `API_TOKEN` 설정 시 Bearer |
 | 요청 Content-Type | 없음 (본문 없음) |
 | 응답 Content-Type | `application/json` |
-| 필수 헤더 | 없음 |
+| 필수 헤더 | `API_TOKEN` 설정 시 `Authorization` |
 
 #### Request Body
 
@@ -434,10 +439,10 @@ GET /api/system/recipes
 | 항목 | 값 |
 |---|---|
 | Method | `GET` |
-| 인증 | 없음 |
+| 인증 | `API_TOKEN` 설정 시 Bearer |
 | 요청 Content-Type | 없음 (본문 없음) |
 | 응답 Content-Type | `application/json` |
-| 필수 헤더 | 없음 |
+| 필수 헤더 | `API_TOKEN` 설정 시 `Authorization` |
 
 #### Request Body
 
@@ -499,7 +504,7 @@ GET /health
 | 항목 | 값 |
 |---|---|
 | Method | `GET` |
-| 인증 | 없음 |
+| 인증 | 없음 (컨테이너 healthcheck 가 부름) |
 | 요청 Content-Type | 없음 (본문 없음) |
 | 응답 Content-Type | `application/json` |
 | 필수 헤더 | 없음 |

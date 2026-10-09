@@ -84,6 +84,11 @@ class TuningConfig(ModelingConfig):
                 raise ValueError(f"Unknown source {source.name!r}; registered: {SOURCES.names()}")
         return self
 
+    def paths(self) -> list[str]:
+        """`model.name` is a Hub ID or a directory; a Hub ID has no `..` or leading slash, so it passes as a path."""
+        local = [str(path) for source in self.data.sources if (path := source.params.get("path")) is not None]
+        return [*super().paths(), self.model.name, *([self.model.init] if self.model.init else []), *local]
+
     def versions(self) -> dict[str, int]:
         """Code versions of the parts this config selects; they join the train fingerprint, so bumping one part's
         `version` rebuilds the experiments that use that part and no others."""
