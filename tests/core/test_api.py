@@ -18,12 +18,14 @@ client = TestClient(app)
 
 
 @pytest.fixture(autouse=True)
-def temporary_job_table(tmp_path: Path, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+def temporary_job_table(tmp_path: Path, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> Any:
     # the tests keep their model and output under pytest's temporary directory, so the API may reach it too
     monkeypatch.setenv("API_PATHS", f".:{tmp_path_factory.getbasetemp()}")
     monkeypatch.delenv("API_TOKEN", raising=False)
     get_settings.cache_clear()
     job_store.configure(tmp_path / "jobs.sqlite", workers=1)
+    yield
+    get_settings.cache_clear()  # settings read under this test's environment must not outlive it
 
 
 def config(model: Path, out: Path) -> dict[str, Any]:

@@ -1,0 +1,37 @@
+# Synthetic conversation rows for llm_sft from topic seeds, through a local Ollama model: seeds -> prompts ->
+# evolve -> respond -> verify -> select. Every stage is cached by its inputs; a run that crashes or runs out of budget
+# continues where it stopped. Swap `teacher` for {name: anthropic, model: claude-opus-5-5}, {name: openai, model: ...,
+# base_url: ...} or {name: local, experiment: output/<experiment>, checkpoint: validate}.
+pipeline:
+  recipe: data_synthetic
+  name: topics-ko-sft
+  seed: 20260920
+  output_dir: ./output
+
+teacher: {name: ollama, model: qwen3.5:0.8b, base_url: http://localhost:11434}
+
+seeds:
+  - kind: topic
+    values: [조수 간만의 차, 발효와 효모, 전기 자동차 충전, 지하철 환승 할인]
+  # - {kind: persona, source: {name: huggingface, dataset: proj-persona/PersonaHub, revision: <commit>, split: train, limit: 200}, field: persona}
+
+prompts:
+  generator: topic_questions       # or persona_task (params.skills), document_qa, passthrough
+  per_seed: 1
+  params: {n: 3, language: Korean}
+  constraints: ["답은 두 문단으로 쓰세요.", "마지막 줄에 한 문장 요약을 붙이세요."]
+
+evolve: {rounds: 1, operators: {constraints: 1, deepen: 1, concretize: 1, reasoning: 1, breadth: 0.5}}
+
+respond: {answers_per_question: 2, max_tokens: 512, temperature: 0.7}
+
+verify:
+  schema_recipe: llm_sft
+  judge: {rubric: "요청에 대해 정확하고 도움이 되며 요구한 형식을 지켰는지 평가하라.", min_score: 6}
+
+select:
+  assemble: sft                    # sft | dpo (needs judge scores and answers_per_question >= 2) | grpo (needs answers)
+  dedup: {near: 0.75, ngram: 5}
+  leak: {against: [{name: local_jsonl, path: samples/llm_sft.jsonl}], threshold: 0.5, ngram: 8}
+
+budget: {max_usd: 5}

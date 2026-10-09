@@ -16,6 +16,7 @@ COPY main.py ./
 COPY core/ ./core/
 COPY modeling/ ./modeling/
 COPY evaluation/ ./evaluation/
+COPY data/ ./data/
 COPY samples/ ./samples/
 COPY configs/ ./configs/
 RUN uv sync --frozen --no-dev

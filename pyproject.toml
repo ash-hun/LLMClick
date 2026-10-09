@@ -35,6 +35,9 @@ eval = [
     "lm-eval[ifeval]>=0.4.13",
     "mteb>=2.24",
 ]
+data = [
+    "anthropic>=1.0",
+]
 
 [project.scripts]
 llmclick = "core.cli:main"
@@ -44,7 +47,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["core", "modeling", "evaluation"]
+packages = ["core", "modeling", "evaluation", "data"]
 
 [dependency-groups]
 dev = [
@@ -55,6 +58,7 @@ dev = [
     "ruff>=0.14",
     "lm-eval[ifeval]>=0.4.13",
     "mteb>=2.24",
+    "anthropic>=1.0",
 ]
 
 [tool.pytest.ini_options]
@@ -70,10 +74,10 @@ select = ["E", "F", "W", "B", "UP"]
 ignore = ["E501", "UP046"]
 
 [tool.mypy]
-files = ["core", "modeling", "evaluation"]
+files = ["core", "modeling", "evaluation", "data"]
 python_version = "3.12"
 strict = true
 
 [[tool.mypy.overrides]]
-module = ["datasets.*", "wandb.*", "lm_eval.*", "mteb.*"]
+module = ["datasets.*", "wandb.*", "lm_eval.*", "mteb.*", "anthropic.*"]
 ignore_missing_imports = true
