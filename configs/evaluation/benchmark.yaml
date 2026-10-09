@@ -1,0 +1,22 @@
+# Public benchmarks on a trained experiment's checkpoint, through lm-evaluation-harness (`uv sync --extra eval`).
+# One stage per benchmark: a benchmark added later is the only one scored. `limit` keeps a pilot short; drop it for
+# a full run (hours per benchmark on one GPU for a 2B model). `checkpoint: base` scores what the experiment started
+# from, under the same settings: the baseline every comparison needs.
+pipeline:
+  recipe: evaluation_benchmark
+  name: sft-qwen3.5-0.8b-benchmarks
+  output_dir: ./output
+
+model:
+  experiment: output/sft-qwen3.5-0.8b-14fc97a0
+  checkpoint: validate              # validate | train | base | a checkpoint directory
+
+benchmarks:
+  preset: small_general             # mmlu, mmlu_pro, gsm8k, ifeval, hellaswag, arc_challenge, truthfulqa_mc2, winogrande
+  tasks:                            # added to the preset; a task named here replaces the preset's entry
+    - {name: kmmlu, num_fewshot: 5}
+  limit: 100                        # smoke: 100; standard: 1000; full: remove
+
+decoding: {temperature: 0, max_new_tokens: 1024}
+chat_template: false                # true for instruction-tuned checkpoints
+evaluation: {batch_size: 8}

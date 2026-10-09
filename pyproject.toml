@@ -31,6 +31,9 @@ dependencies = [
 
 [project.optional-dependencies]
 tracker = ["wandb>=0.19"]
+eval = [
+    "lm-eval>=0.4.13",
+]
 
 [project.scripts]
 llmclick = "core.cli:main"
@@ -49,6 +52,7 @@ dev = [
     "types-pyyaml>=6.0",
     "types-tqdm>=4.66",
     "ruff>=0.14",
+    "lm-eval>=0.4.13",
 ]
 
 [tool.pytest.ini_options]
@@ -69,5 +73,5 @@ python_version = "3.12"
 strict = true
 
 [[tool.mypy.overrides]]
-module = ["datasets.*", "wandb.*"]
+module = ["datasets.*", "wandb.*", "lm_eval.*"]
 ignore_missing_imports = true

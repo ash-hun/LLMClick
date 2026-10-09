@@ -25,6 +25,10 @@ class Stage(ABC, Generic[ConfigT]):
         """Everything besides upstream stages that decides the result; override to add e.g. hashes of input files."""
         return [self.config.section(name) for name in self.sections]
 
+    def dependencies(self) -> tuple[str, ...]:
+        """The stages this instance reads: `requires` unless a pipeline builds its stages from the config."""
+        return self.requires
+
     @abstractmethod
     def run(self, workdir: Path, inputs: dict[str, Outputs]) -> Outputs:
         """Write into `workdir` and return JSON-safe outputs. `workdir` may hold files of an interrupted earlier

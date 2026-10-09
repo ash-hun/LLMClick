@@ -26,9 +26,19 @@ class Pipeline(ABC, Generic[ConfigT]):
         self.config = config
         self.progress = progress or Progress()
         self.experiment = Experiment(config)
-        self.stages = {cls.name: cls(config, self.progress) for cls in self.stage_classes}
+        self.stages = self.build_stages()
+        seen: set[str] = set()
+        for name, stage in self.stages.items():
+            missing = [other for other in stage.dependencies() if other not in seen]
+            if missing:
+                raise TypeError(f"{type(self).__name__}: stage {name!r} requires later or unknown stages {missing}")
+            seen.add(name)
         self.selected = self.select(config.stages)
         self._fingerprints: dict[str, str] = {}
+
+    def build_stages(self) -> dict[str, Stage[Any]]:
+        """One instance per stage class, in order; a recipe whose stages depend on the config overrides this."""
+        return {cls.name: cls(self.config, self.progress) for cls in self.stage_classes}
 
     @classmethod
     def check(cls) -> None:
@@ -50,7 +60,7 @@ class Pipeline(ABC, Generic[ConfigT]):
 
     def select(self, wanted: list[str] | None) -> list[str]:
         """The stages this run was asked for, in the recipe's order."""
-        names = self.stage_names()
+        names = list(self.stages)
         unknown = [name for name in wanted or [] if name not in names]
         if unknown:
             raise ValueError(f"Unknown stages {unknown} for recipe {self.kind!r}; choose from {names}")
@@ -63,18 +73,18 @@ class Pipeline(ABC, Generic[ConfigT]):
         def add(name: str) -> None:
             if name not in needed:
                 needed.add(name)
-                for dependency in self.stages[name].requires:
+                for dependency in self.stages[name].dependencies():
                     add(dependency)
 
         for name in self.selected:
             add(name)
-        return [name for name in self.stage_names() if name in needed]
+        return [name for name in self.stages if name in needed]
 
     def fingerprint(self, name: str) -> str:
         """A pure function of the config: the stage, its own inputs and the fingerprints of the stages it reads."""
         if name not in self._fingerprints:
             stage = self.stages[name]
-            upstream = [self.fingerprint(dependency) for dependency in stage.requires]
+            upstream = [self.fingerprint(dependency) for dependency in stage.dependencies()]
             self._fingerprints[name] = sha256_json([self.kind, name, stage.version, stage.identity(), upstream])
         return self._fingerprints[name]
 
@@ -95,7 +105,7 @@ class Pipeline(ABC, Generic[ConfigT]):
                 if outputs is None:
                     logger.info("[%s] %s: running", self.experiment.key, name)
                     workdir.mkdir(parents=True, exist_ok=True)
-                    outputs = stage.run(workdir, {dependency: done[dependency] for dependency in stage.requires})
+                    outputs = stage.run(workdir, {dependency: done[dependency] for dependency in stage.dependencies()})
                     outputs = self.experiment.mark_done(workdir, key, outputs)
                     status = "done"
         except BaseException:
