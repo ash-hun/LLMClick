@@ -88,7 +88,10 @@ pipeline:
   Each training method, backbone and head class carries a `version`; bumping one after changing its code rebuilds
   the experiments that use that part and leaves every other recipe's cache alone.
 - **Reruns.** A stage is recorded only when it finishes. A crashed run is resumed by running the same command
-  again; training continues from `resume.pt` in the train stage directory.
+  again; training continues from `resume.pt` in the train stage directory and ends with the same weights as an
+  uninterrupted run: batches, learning rates and the samples of a sampling method (`llm_grpo`, `llm_decision_cispo`)
+  are all derived from the seed and the step. With `method.iterations` above 1 a snapshot is written only between
+  groups of steps that share samples, so a resume never lands inside such a group.
 - **Locks.** A stage directory is locked while it is built, so a CLI run and an API job asking for the same stage
   never build it twice.
 - **Identity.** The experiment directory is `<name>-<hash>`; `stages`, `output_dir` and `tracker` are not part of

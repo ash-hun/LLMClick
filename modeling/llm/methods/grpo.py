@@ -138,7 +138,7 @@ class GRPO(LLMMethod):
         surrogate = torch.minimum(ratio * advantage, ratio.clamp(1 - config.clip, 1 + config.clip) * advantage)
         counts = graded.sum(dim=1).clamp(min=1)
         loss: torch.Tensor = -((surrogate * graded).sum(dim=1) / counts).mean()
-        self.metrics = {"reward": samples["reward"], "ratio": float((ratio * graded).sum() / graded.sum().clamp(min=1))}
+        self.metrics = {"reward": samples["reward"], "ratio": float((ratio.detach() * graded).sum() / graded.sum().clamp(min=1))}
         if samples["reference"] is not None:
             gap = samples["reference"] - new  # log(reference / policy) on the sampled tokens
             kl = (((torch.exp(gap) - gap - 1) * graded).sum(dim=1) / counts).mean()
