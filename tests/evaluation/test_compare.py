@@ -26,8 +26,8 @@ def test_config_rules() -> None:
     assert CompareConfig(recipe="evaluation_compare", name="c", runs=runs, benchmarks=tasks).base.label == "base"
     for broken, message in [({"runs": runs[:1]}, "at least 2"), ({"runs": [runs[0], runs[0]]}, "labels must differ"),
                             ({"runs": [runs[1], {**runs[1], "label": "other"}]}, "checkpoint: base"),
-                            ({"runs": runs, "benchmarks": None}, "benchmarks, rows, or both"),
-                            ({"runs": runs, "axes": {"a": ["gsm8k"]}}, "no benchmark or rows")]:
+                            ({"runs": runs, "benchmarks": None}, "benchmarks, rows, decision or embedding"),
+                            ({"runs": runs, "axes": {"a": ["gsm8k"]}}, "no benchmark, rows:")]:
         with pytest.raises(ValueError, match=message):
             CompareConfig(recipe="evaluation_compare", name="c", **{"benchmarks": tasks, **broken})
 
@@ -80,3 +80,36 @@ def test_compares_runs_on_benchmarks_and_rows_and_shares_their_stages(trained: d
 
     again = pipeline.build(body, StateProgress()).run()
     assert json.dumps(again) == json.dumps(result)
+
+
+def test_decision_and_embedding_sections_join_the_comparison(tmp_path: Path, tiny_model: Path) -> None:
+    from tests.evaluation.test_decision import config as decision_config  # noqa: F401 - keeps the import graph simple
+    from tests.modeling.tuning.test_decision import raw as decision_raw
+    from tests.modeling.tuning.test_recipes import raw
+
+    decision = pipeline.build(decision_raw("llm_decision_sft", tiny_model, tmp_path, "readout")).run()
+    body = {"pipeline": {"recipe": "evaluation_compare", "name": "cmp-dec", "output_dir": str(tmp_path), "device": "cpu"},
+            "runs": [{"label": "base", "experiment": decision["directory"], "checkpoint": "base"},
+                     {"label": "final", "experiment": decision["directory"], "checkpoint": "validate"}],
+            "decision": {"data": {"sources": [{"name": "local_jsonl", "path": decision["stages"]["data"]["validation"]}]}, "think": "off"},
+            "axes": {"decide": ["decision:nothink:accuracy"]}, "evaluation": {"batch_size": 4}}
+    built = pipeline.build(body)
+    assert built.plan() == ["questions", "decision:base", "decision:final", "report"]
+    report = json.loads(Path(built.run()["stages"]["report"]["report"]).read_text())
+    assert set(report["decision"]["nothink"]) >= {"accuracy", "nll", "ece", "questions"}
+    assert report["decision"]["nothink"]["accuracy"]["final"] == pytest.approx(decision["stages"]["validate"]["metrics"]["accuracy"])
+    assert report["comparison"]["decision:nothink:accuracy"]["final"]["decided"] is None
+    assert report["axes"]["decide"]["final"] == pytest.approx(report["decision"]["nothink"]["accuracy"]["final"])
+    assert report["contamination"]["base"] is None and report["contamination"]["final"]["items"] > 0
+    assert "## Decision" in Path(report["summary"]).read_text()
+
+    embedding = pipeline.build(raw("embedding_contrastive", tiny_model, tmp_path)).run()
+    body = {"pipeline": {"recipe": "evaluation_compare", "name": "cmp-emb", "output_dir": str(tmp_path), "device": "cpu"},
+            "runs": [{"label": "base", "experiment": embedding["directory"], "checkpoint": "base"},
+                     {"label": "final", "experiment": embedding["directory"], "checkpoint": "validate"}],
+            "embedding": {"tasks": ["MockSTSTask"]}, "axes": {"sts": ["embedding:MockSTSTask"]}, "evaluation": {"batch_size": 4}}
+    built = pipeline.build(body)
+    assert built.plan() == ["embedding:base:MockSTSTask", "embedding:final:MockSTSTask", "report"]
+    report = json.loads(Path(built.run()["stages"]["report"]["report"]).read_text())
+    assert set(report["embedding"]["MockSTSTask"]) == {"base", "final"} and "embedding:MockSTSTask" in report["comparison"]
+    assert report["contamination"] == {"base": None, "final": None}  # MTEB tasks are not rows of the experiment

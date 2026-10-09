@@ -10,11 +10,14 @@ from typing import Any, ClassVar, Literal
 import torch
 from pydantic import Field
 
+from core.config.schema import Section
+from core.progress import Progress
 from core.stage import Outputs, Stage
 from core.utils.device import resolve_device
 from core.utils.files import write_json
 from evaluation.config import EvaluationData, MeasureSettings, SourceModel
 from evaluation.source import SourceExperiment
+from evaluation.stages import contamination, named
 from modeling.llm.methods.decision.base import DecisionMethod, Item, expected_calibration_error, items
 from modeling.llm.models.base import LLMBackbone
 from modeling.tuning.method import Row, chunks, fitting
@@ -56,11 +59,14 @@ def jevbench(params: dict[str, Any]) -> list[Row]:
     return rows
 
 
-class DecisionConfig(MeasureSettings):
-    model: SourceModel
-    data: EvaluationData
+class DecisionSettings(Section):
     think: Think = Field(default="both", description="Measure without reasoning (off), with it (on), or both")
     max_think: int | None = Field(default=None, ge=1, description="Reasoning tokens per question; null: the experiment's method.max_think")
+
+
+class DecisionConfig(MeasureSettings, DecisionSettings):
+    model: SourceModel
+    data: EvaluationData
 
     def paths(self) -> list[str]:
         return [*super().paths(), *self.model.paths(), *self.data.paths()]
@@ -95,15 +101,25 @@ def summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
     return summary
 
 
-class DecisionScoreStage(Stage[DecisionConfig]):
-    """Every question of the rows through the head, without reasoning and, if asked, after greedy reasoning."""
-    name: ClassVar[str] = "score"
+class DecisionScoreStage(Stage[MeasureSettings]):
+    """Every question of the rows through the head, without reasoning and, if asked, after greedy reasoning. Built
+    per model by `for_`, so a comparison holds one per run; its scope makes the work shared across recipes."""
+    name: ClassVar[str] = "decision"  # instances are named score (and decision:<label> in a comparison)
     scope: ClassVar[str] = "decision"
-    sections: ClassVar[tuple[str, ...]] = ("evaluation", "device", "think", "max_think")
+    sections: ClassVar[tuple[str, ...]] = ("evaluation", "device")
+    model: SourceModel
+    settings: DecisionSettings
     rows_stage: str = "rows"
 
+    @classmethod
+    def for_(cls, config: MeasureSettings, progress: Progress, model: SourceModel, settings: DecisionSettings,
+             name: str = "score", rows_stage: str = "rows") -> "DecisionScoreStage":
+        stage: DecisionScoreStage = named(cls, name)(config, progress)
+        stage.model, stage.settings, stage.rows_stage = model, settings, rows_stage
+        return stage
+
     def identity(self) -> Any:
-        return [super().identity(), SourceExperiment(self.config.model).identity()]
+        return [super().identity(), self.settings.model_dump(mode="json"), SourceExperiment(self.model).identity()]
 
     def dependencies(self) -> tuple[str, ...]:
         return (self.rows_stage,)
@@ -139,13 +155,12 @@ class DecisionScoreStage(Stage[DecisionConfig]):
         return records
 
     def run(self, workdir: Path, inputs: dict[str, Outputs]) -> Outputs:
-        source = SourceExperiment(self.config.model)
+        source = SourceExperiment(self.model)
         backbone, method, trained = source.build()
         if not isinstance(method, DecisionMethod) or not isinstance(backbone, LLMBackbone):
-            raise ValueError(f"{self.config.model.experiment!r} is not a decision experiment (its recipe is {trained.recipe!r})")
-        think = self.config.think
-        method.config = method.config.model_copy(update={"eval_think": think != "off",
-                                                         **({"max_think": self.config.max_think} if self.config.max_think else {})})
+            raise ValueError(f"{self.model.experiment!r} is not a decision experiment (its recipe is {trained.recipe!r})")
+        think, max_think = self.settings.think, self.settings.max_think
+        method.config = method.config.model_copy(update={"eval_think": think != "off", **({"max_think": max_think} if max_think else {})})
         checkpoint = source.checkpoint()
         self.progress.update(0, None, "loading checkpoint" if checkpoint else "loading base model")
         backbone.load(resolve_device(self.config.device), checkpoint)
@@ -177,14 +192,18 @@ class DecisionScoreStage(Stage[DecisionConfig]):
 
 class DecisionReport(Stage[DecisionConfig]):
     name: ClassVar[str] = "report"
-    requires: ClassVar[tuple[str, ...]] = ("score",)
+
+    def dependencies(self) -> tuple[str, ...]:
+        return ("rows", "score")  # the score stage is a `decision` instance named score
 
     def run(self, workdir: Path, inputs: dict[str, Outputs]) -> Outputs:
         scores = inputs["score"]
+        self.progress.update(0, None, "measuring overlap with the training rows")
         report = {"model": {"experiment": self.config.model.experiment, "checkpoint": scores["checkpoint"], "recipe": scores["recipe"]},
                   "settings": scores["settings"],
                   "rows": {"sources": [source.model_dump(mode="json") for source in self.config.data.sources], **scores["rows"]},
-                  "scores": scores["metrics"], "items": scores["items"], "contamination": None}
+                  "scores": scores["metrics"], "items": scores["items"],
+                  "contamination": contamination(self.config.model, read_rows(Path(inputs["rows"]["rows"])))}
         write_json(workdir / REPORT, report)
         return {"report": str(workdir / REPORT), "scores": scores["metrics"]}
 

@@ -1,8 +1,9 @@
 # Evaluation channel
 
-Status: milestones 1 to 4 built (`evaluation_custom`, `evaluation_benchmark`, `evaluation_compare`,
-`evaluation_decision`, `evaluation_embedding`); milestone 5 is designed below, after a short survey of the benchmark
-landscape (October 2026). The survey's sources are at the end.
+Status: all five milestones built (`evaluation_custom`, `evaluation_benchmark`, `evaluation_compare`,
+`evaluation_decision`, `evaluation_embedding`; contamination, the tracker and the API). The design below was written
+after a short survey of the benchmark landscape (October 2026); the survey's sources are at the end. What is still
+open is listed under each recipe and in the milestone table.
 
 ## Built: `evaluation_custom`
 
@@ -48,6 +49,24 @@ and `korean` (kmmlu, haerae, kobest, click, hrm8k). Any other lm-evaluation-harn
 Not yet: thinking mode on or off for Qwen3 checkpoints (the harness is run with the chat template as it is), and
 a Hub model without an experiment (use `checkpoint: base` of an experiment that starts from it).
 
+## Built: contamination, tracker, API
+
+Every report carries `contamination`: the overlap between the evaluation items (rows, benchmark documents as the
+harness logged them, decision questions) and the rows the experiment trained on (`<experiment>/data/train.jsonl`):
+`exact` (same text after case and whitespace normalization), `near` (at least half of an item's word 8-grams occur
+in the training rows; includes the exact ones), `share_mean`, and the first flagged item indices. It is null for
+`base` checkpoints (those weights never saw the rows) and for MTEB tasks. A comparison reports it per run. It is a
+measurement, not a filter: the Data channel's leak filter is where contamination is prevented.
+
+With `tracker: {enabled: true, project: ...}` the report is sent to wandb once per report stage directory: every
+number in it as a summary metric (`scores/loss`, `benchmarks/hellaswag/value`, `contamination/exact`, ...) and the
+same numbers as a table. As for training runs, `tracker` is not part of the identity, and a report already sent
+to a project is not sent again.
+
+`GET /api/evaluations?output_dir=./output&recipe=&experiment=` lists every evaluation report under an output
+directory (headline scores, model, contamination); `GET /api/evaluations/{experiment}` returns one report in full.
+`output_dir` must lie inside `API_PATHS`.
+
 ## Built: `evaluation_compare`
 
 ```yaml
@@ -58,7 +77,9 @@ runs:
   - {label: other, experiment: output/sft-lora-qwen3.5-0.8b-<hash>, checkpoint: validate}
 benchmarks: {preset: small_general, limit: 100}                   # optional
 rows: {sources: [{name: local_jsonl, path: my-rows.jsonl}]}        # optional: the recipes' own metrics
-axes: {knowledge: [mmlu, mmlu_pro], math: [gsm8k]}                 # optional: polygon chart, entries 0..1 averaged
+decision: {data: {sources: [{name: jevbench, path: data/jevbench}]}, think: both}   # optional: decision experiments
+embedding: {tasks: [STSBenchmark, NFCorpus]}                        # optional: embedding experiments
+axes: {knowledge: [mmlu, mmlu_pro], math: [gsm8k], decide: [decision:think:accuracy], sts: [embedding:STSBenchmark]}
 ```
 
 Every run gets the benchmark stages of `evaluation_benchmark` (`score:<label>:<task>`) and the row stages of
@@ -256,7 +277,7 @@ Each milestone ends green on CI with tests on the tiny random model, as the mode
 | 2. `evaluation_benchmark` (built; the GPU run is still to do) | lm-evaluation-harness behind an optional extra (`uv sync --extra eval`), a `benchmarks` section with presets (`small_general`, `korean`), harness version in the fingerprint, `limit` for smoke runs, settings recorded in results | the preset runs on Qwen3.5-0.8B on one GPU with `limit`; results carry stderr and settings; a missing extra gives one clear error |
 | 3. `evaluation_compare` (built) | several checkpoints, the base model required, the table, the polygon SVG, Markdown summary, "not decided" marking from intervals; stage scopes so single-model evaluations and comparisons share their runs | one command compares base, mid-training and final checkpoints of one experiment |
 | 4. Decision and embedding (built) | `evaluation_decision` (JevBench reader, think and no-think rows, ECE, latency), `evaluation_embedding` (mteb) | the decision pointer pilot reproduces the metrics `validate` reports, plus the JevBench tiers; the embedding pilot runs one MTEB retrieval task |
-| 5. Contamination and surfacing | exact and near-duplicate overlap between an experiment's training rows and the benchmark items, in the report; `GET /api/evaluations`; tracker table | a deliberately contaminated pilot shows the overlap; the API returns the reports |
+| 5. Contamination and surfacing (built) | exact and near-duplicate overlap between an experiment's training rows and the benchmark items, in the report; `GET /api/evaluations`; tracker table; decision and embedding sections in `evaluation_compare` | a deliberately contaminated pilot shows the overlap (the tests score an experiment on its own training rows: 64 of 64 exact); the API returns the reports |
 
 Order of 4 and 5 can swap depending on which models are trained first.
 

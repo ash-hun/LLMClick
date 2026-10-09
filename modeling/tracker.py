@@ -12,6 +12,22 @@ History = list[tuple[int, dict[str, float]]]  # (step, metrics) in step order
 MARKER = "tracker.json"
 
 
+SKIPPED = {"settings", "model", "runs", "items", "chart", "summary", "results", "samples", "flagged", "sources"}
+
+
+def flatten(value: Any, prefix: str = "") -> dict[str, float]:
+    """Every number in a report, keyed by its path (`benchmarks/hellaswag/acc`); bookkeeping keys are left out."""
+    if isinstance(value, (bool, int, float)):
+        return {prefix: float(value)}
+    if isinstance(value, dict):
+        out: dict[str, float] = {}
+        for key, item in value.items():
+            if str(key) not in SKIPPED:
+                out.update(flatten(item, f"{prefix}/{key}" if prefix else str(key)))
+        return out
+    return {}
+
+
 class Tracker:
     """One training run directory is one wandb run (the run id is the directory name), however many experiments
     share it. `tracker.json` in that directory lists the targets it was sent to, so nothing is sent twice."""
@@ -38,8 +54,20 @@ class Tracker:
         except ImportError:
             logger.warning("wandb is not installed (uv sync --extra tracker); training is not tracked")
             return False
+        self.wandb = wandb
         self.session = wandb.init(project=self.config.project, entity=self.config.entity, name=name, id=run.name,
                                   resume="allow", tags=self.config.tags, config=settings)
+        return True
+
+    def report(self, run: Path, name: str, report: dict[str, Any], settings: dict[str, Any]) -> bool:
+        """Send an evaluation report once: every number in it as a summary metric (`scores/hellaswag/acc`, ...) and
+        the same numbers as a table. `run` is the report stage's directory, so one report is one wandb run."""
+        if not self.open(run, name, settings):
+            return False
+        numbers = flatten(report)
+        self.session.log(numbers)
+        self.session.log({"report": self.wandb.Table(columns=["name", "value"], data=[[key, value] for key, value in numbers.items()])})
+        self.close(run, complete=True)
         return True
 
     def log(self, step: int, metrics: dict[str, float]) -> None:

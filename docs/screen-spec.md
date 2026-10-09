@@ -53,3 +53,4 @@
 ## 미구현 / 알려진 제약
 
 - 자체 프론트엔드 없음. Job 상태는 `GET /api/jobs/{job_id}` 를 폴링하고, 취소는 `DELETE /api/jobs/{job_id}` 로 한다.
+  평가 결과는 `GET /api/evaluations` 로 본다.

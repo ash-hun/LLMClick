@@ -32,7 +32,7 @@ dependencies = [
 [project.optional-dependencies]
 tracker = ["wandb>=0.19"]
 eval = [
-    "lm-eval>=0.4.13",
+    "lm-eval[ifeval]>=0.4.13",
     "mteb>=2.24",
 ]
 
@@ -53,7 +53,7 @@ dev = [
     "types-pyyaml>=6.0",
     "types-tqdm>=4.66",
     "ruff>=0.14",
-    "lm-eval>=0.4.13",
+    "lm-eval[ifeval]>=0.4.13",
     "mteb>=2.24",
 ]
 

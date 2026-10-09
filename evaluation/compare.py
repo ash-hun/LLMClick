@@ -10,8 +10,12 @@ from pydantic import Field, model_validator
 from core.config.schema import Section
 from core.stage import Outputs, Stage
 from core.utils.files import write_json
-from evaluation.benchmark import HARNESS, Benchmarks, HarnessSettings, harness_version
+from evaluation.benchmark import HARNESS, Benchmarks, HarnessSettings, documents, harness_version
 from evaluation.config import EvaluationData, SourceModel
+from evaluation.decision import DecisionSettings
+from evaluation.embedding import EmbeddingSettings
+from evaluation.stages import contamination
+from modeling.tuning.stages import read_rows
 
 REPORT = "report.json"
 CHART = "axes.svg"
@@ -30,11 +34,18 @@ class Run(Section):
         return SourceModel(experiment=self.experiment, checkpoint=self.checkpoint)
 
 
+class DecisionRows(DecisionSettings):
+    data: EvaluationData
+
+
 class CompareConfig(HarnessSettings):
     runs: list[Run] = Field(min_length=2, description="The checkpoints to compare; one of them `checkpoint: base`")
     benchmarks: Benchmarks | None = Field(default=None, description="Public benchmarks every run is scored on")
     rows: EvaluationData | None = Field(default=None, description="Rows every run is scored on with its recipe's metrics")
-    axes: dict[str, list[str]] = Field(default_factory=dict, description="Chart axis -> benchmark names and `rows:<metric>` entries, each 0..1, averaged")
+    decision: DecisionRows | None = Field(default=None, description="Decision rows (or JevBench) every run answers, with think settings")
+    embedding: EmbeddingSettings | None = Field(default=None, description="MTEB tasks every run is scored on")
+    axes: dict[str, list[str]] = Field(default_factory=dict, description="Chart axis -> entries averaged, each 0..1: a benchmark name, "
+                                                                          "`rows:<metric>`, `decision:<mode>:<metric>` or `embedding:<task>`")
 
     @model_validator(mode="after")
     def _comparable(self) -> "CompareConfig":
@@ -43,18 +54,19 @@ class CompareConfig(HarnessSettings):
             raise ValueError(f"run labels must differ: {labels}")
         if not any(run.checkpoint == "base" for run in self.runs):
             raise ValueError("one run must be `checkpoint: base`: a comparison without the starting weights is not interpretable")
-        if self.benchmarks is None and self.rows is None:
-            raise ValueError("give benchmarks, rows, or both")
+        if self.benchmarks is None and self.rows is None and self.decision is None and self.embedding is None:
+            raise ValueError("give benchmarks, rows, decision or embedding (any of them)")
         names = {task.name for task in self.benchmarks.resolved()} if self.benchmarks else set()
+        prefixes = {"rows:": self.rows, "decision:": self.decision, "embedding:": self.embedding}
         for axis, entries in self.axes.items():
-            unknown = [e for e in entries if not (e in names or (e.startswith("rows:") and self.rows is not None))]
+            unknown = [e for e in entries if not (e in names or any(e.startswith(p) and section is not None for p, section in prefixes.items()))]
             if unknown:
-                raise ValueError(f"axis {axis!r} names {unknown}, which no benchmark or rows:<metric> provides")
+                raise ValueError(f"axis {axis!r} names {unknown}, which no benchmark, rows:, decision: or embedding: section provides")
         return self
 
     def paths(self) -> list[str]:
         own = [path for run in self.runs for path in run.model.paths()]
-        return [*super().paths(), *own, *(self.rows.paths() if self.rows else [])]
+        return [*super().paths(), *own, *(self.rows.paths() if self.rows else []), *(self.decision.data.paths() if self.decision else [])]
 
     @property
     def base(self) -> Run:
@@ -111,9 +123,15 @@ class CompareReport(Stage[CompareConfig]):
     name: ClassVar[str] = "report"
     benchmark_stages: dict[str, dict[str, str]] = {}  # label -> task -> stage name
     row_stages: dict[str, str] = {}                   # label -> stage name
+    decision_stages: dict[str, str] = {}              # label -> stage name
+    embedding_stages: dict[str, dict[str, str]] = {}  # label -> task -> stage name
 
     def dependencies(self) -> tuple[str, ...]:
-        return (*(name for tasks in self.benchmark_stages.values() for name in tasks.values()), *self.row_stages.values())
+        rows = ("rows",) if self.row_stages else ()
+        questions = ("questions",) if self.decision_stages else ()
+        return (*rows, *questions, *(name for tasks in self.benchmark_stages.values() for name in tasks.values()),
+                *self.row_stages.values(), *self.decision_stages.values(),
+                *(name for tasks in self.embedding_stages.values() for name in tasks.values()))
 
     def run(self, workdir: Path, inputs: dict[str, Outputs]) -> Outputs:
         config = self.config
@@ -132,29 +150,57 @@ class CompareReport(Stage[CompareConfig]):
         for label, stage in self.row_stages.items():
             for metric, value in inputs[stage]["metrics"].items():
                 rows.setdefault(metric, {})[label] = float(value)
+        decision: dict[str, dict[str, dict[str, float]]] = {}  # mode -> metric -> label -> value
+        for label, stage in self.decision_stages.items():
+            for mode, metrics in inputs[stage]["metrics"].items():
+                for metric, value in metrics.items():
+                    if isinstance(value, (int, float)):
+                        decision.setdefault(mode, {}).setdefault(metric, {})[label] = float(value)
+                    elif metric == "by_tier":
+                        for tier, numbers in value.items():
+                            for inner, number in numbers.items():
+                                decision.setdefault(mode, {}).setdefault(f"{tier}.{inner}", {})[label] = float(number)
+        embedding: dict[str, dict[str, float]] = {}  # task -> label -> main score
+        for label, tasks in self.embedding_stages.items():
+            for task, stage in tasks.items():
+                embedding.setdefault(task, {})[label] = float(inputs[stage]["main_score"])
+        # the recipes' own metrics carry no standard error: a difference is given, never decided
+        flat: dict[str, dict[str, float]] = {**{f"rows:{m}": v for m, v in rows.items()},
+                                             **{f"decision:{mode}:{m}": v for mode, metrics in decision.items() for m, v in metrics.items()},
+                                             **{f"embedding:{task}": v for task, v in embedding.items()}}
         comparison: dict[str, dict[str, Any]] = {}
         for task, by_label in benchmarks.items():
             reference = by_label[base]
             if reference["value"] is not None:
                 comparison[task] = {label: verdict(entry["value"], reference["value"], entry["stderr"], reference["stderr"])
                                     for label, entry in by_label.items() if label != base and entry["value"] is not None}
-        for metric, by_label in rows.items():
-            comparison[f"rows:{metric}"] = {label: verdict(value, by_label[base], None, None)
-                                            for label, value in by_label.items() if label != base}
+        for key, by_label in flat.items():
+            if base in by_label:
+                comparison[key] = {label: verdict(value, by_label[base], None, None) for label, value in by_label.items() if label != base}
         axes: dict[str, dict[str, float]] = {}
         for axis, entries in config.axes.items():
             axes[axis] = {}
             for label in labels:
-                values = [benchmarks[e][label]["value"] if not e.startswith("rows:") else rows[e[5:]].get(label)
-                          for e in entries if (e in benchmarks and label in benchmarks[e]) or (e.startswith("rows:") and e[5:] in rows)]
+                values = [benchmarks[e][label]["value"] if e in benchmarks and label in benchmarks[e] else flat.get(e, {}).get(label)
+                          for e in entries]
                 numbers = [min(max(float(v), 0.0), 1.0) for v in values if v is not None]
                 axes[axis][label] = sum(numbers) / len(numbers) if numbers else 0.0
+        self.progress.update(0, None, "measuring overlap with the training rows")
+        overlap: dict[str, dict[str, Any]] = {}
+        for run in config.runs:
+            items: list[Any] = []
+            items += read_rows(Path(inputs["rows"]["rows"])) if self.row_stages else []
+            items += read_rows(Path(inputs["questions"]["rows"])) if self.decision_stages else []
+            for stage in self.benchmark_stages.get(run.label, {}).values():
+                items += documents(Path(inputs[stage]["samples"]))
+            overlap[run.label] = {"items": contamination(run.model, items)} if items else {"items": None}
         report = {"runs": [{"label": run.label, "experiment": run.experiment, "checkpoint": run.checkpoint} for run in config.runs],
                   "base": base,
                   "settings": {"batch_size": config.evaluation.batch_size, "decoding": config.decoding.model_dump(mode="json"),
                                "chat_template": config.chat_template, "harness": {"name": HARNESS, "version": harness_version()}},
-                  "benchmarks": benchmarks, "rows": rows, "comparison": comparison, "axes": axes,
-                  "chart": str(workdir / CHART) if axes else None, "summary": str(workdir / SUMMARY), "contamination": None}
+                  "benchmarks": benchmarks, "rows": rows, "decision": decision, "embedding": embedding, "comparison": comparison,
+                  "axes": axes, "chart": str(workdir / CHART) if axes else None, "summary": str(workdir / SUMMARY),
+                  "contamination": {label: entry["items"] for label, entry in overlap.items()}}
         if axes:
             (workdir / CHART).write_text(polygon_chart(axes, labels))
         (workdir / SUMMARY).write_text(self.summary(report))
@@ -194,6 +240,14 @@ class CompareReport(Stage[CompareConfig]):
                 entries = {label: {"value": value} for label, value in by_label.items()}
                 lines.append(f"| {metric} | " + " | ".join(cell(label, entries.get(label), f"rows:{metric}") for label in labels) + " |")
             lines.append("")
+        for title, section, prefix in (("Decision", {f"{mode}:{m}": v for mode, metrics in report.get("decision", {}).items() for m, v in metrics.items()}, "decision:"),
+                                       ("Embedding", report.get("embedding", {}), "embedding:")):
+            if section:
+                lines += [f"## {title}", "", "| metric | " + " | ".join(labels) + " |", "|---|" + "---|" * len(labels)]
+                for metric, by_label in section.items():
+                    entries = {label: {"value": value} for label, value in by_label.items()}
+                    lines.append(f"| {metric} | " + " | ".join(cell(label, entries.get(label), f"{prefix}{metric}") for label in labels) + " |")
+                lines.append("")
         if report["axes"]:
             lines += ["## Axes", "", f"![axes]({CHART})", "", "| axis | " + " | ".join(labels) + " |", "|---|" + "---|" * len(labels)]
             for axis, by_label in report["axes"].items():

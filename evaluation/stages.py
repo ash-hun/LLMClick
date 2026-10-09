@@ -9,6 +9,7 @@ from core.stage import Outputs, Stage
 from core.utils.device import resolve_device
 from core.utils.files import write_json
 from evaluation.config import EvaluationConfig, EvaluationData, MeasureSettings, SourceModel
+from evaluation.contamination import measure, training_rows_of
 from evaluation.source import SourceExperiment
 from modeling.config import keyed_identity
 from modeling.tuning.method import Row, fitting
@@ -102,17 +103,26 @@ class ScoreStage(Stage[MeasureSettings]):
         return scores
 
 
+def contamination(model: SourceModel, items: list[Any]) -> dict[str, Any] | None:
+    """Overlap of the items with what the experiment trained on; None for `base`, which those rows never trained."""
+    if model.checkpoint == "base":
+        return None
+    return measure(training_rows_of(Path(model.experiment)), items)
+
+
 class ReportStage(Stage[EvaluationConfig]):
     """The report every evaluation recipe writes in the same shape, so comparisons can read any of them."""
     name: ClassVar[str] = "report"
-    requires: ClassVar[tuple[str, ...]] = ("score",)
+    requires: ClassVar[tuple[str, ...]] = ("rows", "score")
 
     def run(self, workdir: Path, inputs: dict[str, Outputs]) -> Outputs:
         scores = inputs["score"]
+        self.progress.update(0, None, "measuring overlap with the training rows")
         report = {"model": {"experiment": self.config.model.experiment, "checkpoint": scores["checkpoint"],
                             "recipe": scores["recipe"]},
                   "settings": scores["settings"],
                   "rows": {"sources": [source.model_dump(mode="json") for source in self.config.data.sources], **scores["rows"]},
-                  "scores": scores["metrics"], "contamination": None}
+                  "scores": scores["metrics"],
+                  "contamination": contamination(self.config.model, read_rows(Path(inputs["rows"]["rows"])))}
         write_json(workdir / REPORT, report)
         return {"report": str(workdir / REPORT), "scores": scores["metrics"]}

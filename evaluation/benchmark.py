@@ -14,7 +14,7 @@ from core.utils.device import resolve_device
 from core.utils.files import write_json
 from evaluation.config import MeasureSettings, SourceModel
 from evaluation.source import SourceExperiment
-from evaluation.stages import named
+from evaluation.stages import contamination, named
 from modeling.llm.models.base import LLMBackbone
 
 HARNESS = "lm_eval"
@@ -158,6 +158,11 @@ class BenchmarkStage(Stage[HarnessSettings]):
                 "num_fewshot": (output.get("n-shot") or {}).get(task.name, task.num_fewshot), "limit": task.limit}
 
 
+def documents(samples: Path) -> list[Any]:
+    """The benchmark items a score stage saw, as the harness logged them (`doc` of every sample)."""
+    return [json.loads(line).get("doc") for line in samples.read_text().split("\n") if line.strip()]
+
+
 class BenchmarkReport(Stage[BenchmarkConfig]):
     """One report over every benchmark stage, in the shape every evaluation recipe writes."""
     name: ClassVar[str] = "report"
@@ -171,6 +176,9 @@ class BenchmarkReport(Stage[BenchmarkConfig]):
         source = SourceExperiment(config.model)
         benchmarks = {inputs[name]["task"]: {key: inputs[name][key] for key in ("scores", "subtasks", "n", "num_fewshot", "limit", "results")}
                       for name in self.scores}
+        self.progress.update(0, None, "measuring overlap with the training rows")
+        for name in self.scores:
+            benchmarks[inputs[name]["task"]]["contamination"] = contamination(config.model, documents(Path(inputs[name]["samples"])))
         report = {"model": {"experiment": config.model.experiment, "checkpoint": str(source.checkpoint() or "base"),
                             "recipe": source.config().recipe},
                   "settings": {"batch_size": config.evaluation.batch_size, "decoding": config.decoding.model_dump(mode="json"),
