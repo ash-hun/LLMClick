@@ -13,7 +13,7 @@ from modeling.llm.methods.grpo import contains, exact_match, last_number_match
 from modeling.llm.models.transformer import TransformerBackbone
 from modeling.tuning.config import AdapterConfig, BackboneConfig, TrainingConfig
 from modeling.llm.models.config import LLMBackboneConfig
-from modeling.tuning.loop import fit, learning_rate, schedule
+from modeling.tuning.loop import fit, learning_rate, schedule, tracked
 from modeling.llm.methods.dpo import DPO
 from modeling.llm.methods.sft import SFT
 from core.progress import Progress
@@ -160,3 +160,52 @@ def test_resume_with_reused_samples_snapshots_between_groups_and_matches(tiny_mo
     assert [event["step"] for event in resumed] == [1, 2, 3, 4]
     assert [event["loss"] for event in resumed] == pytest.approx([event["loss"] for event in whole], rel=1e-4)
     assert [event["reward"] for event in resumed] == [event["reward"] for event in whole]
+
+
+def test_evaluation_runs_every_eval_every_steps_in_inference_mode(tiny_model: Path, tmp_path: Path) -> None:
+    training = TrainingConfig(lr=1e-3, batch_size=4, max_length=64, epochs=2, max_steps=4, eval_every=2, resume_every=None)
+    loaded = TransformerBackbone(LLMBackboneConfig(architecture="transformer", name=str(tiny_model)))
+    loaded.load("cpu")
+    method, modes = SFT(SFT.Config(), training), []
+
+    def evaluation() -> dict[str, float]:
+        modes.append(loaded.model.training)
+        return {**method.evaluate(loaded, ROWS[:4], 4, Progress()), "count": 3}
+
+    fit(loaded, method, ROWS, training, tmp_path, 5, Progress(), evaluation=evaluation)
+    events = [json.loads(line) for line in (tmp_path / "training.jsonl").read_text().splitlines()]
+    assert [event["step"] for event in events if "eval/loss" in event] == [2, 4] and modes == [False, False]
+    assert events[1]["eval/count"] == 3.0 and "eval/loss" not in events[0]
+    assert tracked(events[1]) == {**{f"train/{k}": v for k, v in events[1].items() if "/" not in k and k != "step"},
+                                  **{k: v for k, v in events[1].items() if k.startswith("eval/")}}
+
+
+def test_rows_are_tokenized_once_across_the_length_check_the_loss_and_evaluation(backbone: TransformerBackbone) -> None:
+    from modeling.tuning.method import fitting
+
+    class Counting:
+        def __init__(self, inner: Any) -> None:
+            self.inner, self.calls = inner, 0
+
+        def __call__(self, *args: Any, **keys: Any) -> Any:
+            self.calls += 1
+            return self.inner(*args, **keys)
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self.inner, name)
+
+    counting = Counting(backbone.tokenizer)
+    backbone.tokenizer = counting
+    training = TrainingConfig(batch_size=4, max_length=64)
+    method = SFT(SFT.Config(), training)
+    rows = fitting(backbone, method, ROWS, training, Progress(), "training")
+    after_check = counting.calls
+    assert after_check == len(ROWS)  # the length check tokenizes every row once
+    method.loss(backbone, rows[:4])
+    method.evaluate(backbone, rows[:4], 4, Progress())
+    assert counting.calls == after_check + 4  # per row only the prompt prefix is new; the full conversation is cached
+    method.loss(backbone, rows[:4])
+    assert counting.calls == after_check + 4  # the second epoch tokenizes nothing
+    ids = backbone.token_ids("\n")
+    ids.append(0)  # a caller may extend what it got without touching the cache
+    assert backbone.token_ids("\n") != ids

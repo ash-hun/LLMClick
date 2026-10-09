@@ -56,6 +56,8 @@ class TrainingConfig(Section):
     overflow: Literal["error", "skip"] = Field(default="error", description="Rows over max_length: stop before training, or leave them out")
     max_steps: int | None = Field(default=None, ge=1, description="Pilot: stop after this many optimizer steps")
     resume_every: int | None = Field(default=200, ge=1, description="Steps between resume snapshots; null disables them")
+    eval_every: int | None = Field(default=None, ge=1, description="Steps between evaluations on the held-out rows while training; null: only validate at the end")
+    eval_rows: int | None = Field(default=None, ge=1, description="How many held-out rows the in-training evaluation uses; null: all of them")
     adapter: AdapterConfig | None = Field(default=None, description="null trains every weight; set it to train LoRA")
 
 

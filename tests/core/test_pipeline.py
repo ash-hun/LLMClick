@@ -148,3 +148,43 @@ def test_concurrent_runs_keep_their_own_pipeline_logs(tmp_path: Path) -> None:
     for text, other in (("left", "right"), ("right", "left")):
         log = next(tmp_path.glob(f"{text}-*")) / "pipeline.log"
         assert f"record of {text}" in log.read_text() and f"record of {other}" not in log.read_text()
+
+
+def test_a_run_waiting_for_a_locked_stage_says_so_and_reuses_the_result(tmp_path: Path) -> None:
+    import threading
+    import time
+
+    from core.utils.files import locked
+
+    first = toy(tmp_path)
+    lock = first.experiment.stage_dir("write", first.fingerprint("write"))
+    holding, release = threading.Event(), threading.Event()
+
+    def builder() -> None:
+        with locked(lock.parent / f"{lock.name}.lock"):
+            holding.set()
+            release.wait(5)
+
+    progress = StateProgress()
+    notes: list[str] = []
+    original = progress.update
+
+    def recording(done: int, total: int | None = None, note: str = "") -> None:
+        notes.append(note)
+        original(done, total, note)
+
+    progress.update = recording  # type: ignore[method-assign]
+    thread = threading.Thread(target=builder)
+    thread.start()
+    assert holding.wait(5)
+    waiter = threading.Thread(target=lambda: Toy(ToyConfig(name="t", output_dir=str(tmp_path)), progress).run())
+    waiter.start()
+    for _ in range(500):
+        if any("waiting" in note for note in notes):
+            break
+        time.sleep(0.01)
+    assert any("waiting for another run" in note for note in notes) and waiter.is_alive()
+    release.set()
+    thread.join(5)
+    waiter.join(5)
+    assert progress.snapshot()["stages"] == {"write": "done", "repeat": "done"}

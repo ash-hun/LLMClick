@@ -17,6 +17,9 @@ transformers_logging.disable_progress_bar()  # type: ignore[no-untyped-call]
 class Backbone(ABC):
     # Layers LoRA adapts unless the config names others: the attention projections of a standard transformer block.
     adapter_targets: ClassVar[tuple[str, ...]] = ("q_proj", "k_proj", "v_proj", "o_proj")
+    # The weights train in FP32: at fine-tuning learning rates a bf16 weight is too coarse to register an update.
+    # The one place the dtype is decided; a catalog entry that loads quantized or bf16 weights overrides `load`.
+    dtype: ClassVar[torch.dtype] = torch.float32
     version: ClassVar[int] = 1  # bump when this class's code changes what the same config trains
     model: Any
     tokenizer: Any

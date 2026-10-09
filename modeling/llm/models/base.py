@@ -44,13 +44,20 @@ class LLMBackbone(Backbone):
     config: LLMBackboneConfig
     head: "DecisionHead | None" = None           # set when `model.head` names one
 
+    def __init__(self, config: LLMBackboneConfig) -> None:
+        super().__init__(config)
+        # Token ids by text: the length check before training, every epoch's loss and the evaluation all tokenize
+        # the same rows, and tokenizing once is enough. The cache lives as long as the loaded tokenizer; it holds
+        # one entry per distinct text, so its size is that of the tokenized data.
+        self._tokens: dict[tuple[str, ...], list[int]] = {}
+
     def load(self, device: Device, checkpoint: Path | None = None) -> None:
         origin, revision = self.origin(checkpoint)
+        self._tokens.clear()
         self.tokenizer = AutoTokenizer.from_pretrained(origin, revision=revision)
         if self.tokenizer.pad_token_id is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
-        # FP32 weights: at fine-tuning learning rates a bf16 weight is too coarse to register an update.
-        self.model = self.loader.from_pretrained(origin, revision=revision, dtype=torch.float32).to(device)
+        self.model = self.loader.from_pretrained(origin, revision=revision, dtype=self.dtype).to(device)
         for name, parameter in self.model.named_parameters():
             if any(fragment in name for fragment in self.frozen):
                 parameter.requires_grad_(False)
@@ -83,11 +90,18 @@ class LLMBackbone(Backbone):
 
     def release(self) -> None:
         self.head = None
+        self._tokens.clear()
         super().release()
 
+    def cached(self, key: tuple[str, ...], text: str) -> list[int]:
+        """Token ids of `text` (no special tokens), tokenized once per distinct text; a copy, so callers may extend it."""
+        ids = self._tokens.get(key)
+        if ids is None:
+            ids = self._tokens[key] = self.tokenizer(text, add_special_tokens=False)["input_ids"]
+        return list(ids)
+
     def token_ids(self, text: str) -> list[int]:
-        ids: list[int] = self.tokenizer(text, add_special_tokens=False)["input_ids"]
-        return ids
+        return self.cached(("text", text), text)
 
     def decision_markers(self) -> Markers:
         if self.markers is None:
@@ -131,10 +145,13 @@ class LLMBackbone(Backbone):
 
     def render(self, messages: list[Message], generation_prompt: bool) -> list[int]:
         """Token ids of a conversation in the model's own chat format."""
-        text = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=generation_prompt,
-                                                  **self.config.template)
-        ids: list[int] = self.tokenizer(text, add_special_tokens=False)["input_ids"]
-        return ids
+        key = ("chat", str(generation_prompt), json.dumps(messages, ensure_ascii=False, sort_keys=True))
+        ids = self._tokens.get(key)
+        if ids is None:
+            text = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=generation_prompt,
+                                                      **self.config.template)
+            ids = self._tokens[key] = self.tokenizer(text, add_special_tokens=False)["input_ids"]
+        return list(ids)
 
     def padded(self, sequences: list[list[int]], left: bool = False) -> tuple[torch.Tensor, torch.Tensor]:
         width = max(len(sequence) for sequence in sequences)

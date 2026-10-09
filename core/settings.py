@@ -1,13 +1,17 @@
-"""Process-level settings read from environment/.env; per-experiment settings live in the YAML config instead."""
+"""Process-level settings: the environment, plus the file `LLMCLICK_ENV` names (default `environment/.env`, read from
+the working directory). Per-experiment settings live in the YAML config instead."""
 
+import os
 from functools import lru_cache
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+ENV_FILE = os.environ.get("LLMCLICK_ENV", "environment/.env")
+
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file="environment/.env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(env_file=ENV_FILE, env_file_encoding="utf-8", extra="ignore")
 
     HF_TOKEN: str = ""
     JOBS_DB: str = "./output/_jobs.sqlite"   # the API's job table

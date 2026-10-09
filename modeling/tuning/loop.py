@@ -22,6 +22,7 @@ LOG = "training.jsonl"
 RESUME = "resume.pt"
 SUMMARY = "summary.json"
 CHECKPOINT = "checkpoint"
+Evaluation = Callable[[], dict[str, float]]  # the method's metrics on held-out rows, with the weights as they are
 
 
 def schedule(count: int, training: TrainingConfig, seed: int, repeats: int = 1) -> list[list[list[int]]]:
@@ -44,14 +45,36 @@ def learning_rate(step: int, total: int, training: TrainingConfig) -> float:
     return training.lr * max(total - step, 1) / max(total - warmup, 1)
 
 
+def evaluating(backbone: Backbone, evaluation: Evaluation) -> dict[str, float]:
+    """Run an evaluation in the middle of training: inference mode for every module that trains (dropout off),
+    training mode again afterwards. Only numbers are kept; a method may also report counts, which are numbers too."""
+    modules = backbone.modules().values()
+    for module in modules:
+        module.eval()
+    try:
+        return {key: float(value) for key, value in evaluation().items()}
+    finally:
+        for module in modules:
+            module.train()
+
+
 def history(run: Path) -> list[dict[str, Any]]:
     path = run / LOG
     return [json.loads(line) for line in path.read_text().split("\n") if line] if path.exists() else []
 
 
+def tracked(event: dict[str, Any]) -> dict[str, float]:
+    """An event's numbers as the tracker sees them: training numbers under `train/`, evaluation ones keep `eval/`."""
+    return {key if "/" in key else f"train/{key}": float(value) for key, value in event.items() if key != "step"}
+
+
 def fit(backbone: Backbone, method: TrainingMethod[Any], rows: list[Row], training: TrainingConfig, workdir: Path,
-        seed: int, progress: Progress, on_step: Callable[[int, dict[str, float]], None] | None = None) -> dict[str, Any]:
+        seed: int, progress: Progress, on_step: Callable[[int, dict[str, float]], None] | None = None,
+        evaluation: Evaluation | None = None) -> dict[str, Any]:
     """Train `backbone` in place and write `checkpoint/` and `summary.json`; a rerun continues from `resume.pt`.
+    Every `training.eval_every` steps `evaluation` (the method's metrics on held-out rows) runs with the weights as
+    they are, and its numbers join that step's event as `eval/<metric>`: the curve a run is judged by, next to the
+    loss, in `training.jsonl` and in the tracker.
     Resume snapshots are taken only between groups of repeated steps (`method.repeats`): a method that reuses what it
     sampled keeps those samples in memory, so a snapshot inside a group would resume with fresh samples and a
     different run. Between groups nothing is kept, and the resumed run repeats the uninterrupted one exactly."""
@@ -89,13 +112,15 @@ def fit(backbone: Backbone, method: TrainingMethod[Any], rows: list[Row], traini
         optimizer.zero_grad(set_to_none=True)
         if not math.isfinite(total):
             raise RuntimeError(f"Loss became {total} at step {index + 1}; lower training.lr")
-        event = {"step": index + 1, "loss": total, "lr": rate, **method.metrics}
+        done = index + 1
+        event = {"step": done, "loss": total, "lr": rate, **method.metrics}
+        if evaluation is not None and training.eval_every and done % training.eval_every == 0:
+            event.update({f"eval/{key}": value for key, value in evaluating(backbone, evaluation).items()})
         with (workdir / LOG).open("a") as stream:
             stream.write(json.dumps(event) + "\n")
         if on_step is not None:
-            on_step(index + 1, {f"train/{key}": float(value) for key, value in event.items() if key != "step"})
-        progress.update(index + 1, len(steps), ", ".join(f"{k} {v:.4f}" for k, v in event.items() if k not in {"step", "lr"}))
-        done = index + 1
+            on_step(done, tracked(event))
+        progress.update(done, len(steps), ", ".join(f"{k} {v:.4f}" for k, v in event.items() if k not in {"step", "lr"}))
         if every and done >= next_snapshot and done % method.repeats == 0 and done < len(steps):
             temporary = resume.with_suffix(".tmp")
             torch.save({"step": done, "model": backbone.snapshot(), "optimizer": optimizer.state_dict()}, temporary)

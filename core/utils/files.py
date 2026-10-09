@@ -3,7 +3,7 @@
 import fcntl
 import hashlib
 import json
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -30,11 +30,17 @@ def read_json(path: Path) -> Any:
 
 
 @contextmanager
-def locked(path: Path) -> Iterator[None]:
-    """Hold an exclusive lock on `path`; a second thread or process waits here until the first is done."""
+def locked(path: Path, on_wait: Callable[[], None] | None = None) -> Iterator[None]:
+    """Hold an exclusive lock on `path`; a second thread or process waits here until the first is done. When the
+    lock is taken, `on_wait` is called once before waiting, so the wait can be shown instead of looking like a hang."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w") as stream:
-        fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+        try:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            if on_wait is not None:
+                on_wait()
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
         yield
 
 

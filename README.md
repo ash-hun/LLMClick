@@ -23,8 +23,7 @@ released checkpoints do not load here.
 
 ```
 LLMClick/
-├── main.py                       # FastAPI entry point
-├── config.py                     # process settings (environment/.env): HF_TOKEN
+├── main.py                       # `uvicorn main:app` from the repository root; the app itself is core/api/app.py
 ├── configs/                      # one YAML = one custom model; a directory per family (llm/, embedding/)
 ├── samples/                      # tiny rows per recipe so the shipped configs run offline
 ├── core/                         # the framework, shared by every channel
@@ -33,8 +32,9 @@ LLMClick/
 │   ├── progress.py               #   Progress, BarProgress (terminal), StateProgress (API jobs)
 │   ├── registry.py               #   Registry, RECIPES, CHANNELS
 │   ├── config/                   #   schema.py (BaseConfig), experiment.py (directories, manifest)
-│   ├── cli.py                    #   llmclick run|validate|recipes
-│   ├── api/                      #   routers: config_channel, job_channel, system_channel; store.py
+│   ├── cli.py                    #   llmclick run|validate|recipes|serve
+│   ├── settings.py               #   process settings from the environment and environment/.env (LLMCLICK_ENV)
+│   ├── api/                      #   app.py; routers: config_channel, job_channel, system_channel; store.py, guard.py
 │   └── utils/                    #   files (hash, lock), device
 ├── modeling/                     # Modeling channel: config -> trained, validated model
 │   ├── config.py                 #   ModelingConfig: tracker, validation bounds
@@ -70,7 +70,8 @@ LLMClick/
 
 Two more channels are planned next to `modeling/`: `data/` (training and synthetic data pipelines) and
 `evaluation/` (custom and benchmark evaluation with reports). Each has a README that states its scope; neither has
-code yet. A channel is a package that registers recipes; it joins by adding its name to `CHANNELS` in
+code yet, and `evaluation/README.md` holds the design and milestones of the first one to be built. A channel is a
+package that registers recipes; it joins by adding its name to `CHANNELS` in
 `core/registry.py` and reuses `Stage`, `Pipeline`, `Progress` and `Experiment` as they are.
 
 ## 02. How a run works
@@ -93,7 +94,7 @@ pipeline:
   are all derived from the seed and the step. With `method.iterations` above 1 a snapshot is written only between
   groups of steps that share samples, so a resume never lands inside such a group.
 - **Locks.** A stage directory is locked while it is built, so a CLI run and an API job asking for the same stage
-  never build it twice.
+  never build it twice; the second one says that it is waiting (progress note, log) and then reuses the result.
 - **Identity.** The experiment directory is `<name>-<hash>`; `stages`, `output_dir` and `tracker` are not part of
   the hash, because they say how to run, not what to build.
 - **Progress.** The CLI shows two bars (stages, and steps inside the running stage); API jobs report the same
@@ -104,6 +105,10 @@ pipeline:
   A row that does not fit stops the run there (`training.overflow: error`, the default) or is left out
   (`overflow: skip`); nothing is cut silently and nothing fails hours into training. Embedding texts are the
   exception: they are truncated, as usual for retrieval.
+- **Evaluation while training.** `training.eval_every: N` measures the model on the held-out rows every N steps
+  with the validate stage's own metrics (`training.eval_rows` caps how many rows), and records them as
+  `eval/<metric>` next to the loss in `training.jsonl` and in the tracker. The weights are as they are at that step:
+  for the decision recipes the temperature is not fitted yet, so `nll` and `ece` there are uncalibrated.
 - **Validation.** In the Modeling channel `validate` follows `train` and cannot be left out. It measures the
   trained model on data training never saw and checks `validation.min` / `validation.max`; a miss, or a metric
   that is not a finite number, stops the pipeline. A later stage reads the checkpoint from `validate`, never from
@@ -199,7 +204,7 @@ uv run llmclick recipes                                    # recipes, their stag
 uv run llmclick validate configs/llm/sft.yaml              # experiment key and stage plan
 uv run llmclick run configs/llm/sft.yaml                   # the stages the config asks for
 
-uv run uvicorn main:app --host 0.0.0.0 --port 8000         # API + Swagger at /docs
+uv run llmclick serve --host 0.0.0.0 --port 8000           # API + Swagger at /docs (or: uvicorn core.api.app:app)
 curl -X POST localhost:8000/api/jobs -H 'content-type: application/json' \
   -d '{"config_path": "configs/llm/sft.yaml"}'
 ```
@@ -222,6 +227,10 @@ The `llm/` and `embedding/` configs ship as pilots: sample rows from `samples/` 
 `data.sources` at your rows and remove `max_steps` for a real run.
 
 Docker: `IMAGE_TAG=$(git rev-parse --short HEAD) docker compose -f environment/docker-compose.yml up -d --build`.
+
+Installed as a package (`uv build`, then `pip install dist/llmclick-*.whl`), `llmclick` runs from any directory:
+config paths, `output_dir` and `environment/.env` are relative to the working directory, and `LLMCLICK_ENV` names a
+different settings file.
 
 ### Apple silicon
 
