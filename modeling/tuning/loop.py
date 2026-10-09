@@ -13,6 +13,7 @@ import torch
 from modeling.tuning.method import Row, TrainingMethod
 from modeling.tuning.config import TrainingConfig
 from modeling.tuning.backbone import Backbone
+from core.utils import device
 from core.utils.files import write_json
 from core.progress import Progress
 
@@ -68,7 +69,7 @@ def fit(backbone: Backbone, method: TrainingMethod[Any], rows: list[Row], traini
     backbone.model.train()
     progress.update(start, len(steps))
     for index in range(start, len(steps)):
-        torch.manual_seed(seed + index)  # methods that sample (GRPO) repeat exactly after a resume
+        device.seed(backbone.device, seed + index)  # methods that sample (GRPO) repeat exactly after a resume
         rate = learning_rate(index, len(steps), training)
         for group, peak in zip(optimizer.param_groups, peaks, strict=True):
             group["lr"] = peak * rate / training.lr
