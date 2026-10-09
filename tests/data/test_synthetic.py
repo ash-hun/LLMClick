@@ -207,11 +207,14 @@ def test_ollama_and_openai_teachers_speak_their_protocols(monkeypatch: pytest.Mo
     done = ollama.complete([{"role": "user", "content": "hi"}], max_tokens=10, temperature=0.5, seed=1)
     assert done == Completion("ollama says hi", 7, 3, 0.0)
     assert sent[0][0] == "http://localhost:11434/api/chat" and sent[0][1]["options"] == {"temperature": 0.5, "num_predict": 10, "seed": 1}
+    assert sent[0][1]["think"] is False and sent[0][1]["keep_alive"] == "5m"
     openai = teachers.OpenAIFormat({"model": "gpt-x", "base_url": "http://vllm:8000/v1/", "price": [1, 2]})
     done = openai.complete([{"role": "user", "content": "hi"}], max_tokens=10, temperature=0.5, seed=1)
     assert done.text == "openai says hi" and done.cost_usd == pytest.approx((7 * 1 + 3 * 2) / 1_000_000)
     assert sent[1][0] == "http://vllm:8000/v1/chat/completions" and sent[1][2]["authorization"] == "Bearer k"
     assert openai.identity() == {"name": "openai", "model": "gpt-x"}  # keys and prices are not identity
+    teachers.Ollama({"model": "m", "think": True}).complete([{"role": "user", "content": "hi"}], max_tokens=1, temperature=0, seed=0)
+    assert sent[-1][1]["think"] is True and teachers.Ollama({"model": "m"}).identity() == {"name": "ollama", "model": "m", "think": False}
 
 
 def test_the_anthropic_teacher_uses_the_sdk_and_prices_the_call(monkeypatch: pytest.MonkeyPatch) -> None:

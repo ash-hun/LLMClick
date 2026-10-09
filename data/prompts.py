@@ -106,7 +106,7 @@ class PromptsStage(Stage[SyntheticConfig]):
         generator = GENERATORS.get(settings.generator)
         seeds = read_rows(Path(inputs["seeds"]["rows"]))
         rows: list[Row] = []
-        calls = 0
+        calls = empty = 0
         jobs = [(seed, index) for seed in seeds for index in range(settings.per_seed)]
         for done, (seed, index) in enumerate(jobs):
             self.progress.update(done, len(jobs), settings.generator)
@@ -119,13 +119,18 @@ class PromptsStage(Stage[SyntheticConfig]):
                 calls += 1
             for position, made_row in enumerate(entry["made"]):
                 instruction = str(made_row["instruction"]).strip()
+                if not instruction:
+                    empty += 1  # a generator that got nothing usable back; the cache keeps the attempt
+                    continue
                 if settings.constraints:
                     instruction += " " + settings.constraints[sum(ord(c) for c in identifier) % len(settings.constraints)]
                 rows.append({**made_row, "id": key("prompt", identifier, position), "seed_id": seed["id"], "instruction": instruction})
         self.progress.update(len(jobs), len(jobs))
         rows.sort(key=lambda row: row["id"])
         write_rows(workdir / PROMPTS, rows)
-        summary = {"count": len(rows), "seeds": len(seeds), "generated_now": calls, **spend(workdir)}
+        if not rows:
+            raise ValueError(f"the generator produced no usable prompts from {len(seeds)} seeds ({empty} empty); check the teacher's answers in cache/")
+        summary = {"count": len(rows), "seeds": len(seeds), "generated_now": calls, "empty": empty, **spend(workdir)}
         return {"rows": str(workdir / PROMPTS), **summary, "trail": trail(inputs, self.name, summary)}
 
 
