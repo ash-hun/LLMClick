@@ -105,7 +105,7 @@ class ScoreStage(Stage[MeasureSettings]):
 
 def contamination(model: SourceModel, items: list[Any]) -> dict[str, Any] | None:
     """Overlap of the items with what the experiment trained on; None for `base`, which those rows never trained."""
-    if model.checkpoint == "base":
+    if model.checkpoint == "base" or model.experiment is None:
         return None
     return measure(training_rows_of(Path(model.experiment)), items)
 
@@ -118,8 +118,7 @@ class ReportStage(Stage[EvaluationConfig]):
     def run(self, workdir: Path, inputs: dict[str, Outputs]) -> Outputs:
         scores = inputs["score"]
         self.progress.update(0, None, "measuring overlap with the training rows")
-        report = {"model": {"experiment": self.config.model.experiment, "checkpoint": scores["checkpoint"],
-                            "recipe": scores["recipe"]},
+        report = {"model": {**SourceExperiment(self.config.model).described(), "checkpoint": scores["checkpoint"], "recipe": scores["recipe"]},
                   "settings": scores["settings"],
                   "rows": {"sources": [source.model_dump(mode="json") for source in self.config.data.sources], **scores["rows"]},
                   "scores": scores["metrics"],

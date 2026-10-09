@@ -57,7 +57,7 @@ def index(output_dir: Annotated[str, Query(description="Where the experiments ar
         def of(entry: dict[str, Any]) -> bool:
             model = entry["model"]
             runs = model.get("runs") or ([model] if "experiment" in model else [])
-            return any(str(Path(run["experiment"])) == wanted for run in runs)
+            return any(run.get("experiment") and str(Path(run["experiment"])) == wanted for run in runs)
 
         found = [entry for entry in found if of(entry)]
     return [EvaluationSummary(**entry) for entry in found]

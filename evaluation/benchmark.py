@@ -65,10 +65,21 @@ class Decoding(Section):
     max_new_tokens: int = Field(default=1024, ge=1)
 
 
+THINK_END = "</think>"
+
+
 class HarnessSettings(MeasureSettings):
     """What a benchmark run depends on besides the model and the task."""
     decoding: Decoding = Field(default_factory=Decoding)
     chat_template: bool = Field(default=False, description="Wrap prompts in the tokenizer's chat template (instruction-tuned models)")
+    thinking: bool | None = Field(default=None, description="With chat_template: pass enable_thinking to the template (Qwen3, Qwen3.5); "
+                                                            "true also splits answers at </think>. null: the template's default")
+
+    @model_validator(mode="after")
+    def _thinking_needs_the_template(self) -> "HarnessSettings":
+        if self.thinking is not None and not self.chat_template:
+            raise ValueError("thinking is a chat-template argument: set chat_template: true")
+        return self
 
 
 class BenchmarkConfig(HarnessSettings):
@@ -106,7 +117,7 @@ class BenchmarkStage(Stage[HarnessSettings]):
     run shared by every recipe that asks for the same checkpoint, task and settings."""
     name: ClassVar[str] = "benchmark"  # instances are named score:<task> (and score:<label>:<task> in a comparison)
     scope: ClassVar[str] = "benchmark"
-    sections: ClassVar[tuple[str, ...]] = ("decoding", "chat_template", "evaluation", "device", "seed")
+    sections: ClassVar[tuple[str, ...]] = ("decoding", "chat_template", "thinking", "evaluation", "device", "seed")
     task: Task
     model: SourceModel
 
@@ -122,11 +133,12 @@ class BenchmarkStage(Stage[HarnessSettings]):
                 SourceExperiment(self.model).identity()]
 
     def model_args(self, source: SourceExperiment) -> dict[str, Any]:
-        backbone, _, _ = source.build()
-        if not isinstance(backbone, LLMBackbone):
+        if not source.hub and not isinstance(source.build()[0], LLMBackbone):
             raise ValueError(f"{source.model.experiment!r} is not a language model; benchmarks need one")
-        origin, revision = backbone.origin(source.checkpoint())
-        return {"pretrained": origin, **({"revision": revision} if revision else {}), "dtype": "float32"}
+        origin, revision = source.origin()
+        thinking = self.config.thinking
+        return {"pretrained": origin, **({"revision": revision} if revision else {}), "dtype": "float32",
+                **({"enable_thinking": thinking} if thinking is not None else {}), **({"think_end_token": THINK_END} if thinking else {})}
 
     def run(self, workdir: Path, inputs: dict[str, Outputs]) -> Outputs:
         lm_eval, task, config = harness(), self.task, self.config
@@ -179,10 +191,9 @@ class BenchmarkReport(Stage[BenchmarkConfig]):
         self.progress.update(0, None, "measuring overlap with the training rows")
         for name in self.scores:
             benchmarks[inputs[name]["task"]]["contamination"] = contamination(config.model, documents(Path(inputs[name]["samples"])))
-        report = {"model": {"experiment": config.model.experiment, "checkpoint": str(source.checkpoint() or "base"),
-                            "recipe": source.config().recipe},
+        report = {"model": source.described(),
                   "settings": {"batch_size": config.evaluation.batch_size, "decoding": config.decoding.model_dump(mode="json"),
-                               "chat_template": config.chat_template, "device": resolve_device(config.device),
+                               "chat_template": config.chat_template, "thinking": config.thinking, "device": resolve_device(config.device),
                                "harness": {"name": HARNESS, "version": harness_version()}},
                   "benchmarks": benchmarks, "contamination": None}
         write_json(workdir / REPORT, report)

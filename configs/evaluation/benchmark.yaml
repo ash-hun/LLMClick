@@ -19,4 +19,5 @@ benchmarks:
 
 decoding: {temperature: 0, max_new_tokens: 1024}
 chat_template: false                # true for instruction-tuned checkpoints
-evaluation: {batch_size: 8}
+thinking: null                      # with chat_template: true | false passes enable_thinking to the template (Qwen3, Qwen3.5)
+evaluation: {batch_size: 8}         # on a Mac (MPS) use 1 or 2: few-shot prompts times the vocabulary exceed one Metal kernel

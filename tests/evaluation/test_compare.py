@@ -113,3 +113,16 @@ def test_decision_and_embedding_sections_join_the_comparison(tmp_path: Path, tin
     report = json.loads(Path(built.run()["stages"]["report"]["report"]).read_text())
     assert set(report["embedding"]["MockSTSTask"]) == {"base", "final"} and "embedding:MockSTSTask" in report["comparison"]
     assert report["contamination"] == {"base": None, "final": None}  # MTEB tasks are not rows of the experiment
+
+
+def test_a_hub_model_serves_as_the_baseline(trained: dict[str, Any], tmp_path: Path, fake: FakeHarness, tiny_model: Path) -> None:  # noqa: F811
+    body = {"pipeline": {"recipe": "evaluation_compare", "name": "cmp-hub", "output_dir": str(tmp_path), "device": "cpu"},
+            "runs": [{"label": "qwen", "name": str(tiny_model)},
+                     {"label": "final", "experiment": trained["directory"], "checkpoint": "validate"}],
+            "benchmarks": {"tasks": [{"name": "hellaswag"}], "limit": 4}, "evaluation": {"batch_size": 2}}
+    built = pipeline.build(body)
+    assert built.config.base.label == "qwen"
+    report = json.loads(Path(built.run()["stages"]["report"]["report"]).read_text())
+    assert report["base"] == "qwen" and report["runs"][0]["name"] == str(tiny_model) and report["runs"][0]["checkpoint"] == "hub"
+    assert "final" in report["comparison"]["hellaswag"] and report["contamination"] == {"qwen": None, "final": report["contamination"]["final"]}
+    assert report["contamination"]["final"]["items"] == 1  # the fake harness logs one sample per task

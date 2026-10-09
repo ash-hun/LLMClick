@@ -7,11 +7,11 @@ from typing import Any, ClassVar
 
 from pydantic import Field, model_validator
 
-from core.config.schema import Section
 from core.stage import Outputs, Stage
 from core.utils.files import write_json
 from evaluation.benchmark import HARNESS, Benchmarks, HarnessSettings, documents, harness_version
 from evaluation.config import EvaluationData, SourceModel
+from evaluation.source import SourceExperiment
 from evaluation.decision import DecisionSettings
 from evaluation.embedding import EmbeddingSettings
 from evaluation.stages import contamination
@@ -24,14 +24,18 @@ Z = 1.96  # two-sided 95% interval
 PRIMARY = ("exact_match", "acc_norm", "acc", "prompt_level_strict_acc", "f1", "mrr", "accuracy", "reward")
 
 
-class Run(Section):
+class Run(SourceModel):
+    """A model in the comparison: an experiment's checkpoint, or a Hub model (`name` + `revision`), with a label."""
     label: str = Field(min_length=1, pattern=r"^[A-Za-z0-9._-]+$")
-    experiment: str
-    checkpoint: str = "validate"
 
     @property
     def model(self) -> SourceModel:
-        return SourceModel(experiment=self.experiment, checkpoint=self.checkpoint)
+        return SourceModel(**self.model_dump(exclude={"label"}))
+
+    @property
+    def baseline(self) -> bool:
+        """The starting weights: an experiment's `base`, or a model that trained nothing here."""
+        return self.checkpoint == "base" or self.hub
 
 
 class DecisionRows(DecisionSettings):
@@ -52,8 +56,9 @@ class CompareConfig(HarnessSettings):
         labels = [run.label for run in self.runs]
         if len(set(labels)) != len(labels):
             raise ValueError(f"run labels must differ: {labels}")
-        if not any(run.checkpoint == "base" for run in self.runs):
-            raise ValueError("one run must be `checkpoint: base`: a comparison without the starting weights is not interpretable")
+        if not any(run.baseline for run in self.runs):
+            raise ValueError("one run must be the starting weights (`checkpoint: base`, or a Hub model by `name`): "
+                             "a comparison without them is not interpretable")
         if self.benchmarks is None and self.rows is None and self.decision is None and self.embedding is None:
             raise ValueError("give benchmarks, rows, decision or embedding (any of them)")
         names = {task.name for task in self.benchmarks.resolved()} if self.benchmarks else set()
@@ -70,7 +75,7 @@ class CompareConfig(HarnessSettings):
 
     @property
     def base(self) -> Run:
-        return next(run for run in self.runs if run.checkpoint == "base")
+        return next(run for run in self.runs if run.baseline)
 
 
 def primary(scores: dict[str, float]) -> str | None:
@@ -194,7 +199,7 @@ class CompareReport(Stage[CompareConfig]):
             for stage in self.benchmark_stages.get(run.label, {}).values():
                 items += documents(Path(inputs[stage]["samples"]))
             overlap[run.label] = {"items": contamination(run.model, items)} if items else {"items": None}
-        report = {"runs": [{"label": run.label, "experiment": run.experiment, "checkpoint": run.checkpoint} for run in config.runs],
+        report = {"runs": [{"label": run.label, **SourceExperiment(run.model).described()} for run in config.runs],
                   "base": base,
                   "settings": {"batch_size": config.evaluation.batch_size, "decoding": config.decoding.model_dump(mode="json"),
                                "chat_template": config.chat_template, "harness": {"name": HARNESS, "version": harness_version()}},
