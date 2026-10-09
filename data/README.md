@@ -97,6 +97,178 @@ reference for the prompts and the filters.
   synthetic generation with Korean personas is the better route for Korean SFT. Licences differ per source and
   must be recorded per row set.
 
+## Reference practices for synthetic quality
+
+What the published recipes actually did, with the numbers they report; the checklist at the end is what
+`data_synthetic` builds in. Sources are at the end of this file.
+
+**Seeds decide coverage; the prompt decides little.**
+- Taxonomy-driven (GLAN): fields, sub-fields, disciplines, then subjects and a syllabus per subject, generated
+  with LLM help and reviewed; instructions come from the syllabus, no seed data. GLAN-QnA-KR reproduces it in
+  Korean over 1,084 disciplines with a 100 to 900 difficulty scale and a two-layer contamination audit against
+  Korean benchmarks.
+- Persona-driven (Tulu 3, Persona Hub): about 250k personas from Persona Hub combined with per-skill prompts
+  (precise instruction following, math, code) so one task yields many perspectives; Persona Hub holds a billion
+  web-derived personas.
+- Document-driven (Phi-4): high-quality seed passages from many domains rewritten into exercises, discussions
+  and reasoning tasks by multi-step prompting; instruction reversal (from an answer, write the instruction) adds
+  instruction data from any text; about 50 synthetic dataset types, 400B tokens.
+- From nothing (Magpie): an instruct model given only its chat prefix writes the user turn and then the answer;
+  cheap and diverse, but everything rests on the filtering below.
+
+**Questions: few good sources, many answers.** OpenThoughts (27 code, 21 math, 14 science sources ablated):
+mixing at most two high-quality question sources beat mixing sixteen by 5 points on average; sampling 16
+answers per question beat adding questions (answer diversity inside a problem is worth more than question
+diversity across problems); filtering answers by majority consensus or length did not beat keeping every sample;
+the best benchmark model was not the best teacher (QwQ-32B taught better than DeepSeek-R1). The teacher and the
+sources are chosen by training a student and measuring, not by the teacher's own scores.
+
+**Filtering is where the quality is made.**
+- Magpie's filters on 4M raw rows down to 300k: input quality tagged by a judge (keep at least average or good),
+  input difficulty (at least medium), a reward model score and the reward difference against the base model's
+  answer (at least 0), removal of repetition and incomplete instructions, minimum neighbour distance in embedding
+  space (all-mpnet-base-v2 with FAISS) against near-duplicates, then the longest responses up to the budget.
+- SmolTalk's core (Smol-Magpie-Ultra, 400k) was generated with Llama-3.1-405B-Instruct and filtered with smaller
+  Llama judges plus the ArmoRM reward model; for small models the mix adds task-specific sets (constraints 36k,
+  rewrite 50k, summarize 100k) and a reduced `smol-smoltalk` for models under 1B.
+- Nemotron-4 340B gated 98% synthetic post-training data with a five-attribute reward model (helpfulness,
+  correctness, coherence, complexity, verbosity) for both filtering and preference ranking, iterated weak to strong.
+- Phi-4 added self-revision: the model critiques and improves its own answers against rubrics on reasoning and
+  factual accuracy, then rejection sampling for post-training.
+- Tulu 3 made instruction following verifiable: 25 constraint types from IFEval, about 30k examples checked by
+  heuristics, no judge needed.
+
+**Selection scorers are cheap filters, not oracles.** Deita (complexity and quality scorers plus a diversity
+constraint), IFD (instruction-following difficulty from a small model's perplexity with and without the
+instruction; 5% of Alpaca selected by IFD beat the full set), AlpaGasus (judge scores on helpfulness and
+accuracy), InsTag (tag diversity). At scale, random selection is hard to beat with these alone, so a scorer is
+used to drop the worst rows and the rest is decided by training a student.
+
+**Decontamination and duplicates.** Tulu 3 matched evaluation and training by shared 8-grams per token and dropped
+the overlaps; GLAN-QnA-KR audits against the Korean benchmarks; MinHash with LSH (5-grams, 112 hashes, 75%)
+removes paraphrased repeats; embedding clustering shows whether a large set is really a few clusters. Synthetic
+rows need this as much as scraped ones: teachers reproduce benchmark items from memory, and paraphrases evade
+n-gram checks, so the leak stage runs on every synthetic set and the Evaluation channel reports what remains.
+
+**Collapse is avoided by accumulation and diversity, not by volume.** Training on synthetic data that replaces
+real data collapses (as little as one synthetic row in a thousand under replacement, per ICLR 2025 work);
+accumulating synthetic rows on top of real ones bounds the error (Stanford SALT, 2024). The tail still erodes
+inside the synthetic share, so diversity is measured (Vendi score, number of embedding clusters, the minimum
+neighbour distance distribution) and generation stops when it falls, rather than when a row count is reached.
+
+**The only ground truth is a trained student.** SmolLM2, Tulu 3 and OpenThoughts all chose data by training a
+model on it and evaluating; a 5 to 10% judge audit of a new set (the LLM Data Auditor framing: diversity,
+correctness, instruction adherence, safety) decides whether to filter row by row before that.
+
+**Korean.** Translated corpora carry artefacts (KIT-19's finding, and the reason GLAN-QnA-KR and Magpie-ko generate
+natively); the recipe is native generation from Korean personas or a Korean-labelled taxonomy, a Korean rubric
+for the judge, and decontamination against KMMLU, HAE-RAE, KoBEST and CLIcK.
+
+### Two lineages in detail: Nemotron and WizardLM
+
+**Nemotron (NVIDIA): a staged factory with a reward model at every gate.**
+- Nemotron-4 340B (2024): over 98% of alignment data synthetic, 200k SFT rows plus 800k code rows and 160k
+  preference triplets, from about 20k human rows (10k SFT, 10k HelpSteer2 for the reward model).
+  - *Prompts*: 3,000 topics (LLM-generated macro-topics and subtopics plus hand-collected ones) and keyword
+    lists (12k Python, 17k math) mined from pretraining data and Wikipedia; per task type a template, for
+    example open Q&A "Can you generate {n} questions or requests related to {topic}?", then a refinement call
+    that makes the question "more detailed and specific"; writing prompts name a document type; closed Q&A
+    prompts are generated over C4 passages; instruction-following prompts concatenate a base prompt with a
+    verifiable constraint ("Your response should have three paragraphs"); two-turn prompts start from ShareGPT
+    first turns; LMSYS-Chat-1M real prompts are mixed in (unsafe ones kept only for preference data).
+  - *Dialogues*: three turns by iterative role-play, the generator alternating user and assistant; three user
+    styles (normal, "complex and diverse", "critical, concise, real-life tone"), greedy decoding, politeness
+    ("Thank you for ...") stripped; the reward model scores every dialogue and drops those under a threshold.
+  - *Preferences*: several intermediate models answer each prompt; the judge is the ground truth where one
+    exists (GSM8K, MATH, verifiable constraints), an LLM judge with both orders tried and only consistent verdicts
+    kept, or the reward model (0.87 vs 0.54 accuracy against the LLM judge on Chat-Hard).
+  - *Weak-to-strong*: Mixtral-8x7B generates data for an intermediate 340B checkpoint, which then generates the
+    next round's data; the loop is the point, not a single pass.
+- Llama-Nemotron (2025, 33M rows released): *math* from AoPS forums (middle school excluded), problems extracted
+  and classified by an LLM, question variations prompted from Qwen2.5, 16 DeepSeek-R1 reasoning traces and 64
+  Qwen2.5-Math non-reasoning solutions per problem, answers checked for equivalence by a Qwen2.5-32B judge, majority
+  vote as ground truth where none is extractable; *code* from 28.9k deduplicated competitive-programming problems
+  (TACO, APPS, CodeContests, CodeForces), R1 solutions at temperature 0.6 and top-p 0.95, syntax checked, code
+  stripped out of reasoning sections, under 0.3% benchmark overlap by cosine similarity plus two LLM judges, and
+  the finding that harder problems (CodeContests) gave the largest gains and the scaling curve did not plateau at
+  736k; *STEM* MCQs generated by topic and difficulty with variations, decontaminated against GPQA, MMLU and
+  MMLU-Pro; *chat* from 20k ShareGPT and WildChat first turns, responses by a Nemotron-70B instruct model through a
+  feedback-edit-select loop, filtered by the Nemotron-70B reward model; every prompt paired with a "detailed
+  thinking on" and a "detailed thinking off" response so the toggle is learnt; *RL* with GRPO, an LLM accuracy
+  judge and a format reward for the think tags, prompts with a pass rate of 0.75 or higher (8 generations of the
+  previous model) discarded, and a curriculum from easy to hard by pass rate.
+
+**WizardLM (Microsoft): make the instruction harder, then prove it got harder.**
+- Evol-Instruct (2023): from 52k Alpaca instructions, four rounds, one of six operators drawn at random per
+  instruction per round, 250k instructions; 70k sampled for training beat Vicuna's 70k human rows. The
+  in-depth operators share one rewriter prompt ("rewrite a given prompt into a more complex version ... can only
+  add 10 to 20 words ... '#The Given Prompt#', '#Rewritten Prompt#', 'given prompt' and 'rewritten prompt' are not
+  allowed to appear") with one method each: *add constraints* ("add one more constraints/requirements"),
+  *deepen* ("the depth and breadth of the inquiry can be increased"), *concretize* ("replace general concepts
+  with more specific concepts"), *reasoning* ("rewrite it to explicitly request multiple-step reasoning"),
+  *complicate input* (a table, code or data added to the prompt); the in-breadth operator is a creator prompt
+  ("draw inspiration from the #Given Prompt# to create a brand new prompt ... same domain ... even more rare ...
+  LENGTH and complexity similar"). *Elimination* drops an evolution when (1) a judge finds no information gain over
+  the original, (2) the response contains "sorry" and is under 80 words, (3) the response is only punctuation and
+  stop words, (4) the instruction copies prompt scaffolding such as "given prompt" or "#Rewritten Prompt#". Rows
+  from every round are merged and shuffled so difficulties are spread evenly.
+- WizardCoder (2023): Code Alpaca 20k to 78k with one prompt ("increase the difficulty of the given programming
+  test question a bit ... using, but not limited to, the following methods: {method}") and five code heuristics:
+  add requirements (about 10 words), swap a common requirement for a rare one, add reasoning steps, give erroneous
+  code as misdirection, demand higher time or space complexity (sparingly); rounds continue until a development
+  set stops improving.
+- WizardMath (2023, RLEIF): 15k GSM8K and MATH seeds, five rounds (two downward evolutions that make the question
+  easier or move it to an easier topic, three upward with constraints, concretizing and more reasoning), six
+  variants per round, 448k rows, 17k duplicates and 30k contaminated rows removed, 418k kept. Two reward models:
+  an instruction reward model trained on GPT-4 rankings (1 to 6) of evolved instructions against the original
+  for difficulty and clarity, and a process reward model trained on GPT-4 step labels; PPO's reward is the product
+  of instruction quality and the minimum step correctness.
+- Auto Evol-Instruct (2024): the operator is written by an optimizer LLM rather than a person: start from a
+  universal method (list ways to complicate, plan, rewrite, review and fix), analyse a trajectory of evolutions for
+  three failure types (stagnant complexity: the response starts "Understood" and ends with "?"; insufficient
+  qualification: starts "Sure", ends "?"; loss of key information), rewrite the method, sample five candidates per
+  step, keep the one with the lowest failure rate on a 50-example development set, 10 to 12 steps; then evolve the
+  whole set once. 10k ShareGPT rows: MT-Bench +0.44, AlpacaEval +3.4; 7k GSM8K rows: +11.9 on GSM8K.
+- Arena Learning (2024, the WizardLM-2 flywheel): 276k deduplicated instructions, the target model battles
+  stronger models, a judge (Llama-3-70B) scores both answers 1 to 10 with explanations and position swapped,
+  the losses become SFT rows with the winner's answer as target, win-loss pairs become DPO data, judge scores feed
+  PPO; three iterations over nine data shards, each iteration SFT then DPO then PPO; the offline test set
+  (WizardArena: 500 K-means clusters times two for diversity, the 1,000 hardest of 10,000 by GPT-4 for difficulty)
+  agrees 98.79% with the human arena; a third of the data (33.7k of 90k) sufficed for the final SFT, with
+  difficulty rising 4.7 to 7.4 across iterations.
+
+What the two lineages agree on: generate many candidates and let a verifier, reward model or judge choose;
+make difficulty an explicit, measured axis (tags, pass rates, instruction reward, elimination rules); iterate
+with the model being trained inside the loop; decontaminate before counting rows.
+
+### What `data_synthetic` builds in
+
+- Seeds as first-class input: taxonomy, personas, documents, existing rows; a run records which seeds produced
+  which rows, so coverage can be read off the manifest.
+- Questions from at most a few sources per run, and `answers_per_question` as a setting (default above 1 for
+  reasoning and preference tasks); the teacher is a config choice to be compared by a student's evaluation.
+- The Magpie filter chain as named filters with thresholds in the config: schema, completeness and repetition,
+  judge tags (quality, difficulty), reward or judge score with a margin against a base answer, minimum neighbour
+  distance, length policy. Rejections are kept with reasons.
+- Verifiers before judges: heuristics for constraints, `REWARDS` for answers and code, a judge from another
+  model family last. Self-revision as an optional second pass with a rubric.
+- Leak removal against the evaluation sets and benchmarks the model will be measured on, in every run.
+- Diversity numbers in the manifest (clusters, neighbour distances, Vendi score) and a stop rule on them.
+- The student loop: a sample config that trains the pilot recipe on the new rows and runs `evaluation_compare`
+  against the base model, so a data run ends with a measured verdict rather than a row count.
+- An `evolve` step (WizardLM lineage) as a registry of operators with their prompts: the five in-depth and the
+  in-breadth operators, the code heuristics, the math upward and downward ones; `rounds` and the operator draw per
+  round in the config; the four elimination rules as named filters; an optional Auto-Evol pass that lets the teacher
+  rewrite the operator against a development set's failure rate.
+- Prompt factories (Nemotron lineage): topic and keyword lists as seeds with per-task-type templates and a
+  refinement call; three-turn role-played dialogues with user-style variants and politeness stripping; verifiable
+  constraints appended to prompts; reasoning on and off responses paired on the same prompt.
+- Candidate-then-choose everywhere: `answers_per_question`, equivalence judging and majority vote as ground truth,
+  judge verdicts accepted only when consistent under swapped order, difficulty by pass rate of the student (drop
+  prompts it already solves, order the rest easy to hard).
+- Arena-style selection for preference and SFT rows: the student answers next to stronger models, a judge scores
+  both orders, losses become SFT targets and win-loss pairs become preference rows.
+
 ## Design
 
 A channel is a package that registers recipes; it reuses `Stage`, `Pipeline`, `Progress`, `Experiment` and the
@@ -147,11 +319,15 @@ budget: {max_usd: 50}
   shapes), `classification` (a text and a label set rendered as a Jev `choice` question with a per-source template,
   as the Jeeves prep does; NLI as `choice`, boolean as `noul`, ratings as `score`). A converter has a `version`
   that joins the fingerprint. `fields` maps columns when no converter fits.
-- **Teachers** are a registry (`TEACHERS`): `anthropic` (the official SDK; Message Batches when `batch: true`;
-  structured outputs for schema verification; prompt caching on the template; the key from `ANTHROPIC_API_KEY`
-  through settings), `local` (a checkpoint through the Modeling channel's backbones, seeded, no cost), and later
-  `openai_compatible` (any endpoint with that shape, for vLLM and the like). A teacher records tokens and an
-  estimated cost per call into the manifest; `budget.max_usd` stops a run before it overspends.
+- **Teachers** are a registry (`TEACHERS`) with four entries from the start: `anthropic` (the official SDK;
+  Message Batches when `batch: true`; structured outputs for schema verification; prompt caching on the template;
+  the key from `ANTHROPIC_API_KEY` through settings), `openai` (the OpenAI chat-completions format: OpenAI itself,
+  vLLM, LM Studio, any gateway with that shape; `base_url` and `OPENAI_API_KEY`), `ollama` (a local Ollama server
+  through its native API, with model pull and `keep_alive`; its OpenAI-compatible endpoint works through `openai`
+  too), and `local` (a checkpoint through the Modeling channel's backbones, seeded, no cost). Every teacher offers
+  the same `complete(messages, schema?)` and reports tokens and an estimated cost per call into the manifest;
+  `budget.max_usd` stops a run before it overspends. JSON-schema output goes through each provider's native
+  structured-output feature where it exists and through a parse-and-retry otherwise.
 - **Verification** chain: `schema` (the row parses as the target recipe's row, through the recipe's own `check`),
   `verifier` (a reward function from `REWARDS`, for answers and code), `judge` (a teacher scoring with a rubric; a
   different model family than the generator by default). Rejected rows are kept in `rejected.jsonl` with the reason.
@@ -217,3 +393,5 @@ Each milestone ends green on CI with tests on small local files and a fake teach
 - Embedding training data: [MIRACL and multilingual retrieval data engineering](https://arxiv.org/pdf/2302.07010), [korean-embedding-performance-v1](https://huggingface.co/datasets/LLM-OS-Models/korean-embedding-performance-v1-performance-1m), [embedding models 2026 guide](https://tensoria.fr/en/blog/embedding-models-2026-guide)
 - Quality, dedup, decontamination: [FineWeb-Edu](https://www.emergentmind.com/topics/fineweb-edu-dataset), [LSHBloom](https://arxiv.org/html/2411.04257v3), [NVIDIA text data processing](https://developer.nvidia.com/blog/mastering-llm-techniques-data-preprocessing/), [contamination detection review (ACL 2026)](https://aclanthology.org/2026.gem-main.50/)
 - Decision data: [PostHog Jeeves repository (`prep/`, `data/manifest.json`)](https://github.com/PostHog/jeeves)
+- Nemotron and WizardLM lineages: [Nemotron-4 340B report, synthetic data section](https://arxiv.org/html/2406.11704v1), [Llama-Nemotron report](https://arxiv.org/html/2505.00949v5), [Nemotron post-training dataset](https://huggingface.co/datasets/nvidia/Nemotron-Post-Training-Dataset-v1), [WizardLM / Evol-Instruct (ICLR 2024)](https://arxiv.org/abs/2304.12244) and its [prompts in the repository](https://github.com/nlpxucan/WizardLM/tree/main/Evol_Instruct), [WizardCoder](https://arxiv.org/html/2306.08568), [WizardMath (RLEIF)](https://arxiv.org/html/2308.09583v3), [Auto Evol-Instruct](https://arxiv.org/html/2406.00770v1), [Arena Learning](https://arxiv.org/html/2407.10627v1)
+- Reference practices: [Magpie (ICLR 2025)](https://arxiv.org/html/2406.08464) and its [filtered 300k sets](https://huggingface.co/datasets/Magpie-Align/Magpie-Pro-300K-Filtered), [OpenThoughts findings](https://www.openthoughts.ai/blog/ot3), [Tulu 3 report](https://arxiv.org/pdf/2411.15124), [Phi-4 technical report](https://arxiv.org/html/2412.08905v1), [Nemotron-4 340B report](https://arxiv.org/pdf/2406.11704), [GLAN](https://arxiv.org/pdf/2402.13064), [Deita and the data-selection survey](https://arxiv.org/pdf/2402.05123), [Superfiltering (IFD)](https://www.researchgate.net/publication/384220620_Superfiltering_Weak-to-Strong_Data_Filtering_for_Fast_Instruction-Tuning), [random selection at scale](https://arxiv.org/html/2410.09335v1), [LLM Data Auditor survey (2026)](https://arxiv.org/html/2601.17717v1), [Best practices and lessons learned on synthetic data](https://arxiv.org/pdf/2404.07503), [model collapse under accumulation](https://alphaxiv.org/overview/2410.16713v4), [synthetic data pipelines that don't collapse](https://tianpan.co/blog/2026-04-12-synthetic-data-pipelines-that-dont-collapse)
