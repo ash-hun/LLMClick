@@ -11,12 +11,13 @@ from pathlib import Path
 from typing import Any
 
 from config import get_settings
-from core.progress import StateProgress
+from core.progress import Cancelled, StateProgress
 from core.utils.files import sha256_json
 from core.utils import device
 
 ACTIVE = {"pending", "running"}
 INTERRUPTED = "interrupted"
+CANCELLED = "cancelled"
 
 
 def job_id(experiment_key: str, stages: list[str]) -> str:
@@ -58,10 +59,21 @@ class JobStore:
             row = self.database.execute("SELECT record FROM jobs WHERE job_id = ?", (identifier,)).fetchone()
         return self.read(row) if row else None
 
-    def all(self) -> list[dict[str, Any]]:
+    def all(self, status: str | None = None, limit: int | None = None) -> list[dict[str, Any]]:
+        """Jobs in submission order; `status` keeps one status, `limit` keeps the most recent ones."""
         with self.lock:
             rows = self.database.execute("SELECT record FROM jobs ORDER BY rowid").fetchall()
-        return [self.read(row) for row in rows]
+        jobs = [job for job in (self.read(row) for row in rows) if status is None or job["status"] == status]
+        return jobs[-limit:] if limit else jobs
+
+    def cancel(self, identifier: str) -> dict[str, Any] | None:
+        """Ask a pending or running job to stop; it is `cancelled` once the pipeline has stopped at its next progress
+        report. A job that is not active is returned as it is."""
+        with self.lock:
+            progress = self.live.get(identifier)
+            if progress is not None:
+                progress.cancel()
+        return self.get(identifier)
 
     def submit(self, identifier: str, work: Callable[[], Any], detail: dict[str, Any], progress: StateProgress) -> dict[str, Any]:
         """Queue `work` unless a job with this id is pending or running; then return that one. A finished, failed
@@ -80,7 +92,10 @@ class JobStore:
             device.slot.index = index
             self.save({**record, "status": "running", "device_slot": index})
             try:
+                progress.check()  # cancelled while it waited for a worker: nothing runs
                 outcome = {"status": "done", "result": work()}
+            except Cancelled:
+                outcome = {"status": CANCELLED}  # what was built stays; a resubmission continues from it
             except Exception as error:  # noqa: BLE001 - the job record is the error report
                 outcome = {"status": "failed", "error": f"{error}\n{traceback.format_exc()}"}
             finally:

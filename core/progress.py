@@ -5,6 +5,10 @@ from typing import Any
 from tqdm import tqdm
 
 
+class Cancelled(Exception):
+    """Raised inside the pipeline when the job it runs for was cancelled; the next progress report is where it stops."""
+
+
 class Progress:
     """Reports nothing; the base every reporter and every stage is written against."""
 
@@ -53,20 +57,32 @@ class BarProgress(Progress):
 
 
 class StateProgress(Progress):
-    """Keeps the latest state so a job can be polled."""
+    """Keeps the latest state so a job can be polled, and carries a cancellation request into the pipeline: a thread
+    cannot be stopped from outside, so the pipeline stops itself at its next progress report after `cancel()`.
+    A phase that reports nothing (a model download, say) is only interrupted once it ends."""
 
     def __init__(self) -> None:
         self.state: dict[str, Any] = {"experiment": None, "stages": {}, "current": None, "done": 0, "total": None,
                                       "note": ""}
+        self.cancelled = False
+
+    def cancel(self) -> None:
+        self.cancelled = True
+
+    def check(self) -> None:
+        if self.cancelled:
+            raise Cancelled("the job was cancelled")
 
     def begin(self, experiment: str, stages: list[str]) -> None:
         self.state.update(experiment=experiment, stages={stage: "pending" for stage in stages})
 
     def stage_started(self, stage: str) -> None:
+        self.check()
         self.state["stages"][stage] = "running"
         self.state.update(current=stage, done=0, total=None, note="")
 
     def update(self, done: int, total: int | None = None, note: str = "") -> None:
+        self.check()
         self.state.update(done=done, note=note)
         if total is not None:
             self.state["total"] = total

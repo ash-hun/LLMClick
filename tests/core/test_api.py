@@ -120,3 +120,44 @@ def test_a_failed_job_keeps_its_error_and_frees_its_slot(tmp_path: Path) -> None
     assert "ZeroDivisionError" in wait(store, "bad")["error"]
     store.submit("good", lambda: "ok", {"recipe": "r"}, StateProgress())
     assert wait(store, "good")["result"] == "ok"
+
+
+DETAIL: dict[str, Any] = {"recipe": "r", "experiment": "e", "directory": "d", "stages": ["train"]}
+
+
+def test_a_running_job_is_cancelled_at_its_next_progress_report(tmp_path: Path) -> None:
+    progress, started = StateProgress(), threading.Event()
+
+    def work() -> None:
+        for step in range(10_000):
+            progress.update(step, 10_000)  # raises once cancelled
+            started.set()
+            time.sleep(0.001)
+
+    job_store.configure(tmp_path / "table.sqlite", workers=1)
+    store = job_store.store()
+    store.submit("long", work, DETAIL, progress)
+    assert started.wait(5)
+    assert client.delete("/api/jobs/long").status_code == 202
+    job = wait(store, "long")
+    assert job["status"] == "cancelled" and job["error"] is None and job["progress"]["done"] < 10_000
+    assert client.delete("/api/jobs/long").status_code == 202  # cancelling again is harmless
+    store.submit("long", lambda: "again", DETAIL, StateProgress())  # a cancelled job can be resubmitted
+    assert wait(store, "long")["result"] == "again"
+    assert client.delete("/api/jobs/long").status_code == 409 and client.delete("/api/jobs/nope").status_code == 404
+
+
+def test_a_pending_job_cancelled_before_its_turn_never_runs(tmp_path: Path) -> None:
+    store = JobStore(tmp_path / "table.sqlite", workers=1)
+    release, ran = threading.Event(), []
+    store.submit("first", lambda: {"waited": release.wait(5)}, DETAIL, StateProgress())
+    store.submit("second", lambda: ran.append(1), DETAIL, StateProgress())
+    assert store.get("second")["status"] == "pending"
+    store.cancel("second")
+    release.set()
+    assert wait(store, "second")["status"] == "cancelled" and ran == []
+    assert [job["job_id"] for job in store.all(status="cancelled")] == ["second"]
+    assert [job["job_id"] for job in store.all(limit=1)] == ["second"]
+    job_store.configure(tmp_path / "table.sqlite", workers=1)
+    assert [job["job_id"] for job in client.get("/api/jobs", params={"status": "done"}).json()] == ["first"]
+    assert client.get("/api/jobs", params={"status": "nope"}).status_code == 422

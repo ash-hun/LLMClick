@@ -109,8 +109,10 @@ pipeline:
   resumed continues the same wandb run. `tracker` is not part of an experiment's identity, so switching it on later
   replays the already cached run once instead of retraining. A run is sent to a given project only once.
 - **Jobs.** The API keeps its jobs in a SQLite table (`JOBS_DB`), so they survive a restart; a job the server was
-  running when it stopped is marked `interrupted` and resumes when submitted again. `JOB_WORKERS` jobs run at once,
-  each worker on its own accelerator: set it to the number of GPUs on a multi-GPU server and keep 1 otherwise.
+  running when it stopped is marked `interrupted` and resumes when submitted again. `DELETE /api/jobs/<id>` cancels
+  a pending or running job: it stops at its next progress report, keeps what it built, and continues from there
+  when submitted again. `JOB_WORKERS` jobs run at once, each worker on its own accelerator: set it to the number of
+  GPUs on a multi-GPU server and keep 1 otherwise.
 - **Typos.** Every config section rejects keys it does not know, so `validaton:` or `training.learning_rate` is an
   error instead of a silently ignored setting.
 
