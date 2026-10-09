@@ -19,6 +19,7 @@ from evaluation.stages import named
 from modeling.embedding.models.base import EmbeddingBackbone
 
 PACKAGE = "mteb"
+DEFAULT_MAX_LENGTH = 512  # tokens per text for a Hub model, which brings no training.max_length
 RESULTS = "results.json"
 REPORT = "report.json"
 
@@ -94,7 +95,7 @@ class Encoder:
 
 def model_meta(mteb: Any, source: SourceExperiment, max_length: int) -> Any:
     from mteb.models.model_meta import ModelMeta, ScoringFunction
-    return ModelMeta(loader=None, name=f"llmclick/{Path(source.model.experiment).name}", revision=source.model.checkpoint,
+    return ModelMeta(loader=None, name=f"llmclick/{Path(source.model.reference).name}", revision=source.model.checkpoint,
                      release_date=None, languages=None, n_parameters=None, memory_usage_mb=None, max_tokens=max_length,
                      embed_dim=None, license=None, open_weights=True, public_training_code=None, public_training_data=None,
                      framework=["PyTorch"], similarity_fn_name=ScoringFunction.COSINE, use_instructions=False, training_datasets=None)
@@ -123,10 +124,13 @@ class EmbeddingStage(Stage[MeasureSettings]):
         mteb, config = mteb_module(), self.config
         task = resolve_task(mteb, self.task)
         source = SourceExperiment(self.model)
-        backbone, _, trained = source.build()
+        if source.hub:
+            backbone, max_length = source.hub_backbone(), self.max_length or DEFAULT_MAX_LENGTH
+        else:
+            backbone, _, trained = source.build()
+            max_length = self.max_length or trained.training.max_length
         if not isinstance(backbone, EmbeddingBackbone):
-            raise ValueError(f"{self.model.experiment!r} is not an embedding experiment (its recipe is {trained.recipe!r})")
-        max_length = self.max_length or trained.training.max_length
+            raise ValueError(f"{self.model.reference!r} is not an embedding model (recipe or architecture)")
         checkpoint = source.checkpoint()
         self.progress.update(0, None, f"{self.task}: loading " + ("checkpoint" if checkpoint else "base model"))
         backbone.load(resolve_device(config.device), checkpoint)
@@ -155,8 +159,7 @@ class EmbeddingReport(Stage[EmbeddingConfig]):
         config, source = self.config, SourceExperiment(self.config.model)
         tasks = {inputs[name]["task"]: {key: inputs[name][key] for key in ("metric", "main_score", "type", "scores", "results")}
                  for name in self.scores}
-        report = {"model": {"experiment": config.model.experiment, "checkpoint": str(source.checkpoint() or "base"),
-                            "recipe": source.config().recipe},
+        report = {"model": source.described(),
                   "settings": {"batch_size": config.evaluation.batch_size, "max_length": config.max_length,
                                "device": resolve_device(config.device), "package": {"name": PACKAGE, "version": package_version()}},
                   "tasks": tasks, "contamination": None}

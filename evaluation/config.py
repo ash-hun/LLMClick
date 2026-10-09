@@ -1,8 +1,10 @@
 """Config of the evaluation recipes: which trained model, which rows, how to measure."""
 
+import string
+from pathlib import Path
 from typing import ClassVar
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from core.config.schema import BaseConfig, Section
 from modeling.config import Keyed, TrackerConfig
@@ -11,13 +13,39 @@ BUILT = ("validate", "train", "base")  # `model.checkpoint` values that name a c
 
 
 class SourceModel(Section):
-    """The model to score is one a modeling experiment built: its config says how it loads and how it is measured."""
-    experiment: str = Field(description="Experiment directory (output/<name>-<hash>) with its config.yaml")
+    """The model to score: one a modeling experiment built (`experiment` + `checkpoint`; its config says how it loads
+    and how it is measured), or a Hub model or directory on its own (`name` + `revision`), which only the recipes
+    that load the model themselves can score: benchmarks, and embeddings when `architecture` names the catalog entry."""
+    experiment: str | None = Field(default=None, description="Experiment directory (output/<name>-<hash>) with its config.yaml")
     checkpoint: str = Field(default="validate", description="validate (passed validation), train (as trained), base "
                                                             "(the weights the experiment started from), or a checkpoint directory")
+    name: str | None = Field(default=None, description="Instead of an experiment: a Hugging Face model ID or a local directory")
+    revision: str | None = Field(default=None, description="40-character commit of `name`; required unless it is a directory")
+    architecture: str | None = Field(default=None, description="With `name`: the model catalog entry (e.g. bi_encoder) for recipes that load the model themselves")
+
+    @model_validator(mode="after")
+    def _one_of(self) -> "SourceModel":
+        if (self.experiment is None) == (self.name is None):
+            raise ValueError("give exactly one of model.experiment or model.name")
+        if self.name is not None and not Path(self.name).is_dir():
+            commit = self.revision is not None and len(self.revision) == 40 and all(c in string.hexdigits for c in self.revision)
+            if not commit:
+                raise ValueError("model.revision must be a 40-character commit hash when model.name is a Hub model")
+        return self
+
+    @property
+    def hub(self) -> bool:
+        return self.name is not None
+
+    @property
+    def reference(self) -> str:
+        """How messages name the model: the Hub ID or directory, or the experiment directory."""
+        return self.name if self.name is not None else str(self.experiment)
 
     def paths(self) -> list[str]:
-        return [self.experiment, *([] if self.checkpoint in BUILT else [self.checkpoint])]
+        if self.name is not None:
+            return [self.name]
+        return [str(self.experiment), *([] if self.checkpoint in BUILT else [self.checkpoint])]
 
 
 class EvaluationData(Section):

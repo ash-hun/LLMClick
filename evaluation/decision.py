@@ -3,8 +3,10 @@ accuracy, NLL and calibration (ECE), per tier with its chance level, reasoning l
 
 import json
 import math
+import os
 import time
 from pathlib import Path
+from urllib.request import urlopen
 from typing import Any, ClassVar, Literal
 
 import torch
@@ -27,7 +29,11 @@ from modeling.tuning.stages import read_rows
 ITEMS = "items.jsonl"
 SCORES = "scores.json"
 REPORT = "report.json"
-TIER_FILES = {"easy": "easy.jsonl", "standard": "original.jsonl", "hard": "hard.jsonl"}  # PostHog's public tiers
+TIER_FILES = {"easy": "easy.jsonl", "standard": "original.jsonl", "hard": "hard.jsonl"}  # the public tiers
+JEVBENCH_REPOSITORY = "fstandhartinger/jevbench"  # JevBench v1: the public tiers under datasets/public, MIT
+JEVBENCH_REVISION = "bb05a335bc809e61b20c0f745d25499a82b326fc"  # 2026-09-29: easy 48, standard 72, hard 111 items
+JEVBENCH_URL = "https://raw.githubusercontent.com/{repository}/{revision}/datasets/public/{file}"
+CACHE = Path(os.environ.get("LLMCLICK_CACHE", "~/.cache/llmclick")).expanduser()
 Think = Literal["off", "on", "both"]
 
 
@@ -45,11 +51,29 @@ def jevbench_row(task: dict[str, Any], tier: str) -> Row:
             "questions": {"decision": {"type": kind, "instructions": question["instructions"], "criteria": criteria, "label": label}}}
 
 
+def fetch_jevbench(revision: str, repository: str = JEVBENCH_REPOSITORY) -> Path:
+    """The public tier files of JevBench at `revision`, downloaded once into the cache (`LLMCLICK_CACHE`)."""
+    root = CACHE / "jevbench" / revision
+    root.mkdir(parents=True, exist_ok=True)
+    for file in TIER_FILES.values():
+        target = root / file
+        if target.is_file():
+            continue
+        with urlopen(JEVBENCH_URL.format(repository=repository, revision=revision, file=file)) as response:  # noqa: S310 - fixed host
+            content = response.read()
+        temporary = target.with_suffix(".tmp")
+        temporary.write_bytes(content)
+        temporary.replace(target)
+    return root
+
+
 @SOURCES.register("jevbench")
 def jevbench(params: dict[str, Any]) -> list[Row]:
-    """params: path (directory with easy.jsonl, original.jsonl, hard.jsonl as PostHog's jevbench.py reads them),
-    tiers? (subset of easy, standard, hard), limit? per tier."""
-    root, wanted = Path(params["path"]), params.get("tiers") or list(TIER_FILES)
+    """params: path? (a directory with easy.jsonl, original.jsonl, hard.jsonl; without it the public tiers are
+    downloaded from the JevBench repository at revision?, default the pinned one), tiers? (subset of easy, standard,
+    hard), limit? per tier."""
+    root = Path(params["path"]) if params.get("path") else fetch_jevbench(str(params.get("revision", JEVBENCH_REVISION)))
+    wanted = params.get("tiers") or list(TIER_FILES)
     rows: list[Row] = []
     for tier in wanted:
         if tier not in TIER_FILES:
@@ -199,7 +223,7 @@ class DecisionReport(Stage[DecisionConfig]):
     def run(self, workdir: Path, inputs: dict[str, Outputs]) -> Outputs:
         scores = inputs["score"]
         self.progress.update(0, None, "measuring overlap with the training rows")
-        report = {"model": {"experiment": self.config.model.experiment, "checkpoint": scores["checkpoint"], "recipe": scores["recipe"]},
+        report = {"model": {**SourceExperiment(self.config.model).described(), "checkpoint": scores["checkpoint"], "recipe": scores["recipe"]},
                   "settings": scores["settings"],
                   "rows": {"sources": [source.model_dump(mode="json") for source in self.config.data.sources], **scores["rows"]},
                   "scores": scores["metrics"], "items": scores["items"],

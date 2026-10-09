@@ -46,8 +46,20 @@ harness's full `results.json` and every scored item in `samples.jsonl`; the repo
 
 Presets: `small_general` (mmlu, mmlu_pro, gsm8k, ifeval, hellaswag, arc_challenge, truthfulqa_mc2, winogrande)
 and `korean` (kmmlu, haerae, kobest, click, hrm8k). Any other lm-evaluation-harness task name works in `tasks`.
-Not yet: thinking mode on or off for Qwen3 checkpoints (the harness is run with the chat template as it is), and
-a Hub model without an experiment (use `checkpoint: base` of an experiment that starts from it).
+
+`thinking: true | false` (with `chat_template: true`) passes `enable_thinking` to the chat template, as Qwen3 and
+Qwen3.5 read it; `true` also makes the harness take the answer after `</think>`, so `decoding.max_new_tokens` must
+leave room for the reasoning. `null` keeps the template's default. Thinking on and off are different stages.
+
+A model without an experiment is scored by `model: {name: Qwen/Qwen3.5-0.8B, revision: <40-character commit>}`
+(or a local directory without revision): the baseline every comparison needs, before any training. Only the
+benchmark and embedding recipes (the latter with `architecture`) take it; the others need the recipe that trained the
+model. Its reports carry `name` and `revision` instead of an experiment, and no contamination.
+
+On a Mac (MPS) use `evaluation.batch_size` 1 or 2 for few-shot tasks: the harness computes the logits of the whole
+batch at once, and 5-shot prompts times a 248k-token vocabulary exceed what one Metal kernel accepts (the process
+dies without a Python error). Measured on an M4 Pro with Qwen3.5-0.8B: hellaswag, gsm8k and ifeval at 10 items
+each take 13, 42 and 30 seconds; the full preset at 100 items per task is a matter of hours there and belongs on a GPU.
 
 ## Built: contamination, tracker, API
 
@@ -72,7 +84,7 @@ directory (headline scores, model, contamination); `GET /api/evaluations/{experi
 ```yaml
 pipeline: {recipe: evaluation_compare, name: sft-vs-base}
 runs:
-  - {label: base, experiment: output/sft-qwen3.5-0.8b-<hash>, checkpoint: base}     # required: the starting weights
+  - {label: base, experiment: output/sft-qwen3.5-0.8b-<hash>, checkpoint: base}     # the starting weights, or a Hub model: {label: qwen, name: Qwen/Qwen3.5-0.8B, revision: <commit>}
   - {label: final, experiment: output/sft-qwen3.5-0.8b-<hash>, checkpoint: validate}
   - {label: other, experiment: output/sft-lora-qwen3.5-0.8b-<hash>, checkpoint: validate}
 benchmarks: {preset: small_general, limit: 100}                   # optional
@@ -102,16 +114,17 @@ max_think: 256         # null: the experiment's method.max_think
 evaluation: {batch_size: 8}
 ```
 
-The `jevbench` source reads PostHog's public tier files (`easy.jsonl`, `original.jsonl`, `hard.jsonl`, the format
-`jevbench.py` of the Jeeves repository reads; `tiers` and `limit` per tier are optional) into Jev records with a
-`tier` and `family`. Every question goes through the head without reasoning and, with `think`, after greedy
+The `jevbench` source reads the public tier files (`easy.jsonl`, `original.jsonl`, `hard.jsonl`; the format
+`jevbench.py` of the Jeeves repository reads) into Jev records with a `tier` and `family`. Without `path` they are
+downloaded once from the JevBench repository (`fstandhartinger/jevbench`, MIT; 48, 72 and 111 items) at the pinned
+`revision` into `LLMCLICK_CACHE` (default `~/.cache/llmclick`); `tiers` and `limit` per tier are optional. Every question goes through the head without reasoning and, with `think`, after greedy
 reasoning. The report holds per mode (`nothink`, `think`): accuracy, NLL, ECE (calibrated with the checkpoint's
 temperature), reasoning tokens, the share of chains that closed themselves, latency per question (p50, p95 at the
 batch size used) and, when rows carry tiers, per tier the accuracy against the chance level of its option counts
 and the chance-corrected share. `items.jsonl` keeps every question's prediction, confidence and timing.
 Not yet: the JevBench coherence suite on the Hub (`JevBench/jevbench`, a different benchmark: metamorphic relations
 between rewordings), and the Jeeves transfer panel (MMLU, PAWS, QNLI, SciQ, TweetEval, Emotion as decision rows),
-which the Data channel's converters will produce.
+which the Data channel's converters will produce. The sealed judge tier is not public.
 
 ## Built: `evaluation_embedding`
 

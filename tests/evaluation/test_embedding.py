@@ -59,5 +59,18 @@ def test_one_stage_per_task_with_the_main_score(embedding: dict[str, Any], tmp_p
 
 def test_a_non_embedding_experiment_is_refused(tiny_model: Path, tmp_path: Path) -> None:
     sft = pipeline.build(raw("llm_sft", tiny_model, tmp_path)).run()
-    with pytest.raises(ValueError, match="not an embedding experiment"):
+    with pytest.raises(ValueError, match="not an embedding model"):
         pipeline.build(config(sft["directory"], tmp_path, ["MockSTSTask"])).run()
+
+
+def test_a_hub_embedding_model_needs_its_architecture(tiny_model: Path, tmp_path: Path) -> None:
+    body = {"pipeline": {"recipe": "evaluation_embedding", "name": "hub-emb", "output_dir": str(tmp_path), "device": "cpu"},
+            "model": {"name": str(tiny_model), "architecture": "bi_encoder"}, "tasks": ["MockSTSTask"], "max_length": 32,
+            "evaluation": {"batch_size": 4}}
+    result = pipeline.build(body).run()
+    report = json.loads(Path(result["stages"]["report"]["report"]).read_text())
+    assert report["model"]["architecture"] == "bi_encoder" and -1 <= report["tasks"]["MockSTSTask"]["main_score"] <= 1
+    with pytest.raises(ValueError, match="model.architecture is needed"):
+        pipeline.build({**body, "model": {"name": str(tiny_model)}}).run()
+    with pytest.raises(ValueError, match="not an embedding model"):
+        pipeline.build({**body, "model": {"name": str(tiny_model), "architecture": "transformer"}}).run()

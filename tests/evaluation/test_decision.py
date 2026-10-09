@@ -89,3 +89,33 @@ def test_a_non_decision_experiment_is_refused(tiny_model: Path, tmp_path: Path) 
     rows = {"name": "local_jsonl", "path": "samples/llm_decision.jsonl"}
     with pytest.raises(ValueError, match="does not fit|not a decision experiment"):
         pipeline.build(config(sft["directory"], rows, tmp_path)).run()
+
+
+def test_jevbench_tiers_are_downloaded_once_into_the_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import io
+
+    from evaluation import decision
+
+    served = {"easy.jsonl": json.dumps({"id": "e", "family": "f", "state": "s", "labels": ["a", "b"], "expected": "a",
+                                        "question": {"type": "choice", "instructions": "?", "criteria": {"a": "A", "b": "B"}}}) + "\n",
+              "original.jsonl": "", "hard.jsonl": ""}
+    requested: list[str] = []
+
+    class Response(io.BytesIO):
+        def __enter__(self) -> "Response":
+            return self
+
+        def __exit__(self, *args: Any) -> None:
+            self.close()
+
+    def fake_urlopen(url: str) -> Response:
+        requested.append(url)
+        return Response(served[url.rsplit("/", 1)[1]].encode())
+
+    monkeypatch.setattr(decision, "urlopen", fake_urlopen)
+    monkeypatch.setattr(decision, "CACHE", tmp_path / "cache")
+    rows = jevbench({"revision": "abc123"})
+    assert [row["id"] for row in rows] == ["e"] and len(requested) == 3
+    assert requested[0] == "https://raw.githubusercontent.com/fstandhartinger/jevbench/abc123/datasets/public/easy.jsonl"
+    assert jevbench({"revision": "abc123", "tiers": ["easy"]}) == rows and len(requested) == 3  # cached: nothing fetched again
+    assert (tmp_path / "cache" / "jevbench" / "abc123" / "hard.jsonl").is_file()
