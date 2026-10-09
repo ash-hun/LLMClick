@@ -63,7 +63,7 @@ LLMClick/
 │       ├── models/               #     Model Catalog: base.py (EmbeddingBackbone), bi_encoder.py
 │       ├── methods/              #     Training Method: contrastive.py
 │       └── config.py pipeline.py
-├── data/                         # Data channel (planned): README only
+├── data/                         # Data channel (designed, not built): README with the survey and the plan
 ├── evaluation/                   # Evaluation channel: config -> scores of a trained model, report.json
 │   ├── source.py                 #   SourceExperiment: an experiment's config read back, its checkpoint located
 │   ├── stages.py                 #   rows, score, report (evaluation_custom)
@@ -89,7 +89,7 @@ polygon chart and a Markdown summary; `evaluation_decision` measures a decision 
 tiers without and with reasoning (accuracy, NLL, ECE, per tier against chance, latency); `evaluation_embedding`
 runs an embedding model on MTEB tasks. All write `report.json` with the overlap between the evaluation items and
 the experiment's training rows (exact matches and n-gram near-duplicates) next to the scores, send the report to
-wandb with `tracker.enabled`, and are listed by `GET /api/evaluations` (`evaluation/README.md` has the details). `data/` (training and synthetic data pipelines) is planned and has a README only. A channel is a
+wandb with `tracker.enabled`, and are listed by `GET /api/evaluations` (`evaluation/README.md` has the details). `data/` (open datasets converted into recipe rows, and synthetic rows from a teacher model, both with leak removal) is designed in `data/README.md` and not built yet. A channel is a
 package that registers recipes; it joins by adding its name to `CHANNELS` in `core/registry.py` and reuses `Stage`,
 `Pipeline`, `Progress` and `Experiment` as they are.
 
