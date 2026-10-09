@@ -1,5 +1,7 @@
 # LLMClick
 
+Documentation: https://ash-hun.github.io/LLMClick/ (generated from this README, the channel READMEs and the code; see `website/README.md`).
+
 Config-driven custom model building. One YAML describes one custom model; `pipeline.recipe` picks the recipe that
 builds it and `pipeline.stages` picks the steps to run. Every recipe runs on the same pipeline runner, which skips
 what is already built, shows progress, and never hands on a trained model that has not passed validation.

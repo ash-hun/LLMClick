@@ -25,4 +25,4 @@ _vizdoom.ini
 CLAUDE.md
 output/
 # external reference checkouts (own .git)
-reference/
+/reference/
