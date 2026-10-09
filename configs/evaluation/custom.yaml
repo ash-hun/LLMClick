@@ -1,0 +1,17 @@
+# Score a trained experiment's checkpoint on any rows, with the metrics of the recipe that trained it.
+# `model.experiment` is the directory `llmclick run configs/llm/sft.yaml` writes; `llmclick validate` prints its key.
+pipeline:
+  recipe: evaluation_custom
+  name: sft-qwen3.5-0.8b-on-samples
+  output_dir: ./output
+
+model:
+  experiment: output/sft-qwen3.5-0.8b-14fc97a0
+  checkpoint: validate              # validate | train | base (the weights it started from) | a checkpoint directory
+
+data:
+  sources:
+    - name: local_jsonl
+      path: samples/llm_sft.jsonl   # rows in the experiment's recipe format; here the pilot's own sample rows
+
+evaluation: {batch_size: 4}

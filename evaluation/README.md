@@ -1,7 +1,25 @@
 # Evaluation channel
 
-Status: designed, not built. This directory holds no code yet; this file is the design and the plan to build it,
-written after a short survey of the benchmark landscape (October 2026). The survey's sources are at the end.
+Status: milestone 1 built (`evaluation_custom`); the rest is designed below, after a short survey of the benchmark
+landscape (October 2026). The survey's sources are at the end.
+
+## Built: `evaluation_custom`
+
+```yaml
+pipeline: {recipe: evaluation_custom, name: sft-on-my-rows}
+model:
+  experiment: output/sft-qwen3.5-0.8b-<hash>   # the experiment's config.yaml says how the model loads and is measured
+  checkpoint: validate                          # validate | train | base (what it started from) | a checkpoint directory
+data:
+  sources: [{name: local_jsonl, path: my-rows.jsonl}]   # rows in the experiment's recipe format
+evaluation: {batch_size: 8}
+```
+
+Stages: `rows` (read and check against the recipe) -> `score` (load the checkpoint, the recipe's `evaluate`) ->
+`report` (`report.json`: model, settings, rows, scores, contamination). `base` is the baseline: the weights the
+experiment started from, measured the same way. Rows over the experiment's `training.max_length` follow its
+`training.overflow`. The score stage's fingerprint is the experiment's config and the checkpoint's content, so a
+rebuilt experiment is a new evaluation and an unchanged one is cached.
 
 ## Purpose
 
@@ -147,7 +165,7 @@ Each milestone ends green on CI with tests on the tiny random model, as the mode
 
 | Milestone | Builds | Done when |
 |---|---|---|
-| 1. Skeleton and `evaluation_custom` | the `evaluation` package, `EvaluationConfig`, `rows` and `score` stages that call a modeling method's `evaluate` on a checkpoint, `report.json`, `CHANNELS` entry | `llmclick run configs/evaluation/custom.yaml` scores an SFT checkpoint on a JSONL file; the API lists the recipe; cached rerun builds nothing |
+| 1. Skeleton and `evaluation_custom` (built) | the `evaluation` package, `EvaluationConfig`, `rows` and `score` stages that call a modeling method's `evaluate` on a checkpoint, `report.json`, `CHANNELS` entry | `llmclick run configs/evaluation/custom.yaml` scores an SFT checkpoint on a JSONL file; the API lists the recipe; cached rerun builds nothing |
 | 2. `evaluation_benchmark` | lm-evaluation-harness behind an optional extra (`uv sync --extra eval`), a `benchmarks` section with presets (`small_general`, `korean`, `code`), pinned harness version in the fingerprint, `limit` for smoke runs, settings recorded in results | the four benchmarks above run on Qwen3.5-0.8B on one GPU with `limit`; results carry stderr and settings; a missing extra gives one clear error |
 | 3. `evaluation_compare` | `collect` over several checkpoints, the base model required, the table, the polygon SVG, Markdown summary, "not decided" marking from intervals | one command compares base, mid-training and final checkpoints of one experiment |
 | 4. Decision and embedding | `evaluation_decision` (JevBench reader, think and no-think rows, ECE, latency), `evaluation_embedding` (mteb) | the decision pointer pilot reproduces the metrics `validate` reports, plus the JevBench tiers; the embedding pilot runs one MTEB retrieval task |
