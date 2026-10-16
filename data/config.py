@@ -1,4 +1,4 @@
-"""Config of `data_synthetic`: the teacher, the seeds, and one section per stage."""
+"""Config of the data recipes that start from seeds: the teacher, the seeds, and one section per stage."""
 
 from typing import Any, ClassVar, Literal
 
@@ -88,12 +88,35 @@ class BudgetSettings(Section):
     max_usd: float | None = Field(default=None, ge=0, description="Stop before a teacher call would exceed this spend")
 
 
-class SyntheticConfig(BaseConfig):
+class SeedConfig(BaseConfig):
+    """What every recipe that starts from seeds shares: the seeds, the prompts made from them, the model that makes them."""
+    teacher: Keyed | None = Field(default=None, description="The model generators ask; null when the generator asks none (passthrough)")
+    seeds: list[SeedSpec] = Field(min_length=1)
+    prompts: PromptSettings
+
+    @model_validator(mode="after")
+    def _seeded(self) -> "SeedConfig":
+        from data.prompts import GENERATORS
+        from data.teachers import TEACHERS
+        from modeling.tuning.sources import SOURCES
+        if self.teacher is not None and self.teacher.name not in TEACHERS:
+            raise ValueError(f"Unknown teacher {self.teacher.name!r}; registered: {TEACHERS.names()}")
+        if self.prompts.generator not in GENERATORS:
+            raise ValueError(f"Unknown generator {self.prompts.generator!r}; registered: {GENERATORS.names()}")
+        for seed in self.seeds:
+            if seed.source is not None and seed.source.name not in SOURCES:
+                raise ValueError(f"Unknown source {seed.source.name!r}; registered: {SOURCES.names()}")
+        return self
+
+    def paths(self) -> list[str]:
+        own = [str(path) for seed in self.seeds if seed.source is not None and (path := seed.source.params.get("path")) is not None]
+        return [*super().paths(), *own]
+
+
+class SyntheticConfig(SeedConfig):
     identity_exclude: ClassVar[frozenset[str]] = BaseConfig.identity_exclude | {"tracker", "budget"}
 
     teacher: Keyed
-    seeds: list[SeedSpec] = Field(min_length=1)
-    prompts: PromptSettings
     evolve: EvolveSettings | None = None
     respond: RespondSettings = Field(default_factory=RespondSettings)
     verify: VerifySettings = Field(default_factory=VerifySettings)
@@ -104,17 +127,8 @@ class SyntheticConfig(BaseConfig):
     @model_validator(mode="after")
     def _registered(self) -> "SyntheticConfig":
         from data.evolve import EVOLVERS
-        from data.prompts import GENERATORS
         from data.teachers import TEACHERS
         from modeling.llm.methods.grpo import REWARDS
-        from modeling.tuning.sources import SOURCES
-        if self.teacher.name not in TEACHERS:
-            raise ValueError(f"Unknown teacher {self.teacher.name!r}; registered: {TEACHERS.names()}")
-        if self.prompts.generator not in GENERATORS:
-            raise ValueError(f"Unknown generator {self.prompts.generator!r}; registered: {GENERATORS.names()}")
-        for seed in self.seeds:
-            if seed.source is not None and seed.source.name not in SOURCES:
-                raise ValueError(f"Unknown source {seed.source.name!r}; registered: {SOURCES.names()}")
         if self.evolve is not None:
             unknown = [name for name in self.evolve.operators if name not in EVOLVERS]
             if unknown:
@@ -126,6 +140,5 @@ class SyntheticConfig(BaseConfig):
         return self
 
     def paths(self) -> list[str]:
-        own = [str(path) for seed in self.seeds if seed.source is not None and (path := seed.source.params.get("path")) is not None]
         leak = [str(path) for source in (self.select.leak.against if self.select.leak else []) if (path := source.params.get("path")) is not None]
-        return [*super().paths(), *own, *leak]
+        return [*super().paths(), *leak]

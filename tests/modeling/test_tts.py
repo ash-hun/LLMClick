@@ -1,0 +1,107 @@
+"""`tts_piper` with a fake Piper and a fake Whisper: recordings found, training resumed, the voice gated by listening."""
+
+import json
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import pytest
+
+from core import pipeline
+from modeling.stages import ValidationFailed
+from modeling.tts import audio
+from modeling.tts.asr import wer
+from modeling.tts.stages import latest
+from modeling.tuning.sources import delimited
+from tests.speech import FakeListener, FakePiper, tone
+
+TEXTS = ["Good evening, sir.", "All systems are online.", "Shall I run the diagnostics?", "The suit is ready.",
+         "Accessing the alarm settings.", "You have three new messages."]
+
+
+@pytest.fixture
+def piper(monkeypatch: pytest.MonkeyPatch) -> FakePiper:
+    fake = FakePiper()
+    for name in ("speak", "fit", "export"):
+        monkeypatch.setattr(f"modeling.tts.piper.{name}", getattr(fake, name))
+    monkeypatch.setattr("modeling.tts.piper.version", lambda: "test")
+    monkeypatch.setattr("modeling.tts.stages.Listener", FakeListener(fake, heard_as="a recording"))
+    return fake
+
+
+def recordings(root: Path) -> Path:
+    """An LJSpeech-style set: wavs/<id>.wav and a metadata.csv of `<id>|text` lines."""
+    for index, text in enumerate(TEXTS):
+        tone(root / "wavs" / f"utt{index}.wav", 0.2 * len(text.split()))
+    (root / "metadata.csv").write_text("".join(f"utt{index}|{text}\n" for index, text in enumerate(TEXTS)))
+    (root / "start.ckpt").write_text("pretrained")
+    return root
+
+
+def config(root: Path, **keys: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "pipeline": {"recipe": "tts_piper", "name": "voice", "seed": 5, "output_dir": str(root / "output"), "device": "cpu"},
+        "model": {"espeak_voice": "en-gb-x-rp", "init": {"name": str(root / "start.ckpt")}},
+        "data": {"sources": [{"name": "delimited", "path": str(root / "metadata.csv"), "audio_dir": str(root / "wavs")}],
+                 "validation": 0.34},
+        "training": {"epochs": 3, "batch_size": 2, "args": {"model.learning_rate": 1.0e-4}},
+        "validation": {"max": {"wer": 0.1}},
+    }
+    return {**base, **keys}
+
+
+def test_recordings_train_export_and_pass_the_listening_test_and_a_rerun_builds_nothing(tmp_path: Path, piper: FakePiper) -> None:
+    result = pipeline.build(config(recordings(tmp_path))).run()
+    stages = result["stages"]
+    assert stages["data"]["rows"] == {"train": 4, "validation": 2}
+    fit = piper.fits[0]
+    assert fit["model.warmstart_ckpt"] == tmp_path / "start.ckpt" and fit["resume"] is None
+    assert fit["trainer.max_epochs"] == 3 and fit["trainer.accelerator"] == "cpu" and fit["model.learning_rate"] == 1.0e-4
+    csv = Path(fit["data.csv_path"]).read_text().splitlines()
+    assert len(csv) == 4 and all(Path(line.split("|")[0]).is_absolute() for line in csv)
+    checkpoint = Path(stages["validate"]["checkpoint"])
+    assert (checkpoint / "voice.onnx").read_text() == "onnx of epochs=3" and (checkpoint / "voice.onnx.json").is_file()
+    metrics = stages["validate"]["metrics"]
+    assert metrics["wer"] == 0.0 and metrics["reference_wer"] == 1.0 and metrics["duration_ratio"] == pytest.approx(1.0)
+
+    piper.fits, piper.calls = [], []
+    assert json.dumps(pipeline.build(config(tmp_path)).run()) == json.dumps(result)
+    assert piper.fits == [] and piper.calls == []
+
+
+def test_a_crash_after_fitting_resumes_from_the_last_snapshot(tmp_path: Path, piper: FakePiper, monkeypatch: pytest.MonkeyPatch) -> None:
+    def broken(checkpoint: Path, onnx: Path, log: Path) -> None:
+        raise RuntimeError("export died")
+
+    monkeypatch.setattr("modeling.tts.piper.export", broken)
+    with pytest.raises(RuntimeError, match="export died"):
+        pipeline.build(config(recordings(tmp_path))).run()
+    monkeypatch.setattr("modeling.tts.piper.export", piper.export)
+    pipeline.build(config(tmp_path)).run()
+    run = Path(piper.fits[0]["trainer.default_root_dir"])
+    assert len(piper.fits) == 2 and piper.fits[1]["resume"] == run / "lightning_logs" / "version_0" / "checkpoints" / "last.ckpt"
+    assert latest(run) == run / "lightning_logs" / "version_1" / "checkpoints" / "last.ckpt"
+
+
+def test_a_voice_that_mumbles_fails_validation(tmp_path: Path, piper: FakePiper) -> None:
+    root = recordings(tmp_path)
+    (root / "metadata.csv").write_text("".join(f"utt{index}|{text} mumble\n" for index, text in enumerate(TEXTS)))
+    with pytest.raises(ValidationFailed, match="wer"):
+        pipeline.build(config(root)).run()
+
+
+def test_config_errors_and_units(tmp_path: Path) -> None:
+    root = recordings(tmp_path)
+    with pytest.raises(ValueError, match="training.args cannot set"):
+        pipeline.build(config(root, training={"args": {"trainer.max_epochs": 9}}))
+    with pytest.raises(ValueError, match="40-character commit"):
+        pipeline.build(config(root, model={"espeak_voice": "en-us", "init": {"name": "jgkawell/jarvis", "revision": "main", "file": "a.ckpt"}}))
+    (root / "metadata.csv").write_text("missing|No such file.\n" * 3)
+    with pytest.raises(ValueError, match="needs `text` and an `audio` file"):
+        pipeline.build(config(root)).run()
+    assert delimited({"path": str(root / "metadata.csv"), "limit": 1}) == [{"audio": "missing", "text": "No such file."}]
+    assert wer("the suit is ready", "the suit ready now") == 0.5 and wer("", "") == 0.0
+    samples, rate = audio.read(root / "wavs" / "utt0.wav")
+    assert len(audio.resample(samples, rate, 16000)) == round(len(samples) * 16000 / rate)
+    measured = audio.measure(np.zeros(rate, dtype=np.float32), rate)
+    assert measured == {"seconds": 1.0, "clipped": 0.0, "silent": 1.0}

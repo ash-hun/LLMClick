@@ -1,0 +1,16 @@
+# The Piper program (GPL-3.0-or-later). tts_piper and data_speech run it as a separate process through PIPER_PYTHON
+# and never import it, so it lives in its own environment: `environment/piper/setup.sh`.
+[project]
+name = "llmclick-piper"
+version = "0.1.0"
+requires-python = "==3.12.*"
+dependencies = [
+  "piper-tts[train]==1.8.0",
+  # torch.onnx.export uses the dynamo exporter by default from 2.9 on, and piper's export_onnx fails under it
+  "torch==2.8.0",
+  # cythonize needs it to build monotonic_align
+  "setuptools>=75",
+]
+
+[tool.uv]
+package = false

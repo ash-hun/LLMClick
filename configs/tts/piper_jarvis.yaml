@@ -1,0 +1,36 @@
+# Fine-tune a Piper voice from the jgkawell/jarvis medium checkpoint on the set configs/data/speech.yaml writes.
+# Needs the Piper environment (environment/piper/setup.sh) and, for a real run, a GPU: on a CPU an epoch over a few
+# hundred clips takes minutes. Replace <hash> with the data experiment's (`llmclick validate configs/data/speech.yaml`).
+pipeline:
+  recipe: tts_piper
+  name: jarvis-medium-ft
+  seed: 20260920
+  output_dir: ./output
+
+model:
+  quality: medium                   # the starting checkpoint's size
+  espeak_voice: en-gb-x-rp          # the reference voice's phonemizer (its .onnx.json)
+  sample_rate: 22050
+  init:
+    name: jgkawell/jarvis
+    revision: 37f8763122312665f091d1fc760abaf1f79b02cc
+    file: en/en_GB/jarvis/medium/checkpoints/epoch=8338-step=2012650.ckpt
+
+data:
+  sources:
+    - name: local_jsonl
+      path: output/jarvis-lines-<hash>/select/rows.jsonl   # audio paths are relative to this file
+    # - name: delimited                                    # recordings of your own: `<file>|<text>` lines
+    #   path: recordings/metadata.csv
+    #   audio_dir: recordings/wavs
+  validation: 0.05
+
+training:
+  epochs: 100
+  batch_size: 16
+  # args: {model.learning_rate: 1.0e-4}                   # any other `piper.train fit` option
+
+validation:
+  asr: {language: en}
+  rows: 50
+  max: {wer: 0.15}                  # compare with reference_wer: Whisper's error on the recordings themselves

@@ -1,5 +1,6 @@
 """Row sources: a `name:` key in `data.sources` resolves here and yields plain dict rows."""
 
+import csv
 import json
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,7 @@ from core.settings import get_settings
 
 SOURCES = Registry("source")
 Row = dict[str, Any]
+DELIMITED_COLUMNS = ["audio", "text"]  # an LJSpeech or Piper metadata.csv
 
 
 def renamed(rows: list[Row], fields: dict[str, str] | None) -> list[Row]:
@@ -35,3 +37,12 @@ def huggingface(params: dict[str, Any]) -> list[Row]:
     if params.get("limit"):
         dataset = dataset.select(range(min(int(params["limit"]), len(dataset))))
     return renamed([dict(row) for row in dataset], params.get("fields"))
+
+
+@SOURCES.register("delimited")
+def delimited(params: dict[str, Any]) -> list[Row]:
+    """params: path, delimiter? ("|"), columns? (["audio", "text"]), limit?: a headerless file of delimited lines."""
+    columns = params.get("columns") or DELIMITED_COLUMNS
+    with Path(params["path"]).open(newline="", encoding="utf-8") as stream:
+        lines = [line for line in csv.reader(stream, delimiter=params.get("delimiter", "|"), quoting=csv.QUOTE_NONE) if line]
+    return [dict(zip(columns, line, strict=False)) for line in lines[: params.get("limit")]]

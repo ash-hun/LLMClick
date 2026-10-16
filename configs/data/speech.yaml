@@ -1,0 +1,36 @@
+# A Piper training set for tts_piper: lines a voice assistant would say, written by a local Ollama model from
+# situation seeds, read aloud by a Piper voice, checked by Whisper, and written as wavs/ + metadata.csv + rows.jsonl.
+# Needs the Piper environment (environment/piper/setup.sh). Every recording and transcript is kept under its natural
+# key, so a run that crashes or is stopped continues where it stopped.
+pipeline:
+  recipe: data_speech
+  name: jarvis-lines
+  seed: 20260920
+  output_dir: ./output
+
+teacher: {name: ollama, model: qwen3.5:0.8b, base_url: http://localhost:11434}
+
+seeds:
+  - kind: situation
+    values: [a morning briefing, a system diagnostic, an incoming call, the weather forecast, a security alert,
+             calendar reminders, a suit malfunction, a quiet evening at the workshop]
+  # The reference voice's own lines (jgkawell/jarvis metadata.csv), read again; with only these, use the passthrough
+  # generator and drop `teacher`:
+  # - {kind: line, source: {name: delimited, path: <dir>/metadata.csv}, field: text}
+
+prompts:
+  generator: utterances
+  params: {n: 5, language: English, speaker: "a calm, formal British AI butler who addresses his employer as sir"}
+
+voice:
+  model:
+    name: jgkawell/jarvis
+    revision: 37f8763122312665f091d1fc760abaf1f79b02cc
+    file: en/en_GB/jarvis/medium/jarvis-medium.onnx
+  samples: 1
+
+verify: {min_seconds: 0.5, max_seconds: 15, max_wer: 0.2, asr: {language: en}}
+
+licence: >-
+  jgkawell/jarvis: MIT on the weights (model card, revision 37f87631). The voice imitates JARVIS from the Marvel films;
+  MIT does not cover the voice. Personal, non-commercial use only.

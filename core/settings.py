@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     JOB_WORKERS: int = 1                     # jobs run at once; set it to the number of GPUs on a multi-GPU server
     API_TOKEN: str = ""                      # when set, every /api route needs `Authorization: Bearer <token>`
     API_PATHS: str = "."                     # directories (colon-separated) the API may read configs and data from and write output to
+    PIPER_PYTHON: str = "environment/piper/.venv/bin/python"  # the Piper program's environment (environment/piper/setup.sh)
 
     @property
     def api_roots(self) -> list[Path]:

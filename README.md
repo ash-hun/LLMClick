@@ -15,12 +15,14 @@ what is already built, shows progress, and never hands on a trained model that h
 | LLM | `llm_decision_sft` | decision questions: a head scores the options (Jev, jeff, Jeeves stage 1) | same, plus `model.head`: `readout` or `pointer` |
 | LLM | `llm_decision_cispo` | the same questions with reasoning before the decision, by reinforcement (Jeeves stage 2) | same |
 | Embedding | `embedding_contrastive` | query/positive/negative triples (InfoNCE) | `bi_encoder` (Qwen3-Embedding-0.6B) |
+| TTS | `tts_piper` | recordings and their texts: a Piper (VITS) voice fine-tuned from a Piper checkpoint, exported to ONNX | `model.quality`: `medium`, `high` (Piper's sizes) |
 | Evaluation | `evaluation_custom` | nothing: scores a checkpoint of any experiment above on any rows, with that recipe's metrics | the experiment's |
 | Evaluation | `evaluation_benchmark` | nothing: scores a checkpoint on public benchmarks (lm-evaluation-harness), one cached stage per benchmark | the experiment's (LLM) |
 | Evaluation | `evaluation_compare` | nothing: several checkpoints (the base model among them) on the same benchmarks and rows; table, deltas with intervals, polygon chart | the experiments' |
 | Evaluation | `evaluation_decision` | nothing: a decision checkpoint on Jev rows or the JevBench tiers, without and with reasoning; accuracy, NLL, ECE, per tier, latency | the experiment's (decision) |
 | Evaluation | `evaluation_embedding` | nothing: an embedding checkpoint on MTEB tasks (mteb), one cached stage per task | the experiment's (embedding) |
 | Data | `data_synthetic` | nothing: rows for the recipes above from seeds through a teacher model (seeds, prompts, evolve, respond, verify, select) | teachers: anthropic, openai, ollama, local |
+| Data | `data_speech` | nothing: a Piper training set from seeds: texts (a teacher, or the seeds as they are) read by a Piper voice, checked by Whisper | voice: any Piper `.onnx` |
 
 The decision recipes follow the Jev request format. The readout head and one-pass training follow
 [jeff](https://github.com/firelex/jeff); the pointer head, reasoning chains and CISPO follow
@@ -62,13 +64,18 @@ LLMClick/
 │   │   ├── methods/              #     Training Method: base.py (LLMMethod), sft, instruction, dpo, grpo
 │   │   │   └── decision/         #       base.py (DecisionMethod: rows, metrics, calibration), sft, cispo
 │   │   └── config.py pipeline.py #     one config class and one registered recipe per method
-│   └── embedding/                #   family: text embedding models
-│       ├── models/               #     Model Catalog: base.py (EmbeddingBackbone), bi_encoder.py
-│       ├── methods/              #     Training Method: contrastive.py
-│       └── config.py pipeline.py
+│   ├── embedding/                #   family: text embedding models
+│   │   ├── models/               #     Model Catalog: base.py (EmbeddingBackbone), bi_encoder.py
+│   │   ├── methods/              #     Training Method: contrastive.py
+│   │   └── config.py pipeline.py
+│   └── tts/                      #   family: text-to-speech (tts_piper)
+│       ├── piper.py              #     the Piper program (GPL) as a separate process: speak, fit, export
+│       ├── audio.py asr.py       #     WAV measurements; Whisper transcripts and word error rate
+│       └── config.py stages.py pipeline.py
 ├── data/                         # Data channel: seeds -> prompts -> evolve -> respond -> verify -> select (data_synthetic)
 │   ├── teachers.py               #   anthropic, openai, ollama, local behind one complete()
-│   └── config.py rows.py ...     #   one module per stage; rows.py: natural keys, atomic files, per-item caches
+│   ├── config.py rows.py ...     #   one module per stage; rows.py: natural keys, atomic files, per-item caches
+│   └── speech/                   #   data_speech: synthesize, verify, select after the shared seeds and prompts
 ├── evaluation/                   # Evaluation channel: config -> scores of a trained model, report.json
 │   ├── source.py                 #   SourceExperiment: an experiment's config read back, its checkpoint located
 │   ├── stages.py                 #   rows, score, report (evaluation_custom)
@@ -80,6 +87,7 @@ LLMClick/
 ├── tests/core/  tests/modeling/
 ├── docs/                         # api-spec.md, screen-spec.md
 ├── environment/                  # Dockerfile, docker-compose.yml, .env.sample
+│   └── piper/                    #   the Piper program's own locked environment (GPL), built by setup.sh
 └── output/
     ├── _stages/<stage>-<fingerprint>/   # what each stage built; shared by every experiment with the same inputs
     └── <name>-<hash>/                   # one experiment: config.yaml, manifest.json, pipeline.log, links to its stages
@@ -162,6 +170,7 @@ pipeline:
 | `score:<run>:<task>`..., `rows`, `rows:<run>`..., `report` | `evaluation_compare`: the stages above per run, shared with the single-model recipes; the report compares every run with the base |
 | `rows`, `score`, `report` | `evaluation_decision`: every question through the head without reasoning and after greedy reasoning; `items.jsonl` per question |
 | `score:<task>`..., `report` | `evaluation_embedding`: one mteb run per task (fingerprint: checkpoint content, task, max_length, mteb version) |
+| `data`, `train`, `validate` | `tts_piper`: recordings found and split; `piper.train fit` from the starting checkpoint, exported to `voice.onnx`; the voice reads the held-out texts and Whisper transcribes them |
 
 | Recipe | Row keys | Metrics for `validation.min`/`max` |
 |---|---|---|
@@ -172,6 +181,7 @@ pipeline:
 | `llm_decision_sft` | `state`, `questions` (Jev records) or `state`, `question`, `label` (one question per row) | `accuracy`, `nll`, `ece` |
 | `llm_decision_cispo` | same | `accuracy`, `nll`, `ece`, `think_accuracy` (after reasoning) |
 | `embedding_contrastive` | `query`, `positive`, `negative`? | `accuracy` (positive ranked first), `mrr` |
+| `tts_piper` | `audio` (a WAV file), `text` | `wer` (Whisper on the voice), `reference_wer` (Whisper on the recordings), `duration_ratio` |
 
 By default every weight is trained, in FP32. `training.adapter` switches any of these recipes to LoRA:
 
@@ -223,6 +233,52 @@ experiment". Point it at `<experiment>/validate/checkpoint`: that link exists on
 passed validation, whereas `train/checkpoint` is there even when it failed. The checkpoint counts by content in
 the fingerprint, so rebuilding the earlier experiment rebuilds the one that continues it.
 
+### Text-to-speech recipe (`tts_piper`)
+
+`tts_piper` fine-tunes a [Piper](https://github.com/OHF-Voice/piper1-gpl) voice: a VITS model that reads espeak-ng
+phonemes and runs anywhere as one ONNX file. Piper is GPL-3.0-or-later and pins its own torch, so it is not a
+dependency of this package: it lives in `environment/piper/` (its own `pyproject.toml` and `uv.lock`), and both speech
+recipes run it as a separate process through `PIPER_PYTHON`. Build it once, and again after pulling: the script is
+safe to repeat.
+
+```bash
+environment/piper/setup.sh       # uv sync of the locked environment, plus the monotonic_align extension the wheel lacks
+```
+
+```yaml
+model:
+  quality: medium                  # must match the starting checkpoint; high sets Piper's larger decoder
+  espeak_voice: en-gb-x-rp
+  init:                            # a Piper .ckpt on the Hub (pinned), a local .ckpt, or <experiment>/validate/checkpoint
+    name: jgkawell/jarvis
+    revision: 37f8763122312665f091d1fc760abaf1f79b02cc
+    file: en/en_GB/jarvis/medium/checkpoints/epoch=8338-step=2012650.ckpt
+data:
+  sources:
+    - {name: delimited, path: recordings/metadata.csv, audio_dir: recordings/wavs}   # `<file>|<text>` lines
+training: {epochs: 100, batch_size: 16, args: {model.learning_rate: 1.0e-4}}         # args: any other `piper.train fit` option
+validation: {asr: {language: en}, max: {wer: 0.15}}
+```
+
+- **Rows.** `audio` and `text`. A relative `audio` path starts at the source's `audio_dir`, else at the directory of
+  the source file, and an LJSpeech id without `.wav` finds its file. `delimited` reads a headerless `|` file such as
+  an LJSpeech or Piper `metadata.csv`; `local_jsonl` reads the `rows.jsonl` that `data_speech` writes. The audio
+  directories count in the `data` fingerprint, so re-recorded files rebuild the experiment.
+- **Training.** The starting weights are copied in (`model.warmstart_ckpt`: every tensor whose shape matches, a fresh
+  optimizer), so an old Piper checkpoint loads into the current trainer and `training.epochs` counts from zero.
+  Piper's own validation split is off; the `validate` stage measures on this recipe's held-out rows instead. A rerun
+  after a crash continues from Piper's last epoch snapshot (`run/lightning_logs/version_<n>/checkpoints/last.ckpt`);
+  Piper turns cuDNN determinism off, so a GPU run is not bit-identical to an earlier one. `fit.log` holds Piper's
+  output; a cancelled API job stops when the fit ends.
+- **Checkpoint.** `<experiment>/validate/checkpoint/` holds `voice.onnx` and `voice.onnx.json` (a Piper voice:
+  `piper -m voice.onnx`, Home Assistant's `/share/piper`) and `model.ckpt`, the start of a further fine-tune.
+- **Validation.** The voice reads up to `validation.rows` held-out texts; Whisper (`validation.asr`, pinned) transcribes
+  them and the original recordings. `reference_wer` is the floor `wer` can reach with that recognizer; numbers written
+  as digits in one text and as words in the other count as errors.
+
+Before training on a voice, read its terms. `jgkawell/jarvis` is MIT on its weights per its model card, but it imitates
+a film character played by a real actor; MIT does not cover the voice, so treat it as personal and non-commercial.
+
 ## 03. Quick start
 
 ```bash
@@ -257,6 +313,8 @@ curl -X POST localhost:8000/api/jobs -H 'content-type: application/json' \
 | `evaluation/decision.yaml` | the `llm/decision_pointer.yaml` checkpoint on the JevBench tiers, without and with reasoning |
 | `evaluation/embedding.yaml` | the `embedding/contrastive.yaml` checkpoint on three MTEB tasks (needs `uv sync --extra eval`) |
 | `data/synthetic.yaml` | Korean conversation rows for `llm_sft` from four topic seeds through a local Ollama model, evolved, judged, deduplicated |
+| `data/speech.yaml` | a Piper training set: assistant lines written by a local Ollama model, read by the `jgkawell/jarvis` voice, checked by Whisper (needs `environment/piper/setup.sh`) |
+| `tts/piper_jarvis.yaml` | fine-tuning from the `jgkawell/jarvis` medium checkpoint on that set; replace `<hash>` with the `data/speech.yaml` experiment's |
 
 The `llm/` and `embedding/` configs ship as pilots: sample rows from `samples/` and `max_steps: 4`. Point
 `data.sources` at your rows and remove `max_steps` for a real run.
@@ -284,9 +342,10 @@ modeling
 │   │   └── heads          readout, pointer               <- add a decision head
 │   └── Training Method    sft, instruction, dpo, grpo    <- add a method
 │       └── decision       sft, cispo
-└── embedding
-    ├── Model Catalog      bi_encoder
-    └── Training Method    contrastive
+├── embedding
+│   ├── Model Catalog      bi_encoder
+│   └── Training Method    contrastive
+└── tts                    one recipe, trained by the Piper program; `model.quality` picks its size
 ```
 
 ### A new architecture in a catalog
@@ -404,6 +463,7 @@ Inside a stage, `self.progress.update(done, total, note)` drives the progress ba
 
 ```bash
 uv run pytest tests/core tests/modeling  # runner, progress, validation gate, API, every recipe on a tiny random model
+uv run pytest tests/data                # data recipes with fake teachers, a fake Piper and a fake Whisper
 uv run ruff check . && uv run mypy      # what CI runs on every pull request, besides the tests
 ```
 
