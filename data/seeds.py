@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from core.stage import Outputs, Stage
-from data.config import SyntheticConfig
+from data.config import SeedConfig
 from data.rows import Row, key, trail, write_rows
 from modeling.config import keyed_identity
 from modeling.tuning.sources import SOURCES
@@ -12,7 +12,7 @@ from modeling.tuning.sources import SOURCES
 SEEDS = "seeds.jsonl"
 
 
-def seed_rows(config: SyntheticConfig) -> list[Row]:
+def seed_rows(config: SeedConfig) -> list[Row]:
     """Pure: the config's seeds as rows. Inline values and rows of a source alike become {id, kind, text, row}."""
     rows: list[Row] = []
     for spec in config.seeds:
@@ -30,7 +30,7 @@ def seed_rows(config: SyntheticConfig) -> list[Row]:
     return sorted(unique.values(), key=lambda row: row["id"])
 
 
-class SeedsStage(Stage[SyntheticConfig]):
+class SeedsStage(Stage[SeedConfig]):
     name: ClassVar[str] = "seeds"
     sections: ClassVar[tuple[str, ...]] = ("seeds",)
 

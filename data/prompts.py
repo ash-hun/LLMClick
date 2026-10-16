@@ -6,11 +6,11 @@ from typing import Any, ClassVar
 
 from core.registry import Registry
 from core.stage import Outputs, Stage
-from data.config import SyntheticConfig
+from data.config import SeedConfig
 from data.rows import Row, cached, keep, key, read_rows, trail, write_rows
 from data.teachers import Teacher, teacher_from
 
-GENERATORS = Registry("generator")  # (teacher, seed row, index, settings, call) -> prompt rows
+GENERATORS = Registry("generator")  # (teacher or None, seed row, index, settings, call) -> prompt rows
 PROMPTS = "prompts.jsonl"
 NUMBERED = re.compile(r"^\s*(?:\d+[.)]|[-*])\s*(.+?)\s*$")
 
@@ -26,7 +26,7 @@ def lines_of(text: str) -> list[str]:
 
 
 @GENERATORS.register("passthrough")
-def passthrough(teacher: Teacher, seed: Row, index: int, params: dict[str, Any], ask: Any) -> list[Row]:
+def passthrough(teacher: Teacher | None, seed: Row, index: int, params: dict[str, Any], ask: Any) -> list[Row]:
     """The seed text is already the instruction; `answer_field` names a column with the reference answer."""
     row = seed.get("row") or {}
     answer = row.get(params.get("answer_field", "answer")) if params.get("answer_field") else row.get("answer")
@@ -34,7 +34,7 @@ def passthrough(teacher: Teacher, seed: Row, index: int, params: dict[str, Any],
 
 
 @GENERATORS.register("topic_questions")
-def topic_questions(teacher: Teacher, seed: Row, index: int, params: dict[str, Any], ask: Any) -> list[Row]:
+def topic_questions(teacher: Teacher | None, seed: Row, index: int, params: dict[str, Any], ask: Any) -> list[Row]:
     """Nemotron's open Q&A prompt: `n` questions about a topic, then each made more specific."""
     count = int(params.get("n", 3))
     language = params.get("language", "English")
@@ -50,7 +50,7 @@ def topic_questions(teacher: Teacher, seed: Row, index: int, params: dict[str, A
 
 
 @GENERATORS.register("persona_task")
-def persona_task(teacher: Teacher, seed: Row, index: int, params: dict[str, Any], ask: Any) -> list[Row]:
+def persona_task(teacher: Teacher | None, seed: Row, index: int, params: dict[str, Any], ask: Any) -> list[Row]:
     """Tulu 3's persona-driven prompt: one realistic request this persona would make, about one skill."""
     skills = params.get("skills") or ["a question or task from their daily work"]
     skill = skills[(index + sum(ord(c) for c in seed["id"])) % len(skills)]
@@ -62,7 +62,7 @@ def persona_task(teacher: Teacher, seed: Row, index: int, params: dict[str, Any]
 
 
 @GENERATORS.register("document_qa")
-def document_qa(teacher: Teacher, seed: Row, index: int, params: dict[str, Any], ask: Any) -> list[Row]:
+def document_qa(teacher: Teacher | None, seed: Row, index: int, params: dict[str, Any], ask: Any) -> list[Row]:
     """A question answerable from the passage, with its answer, for grounded rows; the passage becomes `context`."""
     language = params.get("language", "English")
     text = ask([{"role": "user", "content": f"Passage:\n{seed['text']}\n\nWrite one question that the passage answers and its "
@@ -74,14 +74,28 @@ def document_qa(teacher: Teacher, seed: Row, index: int, params: dict[str, Any],
     return [{"instruction": question.group(1).strip(), "answer": answer.group(1).strip(), "context": seed["text"]}]
 
 
+@GENERATORS.register("utterances")
+def utterances(teacher: Teacher | None, seed: Row, index: int, params: dict[str, Any], ask: Any) -> list[Row]:
+    """Lines to be read aloud for a speech dataset: `n` things a `speaker` would say about the seed, short enough for
+    one recording each, with numbers written as words so the text says what the voice says."""
+    count, language = int(params.get("n", 5)), params.get("language", "English")
+    speaker = params.get("speaker", "a voice assistant")
+    text = ask([{"role": "user", "content": f"Write {count} different things {speaker} would say about {seed['text']}. "
+                                            f"Each is one or two sentences of 4 to 30 words, in {language}, with numbers and "
+                                            "symbols written out as words. One per line, numbered. Only the lines."}])
+    return [{"instruction": line.strip(' "')} for line in lines_of(text)[:count]]
+
+
 class Calls:
     """The teacher calls one generator job makes, with their cost; one per job, so the cache entry holds the bill."""
 
-    def __init__(self, teacher: Teacher, max_tokens: int, temperature: float, seed: int) -> None:
+    def __init__(self, teacher: Teacher | None, max_tokens: int, temperature: float, seed: int) -> None:
         self.teacher, self.max_tokens, self.temperature, self.seed = teacher, max_tokens, temperature, seed
         self.cost = {"input": 0, "output": 0, "usd": 0.0, "calls": 0}
 
     def __call__(self, messages: list[dict[str, str]]) -> str:
+        if self.teacher is None:
+            raise ValueError("this generator asks a model: set `teacher` in the config")
         completion = self.teacher.complete(messages, max_tokens=self.max_tokens, temperature=self.temperature, seed=self.seed)
         self.cost["input"] += completion.input_tokens
         self.cost["output"] += completion.output_tokens
@@ -90,7 +104,7 @@ class Calls:
         return completion.text
 
 
-class PromptsStage(Stage[SyntheticConfig]):
+class PromptsStage(Stage[SeedConfig]):
     """Per seed and index, a generator call cached under the prompt's natural key, so a rerun after a crash makes
     only the prompts that are missing and the same ones again."""
     name: ClassVar[str] = "prompts"
@@ -98,11 +112,11 @@ class PromptsStage(Stage[SyntheticConfig]):
     sections: ClassVar[tuple[str, ...]] = ("prompts", "seed")
 
     def identity(self) -> Any:
-        return [super().identity(), teacher_from(self.config.teacher).identity()]
+        return [super().identity(), teacher_from(self.config.teacher).identity() if self.config.teacher else None]
 
     def run(self, workdir: Path, inputs: dict[str, Outputs]) -> Outputs:
         config, settings = self.config, self.config.prompts
-        teacher = teacher_from(config.teacher)
+        teacher = teacher_from(config.teacher) if config.teacher else None
         generator = GENERATORS.get(settings.generator)
         seeds = read_rows(Path(inputs["seeds"]["rows"]))
         rows: list[Row] = []

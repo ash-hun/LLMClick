@@ -3,7 +3,7 @@ module.exports = {
   docs: [
     {type: 'category', label: 'Getting started', collapsed: false, items: ['index', 'quick-start', 'project-structure']},
     {type: 'category', label: 'Concepts', items: ['concepts/how-a-run-works', 'concepts/stages', 'concepts/idempotency']},
-    {type: 'category', label: 'Modeling', items: ['modeling/recipes', 'modeling/decision-recipes', 'modeling/extending']},
+    {type: 'category', label: 'Modeling', items: ['modeling/recipes', 'modeling/decision-recipes', 'modeling/tts', 'modeling/extending']},
     {
       type: 'category',
       label: 'Evaluation',
@@ -15,7 +15,7 @@ module.exports = {
     {
       type: 'category',
       label: 'Data',
-      items: ['data/overview', 'data/synthetic', 'data/practices', 'data/lineages', 'data/design', 'data/survey'],
+      items: ['data/overview', 'data/synthetic', 'data/speech', 'data/practices', 'data/lineages', 'data/design', 'data/survey'],
     },
     {
       type: 'category',

@@ -1,7 +1,7 @@
 # Data channel
 
-Status: `data_synthetic` built (seeds, prompts, evolve, respond, verify, select; four teachers); `data_open` is
-designed below and not built. The survey (October 2026) and its sources follow the usage section.
+Status: `data_synthetic` built (seeds, prompts, evolve, respond, verify, select; four teachers); `data_speech` built
+(Piper training sets: seeds, prompts, synthesize, verify, select); `data_open` is designed below and not built. The survey (October 2026) and its sources follow the usage section.
 
 ## Built: `data_synthetic`
 
@@ -44,6 +44,41 @@ parameters; never keys or prices) is part of the fingerprints of the stages that
 
 Not yet (next milestone): multi-turn dialogues and reasoning on/off pairs in `respond`, judge verdicts with swapped
 order for pairs, the student's pass rate as a difficulty filter, arena-style selection, `data_open`.
+
+## Built: `data_speech`
+
+```yaml
+pipeline: {recipe: data_speech, name: jarvis-lines}
+teacher: {name: ollama, model: qwen3.5:0.8b}                # only for generators that ask a model; passthrough needs none
+seeds: [{kind: situation, values: [a morning briefing, a security alert]}]
+prompts: {generator: utterances, params: {n: 5, language: English, speaker: "a formal British AI butler"}}
+voice:
+  model: {name: jgkawell/jarvis, revision: <commit>, file: en/en_GB/jarvis/medium/jarvis-medium.onnx}   # or a local .onnx
+  samples: 1                                                # recordings per text; length_scale, noise_scale, noise_w_scale
+verify: {min_seconds: 0.5, max_seconds: 15, max_clipped: 0.001, max_silent: 0.5, max_wer: 0.2, asr: {language: en}}
+select: {max_rows: null}
+licence: "terms of the voice, copied into the manifest"
+```
+
+A Piper training set from seeds: `seeds` and `prompts` are the stages of `data_synthetic` (the `utterances` generator
+asks for lines to be read aloud, one or two sentences with numbers written as words; `passthrough` reads the seeds as
+they are, so the lines of an existing `metadata.csv` can be read again through the `delimited` source). A Piper voice
+reads every text and Whisper checks what it heard. The voice runs as a separate process from the Piper environment
+(`environment/piper/setup.sh`, `PIPER_PYTHON`; see the `tts_piper` section of the main README).
+
+| Stage | Does | Idempotent because |
+|---|---|---|
+| `synthesize` | the voice reads each prompt `samples` times into `audio/<key>.wav`; `\|` and line breaks are taken out of the text first, so the text is exactly what was read | the voice, its settings and the Piper lock are in the fingerprint, so a file is named by prompt and sample alone; a rerun reads only texts without a file. Piper's noise is unseeded, so the first reading is the one kept |
+| `verify` | length, clipped samples and silent frames first; then Whisper (`verify.asr`, pinned) transcribes the recording and the word error rate against the text decides; every rejection keeps its reason and measurements | pure checks over the files; each transcript is cached under the recording's key |
+| `select` | per text (case and spacing ignored) the recording Whisper understood best; `wavs/`, `metadata.csv` (`wavs/<key>.wav\|text`), `rows.jsonl` (`audio`, `text`, paths relative to the file) and `manifest.json` with the voice, the licence and each stage's counts | pure function of the verified rows; recordings are hard-linked (copied across file systems) through a temporary name |
+
+The dataset directory is the stage directory, reached through `<experiment>/select/`: `tts_piper` reads its
+`rows.jsonl` with `local_jsonl`, and Piper itself reads `metadata.csv` with that directory as `--data.audio_dir`.
+The licence is a required key because a voice's terms bind every recording it makes; the manifest is where the next
+reader finds them.
+
+Not yet: several voices or speakers in one set (Piper's multi-speaker format), text normalisation beyond what the
+generator asks for, a speaker-similarity check.
 
 ## Purpose
 

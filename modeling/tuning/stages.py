@@ -27,6 +27,13 @@ def write_rows(path: Path, rows: list[Row]) -> None:
     path.write_text("".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in rows))
 
 
+def held_out_positions(count: int, seed: int, share: float) -> set[int]:
+    """Which rows validation gets. A row's side depends only on the seed and its position, so adding sources never
+    reshuffles earlier rows."""
+    ranked = sorted(range(count), key=lambda i: hashlib.sha256(f"{seed}:{i}".encode()).hexdigest())
+    return set(ranked[: min(count - 1, max(1, round(count * share)))])
+
+
 class DataStage(Stage[TuningConfig]):
     """Read every source, check the rows against the method, and hold out the validation share."""
     name: ClassVar[str] = "data"
@@ -50,9 +57,7 @@ class DataStage(Stage[TuningConfig]):
                 raise ValueError(f"Row {index} does not fit recipe {self.config.recipe!r}: {error}") from None
         if len(rows) < MINIMUM_ROWS:
             raise ValueError(f"{len(rows)} rows cannot be split into training and validation")
-        # A row's side depends only on the seed and its position, so adding sources never reshuffles earlier rows.
-        ranked = sorted(range(len(rows)), key=lambda i: hashlib.sha256(f"{self.config.seed}:{i}".encode()).hexdigest())
-        held_out = set(ranked[: min(len(rows) - 1, max(1, round(len(rows) * self.config.data.validation)))])
+        held_out = held_out_positions(len(rows), self.config.seed, self.config.data.validation)
         split = {"train": [row for i, row in enumerate(rows) if i not in held_out],
                  "validation": [row for i, row in enumerate(rows) if i in held_out]}
         for name, fold in split.items():

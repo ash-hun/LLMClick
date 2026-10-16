@@ -15,6 +15,10 @@ if TYPE_CHECKING:
     from modeling.tuning.method import TrainingMethod
 
 
+def is_commit(revision: str | None) -> bool:
+    return revision is not None and len(revision) == 40 and all(c in string.hexdigits for c in revision)
+
+
 class BackboneConfig(Section):
     architecture: str = Field(description="Key of the family's model catalog")
     name: str = Field(description="Hugging Face model ID, or a local directory")
@@ -24,8 +28,7 @@ class BackboneConfig(Section):
     @model_validator(mode="after")
     def _pinned(self) -> "BackboneConfig":
         local = Path(self.name).is_dir()
-        commit = self.revision is not None and len(self.revision) == 40 and all(c in string.hexdigits for c in self.revision)
-        if not local and not commit:
+        if not local and not is_commit(self.revision):
             raise ValueError("model.revision must be a 40-character commit hash (a branch name is not reproducible)")
         return self
 
