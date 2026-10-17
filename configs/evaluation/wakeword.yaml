@@ -1,0 +1,30 @@
+# A wake word detector on what it never trained on: the name said by other voices, near misses and commands by them,
+# and hours of speech without the name (false accepts per hour), each recording clean and under noise. Replace
+# <hash> with the experiments' keys (`llmclick validate <config>`).
+#
+# Ambient audio is WAV. LibriSpeech test-clean (5.4 h of read speech, CC BY 4.0, openslr.org/12) as WAV:
+#   mkdir -p corpora && curl -L https://www.openslr.org/resources/12/test-clean.tar.gz | tar xz -C corpora
+#   find corpora/LibriSpeech/test-clean -name '*.flac' | while read f; do ffmpeg -loglevel error -n -i "$f" -ar 16000 -ac 1 "${f%.flac}.wav"; done
+pipeline:
+  recipe: evaluation_wakeword
+  name: jarvis-wake-eval
+  seed: 20261017
+  output_dir: ./output
+
+model:
+  experiment: output/jarvis-wake-<hash>
+  checkpoint: validate              # validate | train | a bundle directory (wakeword.json beside the ONNX files)
+
+data:
+  positive:
+    - {name: local_jsonl, path: output/wake-eval-phrase-<hash>/select/rows.jsonl}       # data/wake_eval_phrase.yaml
+    # - {name: delimited, path: recordings/wake/metadata.csv, audio_dir: recordings/wake/wavs}   # your own voice
+  negative:
+    - {name: local_jsonl, path: output/wake-eval-negatives-<hash>/select/rows.jsonl}    # data/wake_eval_negatives.yaml
+  ambient: [corpora/LibriSpeech/test-clean]   # never says the name; more hours, tighter false accepts per hour
+  noise: []                         # directories of noise WAVs for the noisy conditions; empty: Gaussian
+
+conditions: [null, 10, 5]           # clean, then speech-to-noise ratios in dB
+threshold: 0.5                      # the operating point; the sweep covers 0.01 to 0.99 either way
+refractory: 1.0                     # seconds after a firing in which another is not counted
+targets: [0.5, 0.1]                 # false accepts per hour at which the miss rate is read (openWakeWord, Picovoice)

@@ -591,7 +591,8 @@ Evaluation 채널 레시피의 필드: `evaluation_custom` 은 `stages`(`["rows"
 (`benchmarks.preset` 에 쓸 수 있는 값). `evaluation_compare` 는 `stages`(`["rows","score","benchmark","report"]`; 실제
 실행에서는 run 마다 `score:<label>:<task>` 와 `rows:<label>`), `checkpoint`, `preset`, `source`. `evaluation_decision` 은
 `stages`(`["rows","score","report"]`), `checkpoint`, `source`(`jevbench` 포함), `think`. `evaluation_embedding` 은
-`stages`(`["mteb","report"]`; 실제 실행에서는 태스크마다 `score:<task>`), `checkpoint`. 평가 config 의 `model` 은 실험
+`stages`(`["mteb","report"]`; 실제 실행에서는 태스크마다 `score:<task>`), `checkpoint`. `evaluation_wakeword` 는
+`stages`(`["clips","traces","report"]`), `checkpoint`(`validate`, `train`, 또는 번들 디렉토리; `base` 없음). 평가 config 의 `model` 은 실험
 (`experiment` + `checkpoint`) 또는 Hub 모델(`name` + `revision`, 임베딩은 `architecture` 추가) 중 하나다.
 
 Data 채널 레시피(`data_synthetic`)의 필드: `stages`(`["seeds","prompts","evolve","respond","verify","select"]`; `evolve`

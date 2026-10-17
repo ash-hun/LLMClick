@@ -91,12 +91,12 @@ def stream(parts: list[np.ndarray], rng: np.random.Generator, background: list[n
     return np.asarray(np.clip(mixed(speech, backdrop(rng, background, len(speech)), snr), -1, 1), dtype=np.float32)
 
 
-def firings(scores: np.ndarray, threshold: float) -> list[int]:
-    """Pure: the windows at which the detector fires, at most once per REFRACTORY seconds."""
-    quiet = int(REFRACTORY * features.RATE / features.HOP)
+def firings(scores: np.ndarray, threshold: float, refractory: float = REFRACTORY) -> list[int]:
+    """Pure: the windows at which the detector fires, at most once per `refractory` seconds."""
+    quiet = int(refractory * features.RATE / features.HOP)
     fired: list[int] = []
-    for index, score in enumerate(scores):
-        if score >= threshold and (not fired or index - fired[-1] > quiet):
+    for index in np.flatnonzero(np.asarray(scores) >= threshold).tolist():
+        if not fired or index - fired[-1] > quiet:
             fired.append(index)
     return fired
 

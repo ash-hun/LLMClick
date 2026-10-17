@@ -182,6 +182,25 @@ tell (about 0.008 standard error at 708 negatives) and recall on real voices is 
 `training` (`negative_weight`, `schedule`); their defaults keep the old behaviour, because on a small set weight 100
 leaves too few positives in each batch's loss to learn the phrase at all.
 
+### Evaluation: voices neither detector heard
+
+`evaluation_wakeword` (configs/evaluation/wakeword.yaml) on another Piper voice, VCTK: 161 readings of the name that
+Whisper heard as "Jarvis" (of 327, by 109 speakers), 2790 near misses, commands and ordinary sentences, and 5.4 hours
+of LibriSpeech test-clean for false accepts per hour. Gaussian noise, threshold 0.5, refractory 1 s:
+
+| Detector | Missed, clean | Missed, 10 dB | Missed, 5 dB | Negatives fired, clean | False accepts per hour |
+|---|---|---|---|---|---|
+| B6 | 7/161 (4.3%) | 66/161 (41.0%) | 76/161 (47.2%) | 16.1% | 3.1 (17 in 5.4 h) |
+| B7 | 59/161 (36.6%) | 44/161 (27.3%) | 66/161 (41.0%) | 1.0% | 9.6 (52 in 5.4 h) |
+
+Neither comes near openWakeWord's target (under 5% missed at 0.5 false accepts per hour): at no threshold does
+either reach 0.5 per hour. The two validation splits said 100% recall; they were readings by the training voice.
+B7's weighting of negatives made it refuse near misses ("Jarrett" fired 96 of 103 times on B6, 13 on B7) and, with
+them, much of a voice it never heard: on the missed readings its highest score is 0.011 at the median, so it is not
+a threshold away. Both lose most of the name under noise. What this points to: positives from more voices than one
+Piper model (other Piper voices, real recordings), real noise and room reverberation in training, and ambient
+speech as negatives.
+
 ## What the runs taught
 
 1. A test stream must be at least as long as the detector's window, or a test bug looks like a model that hears
@@ -194,6 +213,8 @@ leaves too few positives in each batch's loss to learn the phrase at all.
    what would.
 6. A Piper take is a draw. Keep the best-heard of several takes of anything the agent plays as a file.
 7. One passing run is not a passing recipe. Run the gate over a few seeds before trusting a margin of a point.
+8. A held-out split of the training voice measures memory of that voice. Score on voices it never heard before
+   calling a detector done.
 
 ## Limits
 

@@ -14,6 +14,7 @@ from evaluation.config import BUILT, EvaluationConfig, MeasureSettings
 from evaluation.decision import DecisionConfig, DecisionReport, DecisionScoreStage
 from evaluation.embedding import EmbeddingConfig, EmbeddingReport, EmbeddingStage
 from evaluation.stages import ReportStage, RowsStage, ScoreStage
+from evaluation.wakeword import ClipsStage, TraceStage, WakewordEvaluationConfig, WakewordReport, STAGES as WAKEWORD_STAGES
 from modeling.tuning.sources import SOURCES
 
 
@@ -157,3 +158,16 @@ class EmbeddingEvaluation(EvaluationPipeline[EmbeddingConfig]):
         report = EmbeddingReport(config, self.progress)
         report.scores = tuple(stage.name for stage in scores)
         return {**{stage.name: stage for stage in scores}, report.name: report}
+
+
+@recipe
+class WakewordEvaluation(EvaluationPipeline[WakewordEvaluationConfig]):
+    """A wake word detector on recordings it never trained on, under several noise conditions, and on hours of audio
+    without the phrase: miss rate, false accepts per hour, the threshold sweep between them."""
+    kind: ClassVar[str] = "evaluation_wakeword"
+    config_class = WakewordEvaluationConfig
+    stage_classes = (ClipsStage, TraceStage, WakewordReport)
+
+    @classmethod
+    def catalogue(cls) -> dict[str, list[str]]:
+        return {**super().catalogue(), "checkpoint": [*WAKEWORD_STAGES, "<directory>"]}

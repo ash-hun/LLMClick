@@ -1,7 +1,8 @@
 # Evaluation channel
 
 Status: all five milestones built (`evaluation_custom`, `evaluation_benchmark`, `evaluation_compare`,
-`evaluation_decision`, `evaluation_embedding`; contamination, the tracker and the API). The design below was written
+`evaluation_decision`, `evaluation_embedding`; contamination, the tracker and the API), and `evaluation_wakeword` for
+the wake word detectors of the modeling channel. The design below was written
 after a short survey of the benchmark landscape (October 2026); the survey's sources are at the end. What is still
 open is listed under each recipe and in the milestone table.
 
@@ -141,6 +142,50 @@ checkpoint's content, the task, `max_length` and the mteb version. The experimen
 encoder (texts in, unit vectors out; cosine similarity), so pooling and instructions are the recipe's own. The report
 holds per task the main score and metric, the task type and every split's scores; `results.json` keeps mteb's full
 result. mteb's mock tasks (`MockSTSTask`, ...) are accepted for smoke tests without downloads.
+
+## Built: `evaluation_wakeword`
+
+```yaml
+pipeline: {recipe: evaluation_wakeword, name: jarvis-wake-eval}
+model: {experiment: output/jarvis-wake-<hash>, checkpoint: validate}   # validate | train | a bundle directory
+data:
+  positive: [{name: local_jsonl, path: output/wake-eval-phrase-<hash>/select/rows.jsonl}]     # the name, other voices
+  negative: [{name: local_jsonl, path: output/wake-eval-negatives-<hash>/select/rows.jsonl}]  # near misses, commands
+  ambient: [corpora/LibriSpeech/test-clean]   # WAVs that never say the name: false accepts per hour
+  noise: []                                    # noise WAVs for the noisy conditions; empty: Gaussian
+conditions: [null, 10, 5]   # clean, then SNR in dB
+threshold: 0.5
+refractory: 1.0
+targets: [0.5, 0.1]         # false accepts per hour at which the miss rate is read
+```
+
+`validate` of the `wakeword` recipe says whether a detector passed on a held-out split of its own training voice.
+This recipe says how it does on what it never heard, the way wake word detectors are compared elsewhere:
+
+- **Miss rate (FRR)** per recording, under each condition: the recording in a stream of its own, 2 s of noise before
+  it, as `validate` builds them. It counts as heard if the detector fires between the start of the name and 1 s
+  after its end; the report keeps the median time from the end of the name to that firing.
+- **False accepts per hour** on the ambient audio, read as one long stream (as an always-on microphone hears it), in
+  60 s chunks that overlap by one window, so the scores equal those of the whole stream. A false accept is an event:
+  a firing, then nothing counted for `refractory` seconds. openWakeWord's training script counts every window over
+  the threshold instead, which counts one long firing several times.
+- **Negatives fired**: the share of short recordings that must not wake it, per condition, and per text at the
+  operating point, so the near misses that remain are named.
+- **The sweep**: all three at every threshold from 0.01 to 0.99, and the miss rate at the most sensitive threshold
+  whose false accepts per hour stay within each target: 0.5 per hour is openWakeWord's target for its models (with
+  under 5% misses), 1 per 10 hours is the operating point of Picovoice's benchmark. Intervals: Wilson for shares,
+  Poisson for rates; with 5 hours of ambient audio, zero events still allows up to 0.7 per hour.
+
+Stages: `clips` (find the recordings, list the ambient and noise WAVs with their length) -> `traces` (the detector's
+score every 80 ms on everything, scope `wakeword-traces`) -> `report`. Thresholds, refractory and targets are read
+only by the report, so a new operating point rereads the scores instead of listening again. Each recording's noise
+is drawn from the seed and the recording's content.
+
+Data: `data/wake_eval_phrase.yaml` and `data/wake_eval_negatives.yaml` have another Piper voice (VCTK, 109 speakers
+of British English accents) read the name, near misses and commands; training used LibriTTS-R, so neither the voice
+model nor any speaker is shared. Ambient audio is WAV: the config shows how to fetch LibriSpeech test-clean (5.4 h,
+CC BY 4.0) and convert it with ffmpeg. Not yet: room reverberation (RIRs), real far-field audio such as DiPCo, and
+interpolation between swept thresholds.
 
 ## Purpose
 
@@ -315,6 +360,8 @@ Order of 4 and 5 can swap depending on which models are trained first.
 - Row sources (`local_jsonl`, `huggingface`) live in `modeling/tuning/sources.py`; the `rows` stage reuses them.
 
 ## Sources
+
+- Wake word evaluation: [openWakeWord README, performance and evaluation](https://github.com/dscripka/openWakeWord#performance-and-evaluation) (targets under 5% misses and 0.5 false accepts per hour; DiPCo), its [training script](https://github.com/dscripka/openWakeWord/blob/main/openwakeword/train.py) (false positives counted per window over 11.3 h); [Picovoice wake-word-benchmark](https://github.com/Picovoice/wake-word-benchmark) (miss rate at 1 false alarm per 10 hours, LibriSpeech test-clean with DEMAND noise); [microWakeWord test.py](https://github.com/OHF-Voice/micro-wake-word/blob/main/microwakeword/test.py) (cutoff sweep in 0.01 steps, accepts with a cooldown, false accepts per hour of ambient audio); Coucke et al., [Efficient keyword spotting using dilated convolutions and gating](https://arxiv.org/abs/1811.07684) (Hey Snips; miss rate at 0.5 false accepts per hour)
 
 - Qwen3.5 small models and their benchmark table: [Artificial Analysis](https://artificialanalysis.ai/articles/qwen3-5-small-models), [Qwen/Qwen3.5-0.8B model card](https://huggingface.co/Qwen/Qwen3.5-0.8B)
 - lm-evaluation-harness task list (Korean tasks kmmlu, haerae, kobest, click, hrm8k; mmlu_pro, gsm8k, ifeval, gpqa, humaneval, ruler, longbench): [tasks README](https://github.com/EleutherAI/lm-evaluation-harness/blob/main/lm_eval/tasks/README.md)

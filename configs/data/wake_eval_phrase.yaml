@@ -1,0 +1,30 @@
+# Recordings of the wake word for `evaluation_wakeword` (configs/evaluation/wakeword.yaml), by voices the detector never
+# trained on: another Piper voice (VCTK, 109 speakers of British English accents) where training used LibriTTS-R. A
+# held-out split of the training voice says how well the detector learned; this set says whether it learned the word.
+# Every reading Whisper hears as the name is kept. Needs the Piper environment (environment/piper/setup.sh).
+pipeline:
+  recipe: data_speech
+  name: wake-eval-phrase
+  seed: 20261017
+  output_dir: ./output
+
+seeds:
+  - {kind: line, values: ["Jarvis.", "Jarvis?", "Jarvis!"]}
+
+prompts: {generator: passthrough}
+
+voice:
+  model:
+    name: rhasspy/piper-voices
+    revision: c10ece1aade47bb51c153c893d14e5bf8e5b7117
+    file: en/en_GB/vctk/medium/en_GB-vctk-medium.onnx
+  speakers: 109                     # every speaker of the voice
+  samples: 1
+  length_scale: 1.0
+
+verify: {min_seconds: 0.3, max_seconds: 4, max_wer: 0.0, asr: {language: en}}
+select: {per_text: null}
+
+licence: >-
+  rhasspy/piper-voices en_GB-vctk-medium: MIT (repository card, revision c10ece1a); trained on VCTK, CC BY 4.0
+  (model card). Synthetic speech for evaluating a wake word detector.
