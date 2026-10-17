@@ -90,7 +90,8 @@ def test_a_voice_that_mumbles_fails_validation(tmp_path: Path, piper: FakePiper)
         pipeline.build(config(root)).run()
 
 
-def test_the_agents_fixed_replies_are_spoken_once_and_must_be_understood(tmp_path: Path, piper: FakePiper) -> None:
+def test_the_agents_fixed_replies_keep_their_best_take_and_must_be_understood(tmp_path: Path, piper: FakePiper,
+                                                                              monkeypatch: pytest.MonkeyPatch) -> None:
     replies = {"wake_up": "At your service, sir.", "web_search": "Searching Reference."}
     result = pipeline.build(config(recordings(tmp_path), validation={"phrases": replies, "max": {"wer": 0.1, "phrase_wer": 0.0}})).run()
     report = Path(result["stages"]["validate"]["report"]).parent
@@ -99,6 +100,13 @@ def test_the_agents_fixed_replies_are_spoken_once_and_must_be_understood(tmp_pat
     assert result["stages"]["validate"]["metrics"]["phrase_wer"] == 0.0
     with pytest.raises(ValidationFailed, match="phrase_wer"):
         pipeline.build(config(tmp_path, validation={"phrases": {"web_search": "Searching mumble."}, "max": {"phrase_wer": 0.0}})).run()
+    first_take_garbled = FakeListener(piper, heard_as="a recording")
+    hears = first_take_garbled.transcribe
+    first_take_garbled.transcribe = lambda path: "garbled" if path.name.endswith("-0.wav") else hears(path)  # type: ignore[method-assign]
+    monkeypatch.setattr("modeling.tts.stages.Listener", first_take_garbled)
+    again = pipeline.build(config(tmp_path, validation={"phrases": replies, "phrase_takes": 2, "max": {"phrase_wer": 0.0}})).run()
+    picked = json.loads((Path(again["stages"]["validate"]["report"]).parent / "phrases.json").read_text())
+    assert {entry["take"] for entry in picked.values()} == {1} and [take["heard"] for take in picked["web_search"]["takes"]] == ["garbled", "Searching Reference."]
     with pytest.raises(ValueError, match="may only use letters"):
         pipeline.build(config(tmp_path, validation={"phrases": {"web search": "Searching Reference."}}))
 

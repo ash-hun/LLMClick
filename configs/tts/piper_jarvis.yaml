@@ -39,9 +39,10 @@ validation:
     web_search: Searching Reference.
     horizontal_task: Processing Long Task.
     remember_pattern: Checking the Pattern.
-    analysis: Target Analysis.
+    analysis: Target. Analysis.     # the full stop makes the voice pause; as "Target Analysis." no take was heard right
     focus_mode_enter: Activate Focus mode.
     focus_mode_quit: Deactivate Focus mode.
     persona_karen: Change to KAREN.
     persona_jarvis: Change to JARVIS.
+  phrase_takes: 5                   # takes per read-back; the one Whisper hears best is kept
   max: {wer: 0.15, phrase_wer: 0.0}  # compare wer with reference_wer: Whisper's error on the recordings themselves

@@ -98,7 +98,9 @@ class PiperValidationConfig(ValidationConfig):
     rows: int | None = Field(default=50, ge=1, description="Held-out rows to synthesize and transcribe; null: all of them")
     phrases: dict[str, str] = Field(default_factory=dict,
                                     description="Fixed replies the agent plays (name -> text), e.g. web_search: Searching "
-                                                "Reference.; each is spoken once into phrases/<name>.wav and must be understood")
+                                                "Reference.; the best-heard take is kept as phrases/<name>.wav and must be understood")
+    phrase_takes: int = Field(default=3, ge=1, description="Takes of each phrase; Piper's unseeded noise makes each one "
+                                                           "different, and Whisper picks the best")
 
     @model_validator(mode="after")
     def _named(self) -> "PiperValidationConfig":

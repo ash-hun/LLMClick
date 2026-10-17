@@ -176,16 +176,25 @@ class ListenStage(ValidateStage[PiperConfig]):
         return {**metrics, **({"phrase_wer": max(reply["wer"] for reply in replies.values())} if replies else {})}
 
     def phrases(self, voice: Path, workdir: Path, listener: Listener) -> dict[str, dict[str, Any]]:
-        """Each fixed reply spoken once and heard; a rerun keeps the recording it already has, so the agent plays the
-        file that passed."""
+        """Each fixed reply spoken `phrase_takes` times; the take Whisper hears best (then the first) becomes
+        phrases/<name>.wav. A rerun keeps the takes it already has, so the agent plays the file that passed."""
+        settings = self.config.validation
         replies: dict[str, dict[str, Any]] = {}
-        for name, text in sorted(self.config.validation.phrases.items()):
+        for name, text in sorted(settings.phrases.items()):
             self.progress.update(0, None, f"speaking the reply {name!r}")
-            wav = workdir / "phrases" / f"{name}.wav"
-            if not wav.is_file():
-                piper.speak(voice, text, wav, workdir / "speak.log", {})
-            heard = listener.transcribe(wav)
-            replies[name] = {"text": text, "audio": f"phrases/{name}.wav", "heard": heard, "wer": wer(text, heard)}
+            takes: list[dict[str, Any]] = []
+            for take in range(settings.phrase_takes):
+                wav = workdir / "phrases" / "takes" / f"{name}-{take}.wav"
+                if not wav.is_file():
+                    piper.speak(voice, text, wav, workdir / "speak.log", {})
+                heard = listener.transcribe(wav)
+                takes.append({"take": take, "heard": heard, "wer": wer(text, heard)})
+            best = min(takes, key=lambda entry: (entry["wer"], entry["take"]))
+            kept = workdir / "phrases" / f"{name}.wav"
+            temporary = kept.with_suffix(".tmp")
+            shutil.copyfile(workdir / "phrases" / "takes" / f"{name}-{best['take']}.wav", temporary)
+            temporary.replace(kept)
+            replies[name] = {"text": text, "audio": f"phrases/{name}.wav", **best, "takes": takes}
         if replies:
             write_json(workdir / "phrases.json", replies)
         return replies
