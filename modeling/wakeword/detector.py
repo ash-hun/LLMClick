@@ -36,17 +36,22 @@ def fit(x: np.ndarray, y: np.ndarray, training: WakewordTraining, seed: int, onn
     picker = np.random.default_rng(seed)
     model = network(training)
     optimizer = torch.optim.Adam(model.parameters(), lr=training.learning_rate)
-    loss_of = torch.nn.BCELoss()
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, training.steps) if training.schedule == "cosine" else None
+    loss_of = torch.nn.BCELoss(reduction="none")
     inputs, targets = torch.from_numpy(x), torch.from_numpy(y)
     half = training.batch_size // 2
     history: list[list[float]] = []
     model.train()
     for step in range(1, training.steps + 1):
         batch = np.concatenate([picker.choice(positives, half), picker.choice(negatives, training.batch_size - half)])
-        loss = loss_of(model(inputs[batch]).squeeze(1), targets[batch])
+        target = targets[batch]
+        weight = torch.where(target == 0, training.negative_weight, 1.0)
+        loss = (loss_of(model(inputs[batch]).squeeze(1), target) * weight).mean()
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+        if scheduler:
+            scheduler.step()
         if step % LOG_EVERY == 0 or step == training.steps:
             history.append([step, loss.item()])
             report(step)

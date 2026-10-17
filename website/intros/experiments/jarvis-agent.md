@@ -33,7 +33,9 @@ All listening checks use Whisper `openai/whisper-base` (revision `e37978b9`, Eng
 | A2-3 (trial) | "Jarvis, wake up" | 25 / 312 | silence after the phrase is a negative too | 0.5 | 0.833 | 0.013 | 1.000 | failed (recall) |
 | B3 | "Jarvis" | 426 / 910 | full data | 0.5 | 1.000 | 0.057 | 0.925 | failed (false_accepts) |
 | B3 | "Jarvis" | 426 / 910 | same model | 0.95 | 1.000 | 0.039 | 0.953 | passed |
-| **B6** | "Jarvis" | 426 / 2830 | + 2400 near misses by 120 new speakers | 0.5 | **1.000** | **0.047** | **0.963** | **passed** |
+| B6 | "Jarvis" | 426 / 2830 | + 2400 near misses by 120 new speakers | 0.5 | 1.000 | 0.047 | 0.963 | passed |
+| B6, retrained | "Jarvis" | 426 / 2830 | windows keyed by recording content, not path | 0.5 | 1.000 | 0.088 | 0.953 | failed (false_accepts) |
+| **B7** | "Jarvis" | 426 / 2830 | negatives weighted 100, cosine learning rate | 0.5 | **1.000** | **0.037** | **0.981** | **passed** |
 
 Each row is measured on its own held-out set, so rows of different data do not compare directly. The fair
 comparison of B3 and B6 uses only the recordings neither trained on:
@@ -155,6 +157,31 @@ In openWakeWord's runtime, on "Jarvis" followed by "Wake up.", by "Please search
 web." and by "Enter the focus mode.", B6 fires as the name ends (scores 0.94-1.00 from 2.56 to 3.04 s, the name
 ending at about 2.65 s) and not during the command.
 
+### B7: a recipe that passes on any seed, not on a lucky one
+
+A fix made each training window's noise depend on the recording's content rather than its path (until then, moving
+the recordings changed the windows). With new windows and nothing else changed, B6's recipe failed: false_accepts
+0.088. Scoring the B6 detector itself with the new test noise gave 0.049, so the test had barely moved; the detector
+had. Over seeds (each seed also draws its own validation split, so the gate's 5% is measured six times on different
+held-out sets):
+
+| Training | false_accepts over seeds | Worst | Mean | recall |
+|---|---|---|---|---|
+| B6 recipe (constant rate, equal weights) | 0.037, 0.051, 0.088 | 0.088 | 0.059 | 1.000 |
+| 8 rounds of augmentation | 0.042, 0.068, 0.151 | 0.151 | 0.087 | 1.000 |
+| layer_dim 64 | 0.061, 0.064, 0.071 | 0.071 | 0.065 | 1.000 |
+| cosine rate | 0.042, 0.051, 0.062 | 0.062 | 0.052 | 1.000 |
+| cosine, negatives weighted 30 | 0.023 to 0.058 (6 seeds) | 0.058 | 0.040 | 1.000 |
+| **cosine, negatives weighted 100 (B7)** | 0.031 to 0.047 (6 seeds) | **0.047** | **0.037** | **1.000** |
+| cosine, negatives weighted 300 | 0.028 to 0.045 (6 seeds) | 0.045 | 0.035 | 1.000 |
+
+More augmentation widened the spread rather than narrowing it, so data was not what was missing. Two things were: a
+constant learning rate leaves the detector wherever step 3000 happens to land, and with recall at 1.000 on every seed
+the loss had room to care more about negatives. 100 rather than 300 because the two differ by less than the test can
+tell (about 0.008 standard error at 708 negatives) and recall on real voices is not measured. Both are settings of
+`training` (`negative_weight`, `schedule`); their defaults keep the old behaviour, because on a small set weight 100
+leaves too few positives in each batch's loss to learn the phrase at all.
+
 ## What the runs taught
 
 1. A test stream must be at least as long as the detector's window, or a test bug looks like a model that hears
@@ -166,6 +193,7 @@ ending at about 2.65 s) and not during the command.
 5. A voice fine-tuned on its own output cannot learn the lines it says badly; recordings that say them right are
    what would.
 6. A Piper take is a draw. Keep the best-heard of several takes of anything the agent plays as a file.
+7. One passing run is not a passing recipe. Run the gate over a few seeds before trusting a margin of a point.
 
 ## Limits
 
