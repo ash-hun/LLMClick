@@ -22,6 +22,7 @@ what is already built, shows progress, and never hands on a trained model that h
 | Evaluation | `evaluation_compare` | nothing: several checkpoints (the base model among them) on the same benchmarks and rows; table, deltas with intervals, polygon chart | the experiments' |
 | Evaluation | `evaluation_decision` | nothing: a decision checkpoint on Jev rows or the JevBench tiers, without and with reasoning; accuracy, NLL, ECE, per tier, latency | the experiment's (decision) |
 | Evaluation | `evaluation_embedding` | nothing: an embedding checkpoint on MTEB tasks (mteb), one cached stage per task | the experiment's (embedding) |
+| Evaluation | `evaluation_wakeword` | nothing: a wake word detector on recordings and hours of audio it never heard; miss rate per noise condition, false accepts per hour, the threshold sweep | the experiment's (wake word) |
 | Data | `data_synthetic` | nothing: rows for the recipes above from seeds through a teacher model (seeds, prompts, evolve, respond, verify, select) | teachers: anthropic, openai, ollama, local |
 | Data | `data_speech` | nothing: a Piper training set from seeds: texts (a teacher, or the seeds as they are) read by a Piper voice, checked by Whisper | voice: any Piper `.onnx`, one speaker or many |
 
@@ -88,6 +89,7 @@ LLMClick/
 │   ├── compare.py                #   runs, verdicts against the base, polygon SVG, Markdown summary (evaluation_compare)
 │   ├── decision.py               #   jevbench source, decide without and with reasoning, ECE, tiers, latency (evaluation_decision)
 │   ├── embedding.py              #   mteb encoder wrapper, one stage per MTEB task (evaluation_embedding)
+│   ├── wakeword.py               #   clips, score traces, miss rate and false accepts per hour over thresholds (evaluation_wakeword)
 │   └── config.py pipeline.py     #   (README: design and milestones)
 ├── tests/core/  tests/modeling/
 ├── docs/                         # api-spec.md, screen-spec.md
@@ -105,7 +107,8 @@ benchmark, with presets for the small-model panel and Korean; `evaluation_compar
 base model among them, through the same benchmarks and rows and reports the differences with their intervals, a
 polygon chart and a Markdown summary; `evaluation_decision` measures a decision model on Jev rows or the JevBench
 tiers without and with reasoning (accuracy, NLL, ECE, per tier against chance, latency); `evaluation_embedding`
-runs an embedding model on MTEB tasks. All write `report.json` with the overlap between the evaluation items and
+runs an embedding model on MTEB tasks; `evaluation_wakeword` measures a wake word detector's miss rate under noise and
+false accepts per hour of audio without the name. All write `report.json` with the overlap between the evaluation items and
 the experiment's training rows (exact matches and n-gram near-duplicates) next to the scores, send the report to
 wandb with `tracker.enabled`, and are listed by `GET /api/evaluations` (`evaluation/README.md` has the details). `data/` produces rows: `data_synthetic` makes them from seeds through a teacher model (Anthropic, OpenAI-format, Ollama or a local checkpoint), evolves and verifies them, removes duplicates and leaks, and writes a recipe's rows with a manifest; every stage is cached by its inputs and safe to rerun, so a crash or a spent budget resumes where it stopped (`data/README.md`). Loading open datasets (`data_open`) is designed there and not built. A channel is a
 package that registers recipes; it joins by adding its name to `CHANNELS` in `core/registry.py` and reuses `Stage`,
@@ -175,6 +178,7 @@ pipeline:
 | `score:<run>:<task>`..., `rows`, `rows:<run>`..., `report` | `evaluation_compare`: the stages above per run, shared with the single-model recipes; the report compares every run with the base |
 | `rows`, `score`, `report` | `evaluation_decision`: every question through the head without reasoning and after greedy reasoning; `items.jsonl` per question |
 | `score:<task>`..., `report` | `evaluation_embedding`: one mteb run per task (fingerprint: checkpoint content, task, max_length, mteb version) |
+| `clips`, `traces`, `report` | `evaluation_wakeword`: recordings and ambient WAVs found; the detector's score every 80 ms on all of them under each condition; the threshold sweep and the operating point |
 | `data`, `train`, `validate` | `tts_piper`: recordings found and split; `piper.train fit` from the starting checkpoint, exported to `voice.onnx`; the voice reads the held-out texts and the fixed replies, Whisper transcribes them |
 | `data`, `features`, `train`, `validate` | `wakeword`: recordings of both classes found and split; noisy windows as embeddings; the detector trained and exported; held-out streams scored every 80 ms |
 

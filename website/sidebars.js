@@ -9,7 +9,7 @@ module.exports = {
       label: 'Evaluation',
       items: [
         'evaluation/overview', 'evaluation/custom', 'evaluation/benchmark', 'evaluation/compare', 'evaluation/decision',
-        'evaluation/embedding', 'evaluation/contamination', 'evaluation/design', 'evaluation/survey',
+        'evaluation/embedding', 'evaluation/wakeword', 'evaluation/contamination', 'evaluation/design', 'evaluation/survey',
       ],
     },
     {

@@ -35,6 +35,7 @@ PAGES: dict[str, tuple[str, list[tuple[str, str | None, bool]]]] = {
     "evaluation/compare": ("evaluation/compare", [("evaluation/README.md", "Built: `evaluation_compare`", False)]),
     "evaluation/decision": ("evaluation/decision", [("evaluation/README.md", "Built: `evaluation_decision`", False)]),
     "evaluation/embedding": ("evaluation/embedding", [("evaluation/README.md", "Built: `evaluation_embedding`", False)]),
+    "evaluation/wakeword": ("evaluation/wakeword", [("evaluation/README.md", "Built: `evaluation_wakeword`", False)]),
     "evaluation/contamination": ("evaluation/contamination", [("evaluation/README.md", "Built: contamination, tracker, API", False)]),
     "evaluation/design": ("evaluation/design", [("evaluation/README.md", "Design", False), ("evaluation/README.md", "Plan", False), ("evaluation/README.md", "Known starting points", False)]),
     "evaluation/survey": ("evaluation/survey", [("evaluation/README.md", "Survey: what to measure for 0.6B to 2B fine-tuned models", False), ("evaluation/README.md", "Sources", False)]),

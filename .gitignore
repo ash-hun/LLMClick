@@ -26,3 +26,6 @@ CLAUDE.md
 output/
 # external reference checkouts (own .git)
 /reference/
+
+# downloaded evaluation audio (configs/evaluation/wakeword.yaml)
+/corpora/

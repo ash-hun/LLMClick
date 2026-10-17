@@ -1,0 +1,33 @@
+# What must not wake the agent, for `evaluation_wakeword`, by the voices of data/wake_eval_phrase.yaml (VCTK), which
+# the detector never trained on: the near misses of the name it trained on, and commands and ordinary speech it did
+# not. No listening check: a misheard reading is still not "Jarvis".
+pipeline:
+  recipe: data_speech
+  name: wake-eval-negatives
+  seed: 20261017
+  output_dir: ./output
+
+seeds:
+  - kind: line
+    values: ["Travis.", "Davis.", "Harvest.", "Service.", "Darvish.", "Charges.", "Marvis.", "Jars.", "Garbage.",
+             "Karen.", "Jasmine.", "Nervous.", "Jarrett.", "Harvey.", "Carvings.", "Starbucks.", "Purpose.", "Office.",
+             "Dervish.", "Jockeys."]
+  - kind: line
+    values: ["Wake up.", "Search the web for the latest results.", "Summarize this paper for me.",
+             "Set a timer for ten minutes.", "What is on my calendar today?", "Play some music in the kitchen."]
+
+prompts: {generator: passthrough}
+
+voice:
+  model:
+    name: rhasspy/piper-voices
+    revision: c10ece1aade47bb51c153c893d14e5bf8e5b7117
+    file: en/en_GB/vctk/medium/en_GB-vctk-medium.onnx
+  speakers: 109
+
+verify: {min_seconds: 0.2, max_seconds: 6, asr: null}
+select: {per_text: null}
+
+licence: >-
+  rhasspy/piper-voices en_GB-vctk-medium: MIT (repository card, revision c10ece1a); trained on VCTK, CC BY 4.0
+  (model card). Synthetic speech for evaluating a wake word detector.
