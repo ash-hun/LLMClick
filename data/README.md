@@ -25,20 +25,30 @@ cached answers and nothing before it:
 | Stage | Does | Idempotent because |
 |---|---|---|
 | `seeds` | inline values and source rows become `{id, kind, text, row}`; the same text is one seed | pure function of the config and the source files; ids are content hashes |
-| `prompts` | a generator (`topic_questions`, `persona_task`, `document_qa`, `passthrough`) makes instructions per seed; `constraints` appends a verifiable one | every generator job is cached under `key(seed, generator, index, params)` in `cache/`; a rerun makes only the missing ones |
+| `prompts` | a generator (`topic_questions`, `persona_task`, `document_qa`, `labelled_requests`, `passthrough`) makes instructions per seed; `constraints` appends a verifiable one | every generator job is cached under `key(seed, generator, index, params)` in `cache/`; a rerun makes only the missing ones |
 | `evolve` | Evol-Instruct operators (five in-depth, breadth, WizardCoder's code heuristics, WizardMath's `easier`) per round with a seeded draw; rules 3 and 4 and an optional judged "no gain" drop failures; originals and every round are kept | the operator draw is seeded by the prompt's key; each rewrite is cached under `key(parent, round, operator)` |
 | `respond` | the teacher answers each prompt `answers_per_question` times | each answer is cached under `key(prompt, sample, teacher identity, settings)`; the budget is checked before every uncached call and the cache is the ledger, so a crash or a budget stop costs nothing twice |
 | `verify` | empty and "sorry" answers out, the target recipe's `check`, a `REWARDS` function against the prompt's answer, majority agreement, a judge score (cached per candidate) | pure rules over the candidates file plus a cached judge |
-| `select` | exact and n-gram near-duplicates out, leaks against evaluation items out (an item is leaked when a row holds half of its 8-grams), one row per prompt assembled as `sft`, `dpo` (judge gap `margin`) or `grpo`; `manifest.json` with every stage's counts, the teacher and the cost | pure function of the verified rows and the leak sources |
+| `select` | exact and n-gram near-duplicates out, leaks against evaluation items out (an item is leaked when a row holds half of its 8-grams), one row per prompt assembled as `sft`, `dpo` (judge gap `margin`), `grpo` or `decision`; `manifest.json` with every stage's counts, the teacher and the cost | pure function of the verified rows and the leak sources |
 
 Rows and files are written through a temporary name and renamed, so a reader never sees a half file. Running the
 same config twice builds nothing the second time; running it after a crash finishes the remaining teacher calls
 only (the tests kill the fake teacher mid-stage and count the calls). The manifest's `stages` trail carries each
 stage's summary downstream, so `select` can report the whole run from its own inputs.
 
+Decision rows (`assemble: decision`, for `llm_decision_sft`): a seed's `kind` is the option and its text a
+situation; the `labelled_requests` generator has the teacher write requests that belong to that option, in each of
+`params.languages`, with `params.history` turns of conversation before them (the turns become the row's context). The
+teacher then routes every request in `respond` (`respond.system` holds the options, the answer is one word), and
+`verify` keeps a request when its routes agree with its option (`reward: exact_match`, `majority: exact`). `select`
+writes `{"state": <earlier turns, a blank line, the request>, "questions": {<select.decision.name>: {"type": "choice",
+"instructions", "criteria", "label"}}}`. `configs/data/route.yaml` builds a router this way: whether an agent runs
+inner thought on a request.
+
 Teachers (`data/teachers.py`): `anthropic` (official SDK, `ANTHROPIC_API_KEY`, default `claude-opus-5-5`, cost from
 a small price table or `price: [in, out]` per million tokens), `openai` (chat-completions shape: OpenAI, vLLM, LM
-Studio, gateways; `base_url`, `api_key_env`), `ollama` (native `/api/chat`, `keep_alive`), `local` (a checkpoint of
+Studio, gateways; `base_url`, `api_key_env`; `reasoning_effort` for reasoning models, which then get
+`max_completion_tokens` and no temperature), `ollama` (native `/api/chat`, `keep_alive`), `local` (a checkpoint of
 a modeling experiment or a Hub model, seeded, free). A teacher's `identity` (name, model, generation-relevant
 parameters; never keys or prices) is part of the fingerprints of the stages that call it.
 

@@ -1,0 +1,84 @@
+# Rows for a router (configs/llm/route.yaml). The agent always replies; the router decides whether it also runs inner
+# thought on the request: `direct` (no) or `think` (yes). The teacher writes requests for each situation below, in
+# English and Korean, with 0, 1 or 2 turns of conversation before them; then, not seeing the situation, it routes
+# every request three times, and a request stays only when most of the three agree with its situation's option. The
+# situations that look like the other option teach the boundary. Needs OPENAI_API_KEY (environment/.env).
+#
+# A row's state is the earlier turns, then a blank line, then the request; with no earlier turns, the request alone:
+#   User: <earlier request>
+#   Assistant: <its reply>
+#
+#   <the request to route>
+# The agent must build the state the same way when it asks the router.
+pipeline:
+  recipe: data_synthetic
+  name: route
+  seed: 20261017
+  output_dir: ./output
+
+# gpt-6.1-sol: on 20 hand-routed boundary requests it agreed with 19 (gpt-6-astra 19 at five times the price, gpt-5.5 17,
+# gpt-4.1 18, gpt-4.1-mini 15). A reasoning model: temperatures below are not sent, max_tokens covers its reasoning.
+teacher: {name: openai, model: gpt-6.1-sol, reasoning_effort: low, price: [2.0, 10.0]}
+
+seeds:
+  - kind: direct
+    values:
+      - "greetings, thanks and small talk"
+      - "a simple, well-known fact (a capital, a date, a definition)"
+      - "controlling a device or the app: a timer, an alarm, lights, music, a mode"
+      - "looking up one thing the assistant can fetch as it is: the weather, a score, the time somewhere"
+      - "a quick conversion or one-step arithmetic"
+      - "translating or rephrasing one short sentence"
+      - "a request where it is unclear what the user means or refers to, so the reply is to ask back"
+      - "a short follow-up that needs only a short reply: thanks, okay, say that again, louder"
+      - "a long, rambling message whose actual request is simple"                       # looks like think
+  - kind: think
+    values:
+      - "a calculation or estimate that takes several steps"
+      - "planning under constraints: a schedule, an itinerary, a budget"
+      - "comparing options and recommending one, with trade-offs"
+      - "debugging or explaining code, or reviewing a design"
+      - "summarizing or analyzing a document, a paper or a long text"
+      - "a question whose answer weighs several sources against each other"
+      - "advice on a personal decision that depends on circumstances"
+      - "writing something long or creative: a story, a poem, a speech, a detailed email"
+      - "a short follow-up that, given the conversation, starts a task that needs thought (go ahead, now do March)"
+      - "a short question that needs real reasoning (is 1001 prime, why is my bread flat)"   # looks like direct
+
+prompts:
+  generator: labelled_requests
+  per_seed: 6                       # every language with every history length once: 2 x 3
+  params:
+    n: 10
+    languages: [English, Korean]
+    history: [0, 1, 2]              # turns of conversation before the request
+    labels: &labels
+      direct: "No inner thought: the reply needs nothing worked out first. Small talk, a known fact, a single command or lookup, a one-step answer, or asking back when it is unclear what the user means."
+      think: "Inner thought: a good reply needs working out first, in several steps. Calculation, planning, comparison, analysis, weighing sources, a judgement call, or long and creative writing."
+  max_tokens: 8000
+
+respond:
+  answers_per_question: 3
+  max_tokens: 256
+  system: >-
+    An assistant always replies to the user; you decide whether it also runs inner thought on the last request. The
+    conversation so far may come before that request. direct: no inner thought; the reply needs nothing worked out
+    first (small talk, a known fact, a single command or lookup, a one-step answer, or asking back when it is unclear
+    what the user means). think: inner thought; a good reply needs working out first, in several steps (calculation,
+    planning, comparison, analysis, weighing sources, a judgement call, or long and creative writing). Reply with one
+    word: direct or think.
+
+verify:
+  schema_recipe: llm_decision_sft
+  reward: {name: exact_match}       # the teacher's route equals the situation's option
+  majority: exact                   # and most of the request's routes
+
+select:
+  assemble: decision
+  decision:
+    name: route
+    instructions: "Should the assistant run inner thought on the last request, given the conversation before it?"
+    criteria: *labels
+  dedup: {near: 0.75, ngram: 4}
+
+budget: {max_usd: 15}               # about 5 USD expected: 114 generation calls, 3420 routes

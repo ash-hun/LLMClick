@@ -79,13 +79,20 @@ class Ollama(Teacher):
 @TEACHERS.register("openai")
 class OpenAIFormat(Teacher):
     """Any server with the OpenAI chat-completions shape: OpenAI, vLLM, LM Studio, a gateway. The key comes from
-    the environment variable `api_key_env` names (default OPENAI_API_KEY)."""
+    the environment variable `api_key_env` names (default OPENAI_API_KEY). With `reasoning_effort` (a reasoning
+    model: gpt-5 and later, o-series) the limit is `max_completion_tokens`, which covers the reasoning too, and the
+    model samples at its own temperature."""
     name = "openai"
 
     def complete(self, messages: list[Message], *, max_tokens: int, temperature: float, seed: int) -> Completion:
         base = str(self.params.get("base_url", "https://api.openai.com/v1")).rstrip("/")
         key = os.environ.get(str(self.params.get("api_key_env", "OPENAI_API_KEY")), "")
-        body = {"model": self.model, "messages": messages, "max_tokens": max_tokens, "temperature": temperature, "seed": seed}
+        body: dict[str, Any] = {"model": self.model, "messages": messages, "seed": seed}
+        effort = self.params.get("reasoning_effort")
+        if effort:
+            body |= {"max_completion_tokens": max_tokens, "reasoning_effort": effort}
+        else:
+            body |= {"max_tokens": max_tokens, "temperature": temperature}
         payload = post_json(f"{base}/chat/completions", body, {"authorization": f"Bearer {key}"} if key else {},
                             float(self.params.get("timeout", 600)))
         usage = payload.get("usage") or {}

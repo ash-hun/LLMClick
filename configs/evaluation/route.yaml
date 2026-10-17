@@ -1,0 +1,20 @@
+# The inner-thought router (configs/llm/route.yaml) on 19 requests written and routed by hand, apart from the generated
+# data: traps on both sides (a rambling message with a simple ask, "is 1001 prime"), follow-ups whose route depends on
+# the turns before them, English and Korean. One request at a time, as the agent asks it, so the latency is per
+# request. Replace <hash> with the router experiment's key. The set is local (samples/evaluation/ is not committed);
+# its requests are listed in the jarvis-router experiment page.
+pipeline:
+  recipe: evaluation_decision
+  name: route-on-boundary
+  output_dir: ./output
+
+model:
+  experiment: output/route-qwen3-0.6b-<hash>
+  checkpoint: validate
+
+data:
+  sources:
+    - {name: local_jsonl, path: samples/evaluation/route_boundary.jsonl}
+
+think: "off"                        # the router decides at once
+evaluation: {batch_size: 1}         # the agent routes one request at a time

@@ -76,8 +76,17 @@ class LeakSettings(Section):
     ngram: int = Field(default=8, ge=1)
 
 
+class DecisionQuestion(Section):
+    """The question a `decision` row asks about each prompt (its `state`); the prompt's `answer` is the label."""
+    name: str = Field(default="route", min_length=1, description="The question's key in the row's `questions`")
+    instructions: str = Field(min_length=1, description="What the decision model is asked about the state")
+    criteria: dict[str, str] = Field(min_length=2, description="Option -> what it means; the labels are these options")
+
+
 class SelectSettings(Section):
-    assemble: Literal["sft", "dpo", "grpo"] = "sft"
+    assemble: Literal["sft", "dpo", "grpo", "decision"] = "sft"
+    decision: DecisionQuestion | None = Field(default=None, description="assemble: decision, or verify.schema_recipe: "
+                                                                        "llm_decision_sft: the question every row asks")
     dedup: DedupSettings = Field(default_factory=DedupSettings)
     leak: LeakSettings | None = None
     margin: float = Field(default=1.0, ge=0, description="dpo: the judge-score gap a chosen and rejected answer must have")
@@ -131,6 +140,8 @@ class SyntheticConfig(SeedConfig):
         REWARDS.check(*([self.verify.reward.name] if self.verify.reward is not None else []))
         if self.verify.judge is not None and self.verify.judge.teacher is not None and self.verify.judge.teacher.name not in TEACHERS:
             raise ValueError(f"Unknown judge teacher {self.verify.judge.teacher.name!r}; registered: {TEACHERS.names()}")
+        if (self.select.assemble == "decision" or self.verify.schema_recipe == "llm_decision_sft") and self.select.decision is None:
+            raise ValueError("decision rows need select.decision: the question, its instructions and the criteria of its options")
         return self
 
     def paths(self) -> list[str]:

@@ -5,7 +5,7 @@ from typing import Any, ClassVar
 
 from core.stage import Outputs, Stage
 from core.utils.files import write_json
-from data.config import SyntheticConfig
+from data.config import DecisionQuestion, SyntheticConfig
 from data.rows import Row, key, normalized, read_rows, trail, write_rows
 from data.teachers import teacher_from
 from evaluation.contamination import shingles, texts_of
@@ -41,15 +41,28 @@ class LeakIndex:
         return any(self.sizes[number] and count / self.sizes[number] >= self.threshold for number, count in hits.items())
 
 
+def decision_row(row: Row, question: DecisionQuestion) -> Row:
+    """Pure: a prompt as a Jev record: the request is the state, its `answer` the label of the one question."""
+    state = f"{row['context']}\n\n{row['instruction']}" if row.get("context") else row["instruction"]
+    if row.get("answer") not in question.criteria:
+        raise ValueError(f"label {row.get('answer')!r} is not an option of {question.name!r}: {list(question.criteria)}")
+    return {"state": state, "questions": {question.name: {"type": "choice", "instructions": question.instructions,
+                                                           "criteria": dict(question.criteria), "label": row["answer"]}}}
+
+
 def best_first(group: list[Row]) -> list[Row]:
     """A prompt's verified answers, best first: by judge score, then reward, then the sample order."""
     return sorted(group, key=lambda row: (-float(row.get("score", 0)), -float(row.get("reward", 0)), int(row["sample"])))
 
 
-def assemble(kind: str, group: list[Row], margin: float) -> Row | None:
-    """Pure: one training row from a prompt's verified answers, or None when the kind cannot be made from them."""
+def assemble(kind: str, group: list[Row], margin: float, question: DecisionQuestion | None = None) -> Row | None:
+    """Pure: one training row from a prompt's verified answers, or None when the kind cannot be made from them. A
+    decision row takes the prompt's label, which verification checked the teacher's answers agree with."""
     ranked = best_first(group)
     top = ranked[0]
+    if kind == "decision":
+        assert question is not None
+        return decision_row(top, question)
     content = f"{top['context']}\n\n{top['instruction']}" if top.get("context") else top["instruction"]
     if kind == "sft":
         return {"messages": [{"role": "user", "content": content}, {"role": "assistant", "content": top["text"]}]}
@@ -113,7 +126,7 @@ class SelectStage(Stage[SyntheticConfig]):
             groups.setdefault(row["prompt_id"], []).append(row)
         rows: list[Row] = []
         for prompt_id in sorted(groups):
-            made = assemble(settings.assemble, groups[prompt_id], settings.margin)
+            made = assemble(settings.assemble, groups[prompt_id], settings.margin, settings.decision)
             if made is None:
                 counts["unassembled"] += 1
                 continue
