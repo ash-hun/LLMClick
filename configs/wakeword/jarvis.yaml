@@ -25,7 +25,9 @@ data:
 # followed: "Jarvis" with a command after it, as negatives, so the detector fires as the name ends and not again
 augment: {rounds: 4, followed: 2, noise: 200, snr: [5, 25], gain: [-12, 0], tail: 0.3}
 
-training: {steps: 3000, batch_size: 256, learning_rate: 1.0e-3, layer_dim: 32, blocks: 1}
+# negative_weight with the cosine schedule: over six seeds false accepts stayed at or under 4.7% (constant rate and equal
+# weights: 3.7% to 8.8%, depending on the seed); recall stayed 100%
+training: {steps: 3000, batch_size: 256, learning_rate: 1.0e-3, layer_dim: 32, blocks: 1, negative_weight: 100, schedule: cosine}
 
 validation:
   threshold: 0.5

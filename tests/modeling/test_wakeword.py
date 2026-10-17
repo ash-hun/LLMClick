@@ -8,8 +8,8 @@ import numpy as np
 import pytest
 
 from core import pipeline
-from modeling.wakeword import features
-from modeling.wakeword.config import AugmentConfig
+from modeling.wakeword import detector, features
+from modeling.wakeword.config import AugmentConfig, WakewordTraining
 from modeling.wakeword.stages import firings, rng_for, window
 from modeling.stages import ValidationFailed
 from tests.speech import FakeEmbedder, fake_feature_models, melody
@@ -101,3 +101,20 @@ def test_moved_recordings_make_the_same_windows(tmp_path: Path) -> None:
     arrays = [np.load(stages["features"]["features"]) for stages in built]
     assert np.array_equal(arrays[0]["x"], arrays[1]["x"]) and np.array_equal(arrays[0]["y"], arrays[1]["y"])
     assert built[0]["validate"]["metrics"] == built[1]["validate"]["metrics"]
+
+
+def test_weighting_negatives_lowers_their_scores_and_the_cosine_schedule_trains(tmp_path: Path) -> None:
+    import onnxruntime
+    rng = np.random.default_rng(0)
+    x = rng.standard_normal((200, features.FRAMES, features.DIM)).astype(np.float32)
+    y = (rng.random(200) < 0.5).astype(np.float32)
+    x[y == 1] += 0.1  # two classes that overlap, so the weight decides where the boundary falls
+
+    def negative_scores(**training: Any) -> float:
+        onnx = tmp_path / f"{sorted(training.items())}.onnx"
+        detector.fit(x, y, WakewordTraining(steps=60, batch_size=32, **training), 7, onnx, lambda step: None)
+        scores = onnxruntime.InferenceSession(str(onnx)).run(None, {"input": x[y == 0]})[0]
+        return float(scores.mean())
+
+    assert negative_scores(negative_weight=30.0) < negative_scores(negative_weight=1.0)
+    assert 0 < negative_scores(schedule="cosine") < 1

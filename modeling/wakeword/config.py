@@ -1,6 +1,7 @@
 """Config of `wakeword`: the phrase, its recordings and the others, the augmentation, the detector and the streaming test."""
 
 import re
+from typing import Literal
 
 from pydantic import Field, model_validator
 
@@ -32,6 +33,10 @@ class WakewordTraining(Section):
     learning_rate: float = Field(default=1e-3, gt=0)
     layer_dim: int = Field(default=32, ge=1, description="Width of openWakeWord's DNN head")
     blocks: int = Field(default=1, ge=0, description="Hidden blocks after the first layer")
+    negative_weight: float = Field(default=1.0, gt=0, description="Loss weight of a negative window against a positive "
+                                   "one; above 1 trades unused recall for fewer false accepts")
+    schedule: Literal["constant", "cosine"] = Field(default="constant", description="Learning rate over the steps; cosine "
+                                                    "decays it to zero, so the detector does not depend on where training stops")
 
 
 class WakewordValidation(ValidationConfig):
