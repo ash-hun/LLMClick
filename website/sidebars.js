@@ -22,6 +22,7 @@ module.exports = {
       label: 'Reference',
       items: ['reference/recipes', 'reference/config', 'reference/api', 'reference/cli', 'reference/settings'],
     },
+    {type: 'category', label: 'Experiments', items: ['experiments/jarvis-agent']},
     {type: 'category', label: 'Operations', items: ['operations/jobs', 'operations/security']},
     {type: 'category', label: 'Contributing', items: ['contributing/development']},
   ],
