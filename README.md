@@ -16,13 +16,14 @@ what is already built, shows progress, and never hands on a trained model that h
 | LLM | `llm_decision_cispo` | the same questions with reasoning before the decision, by reinforcement (Jeeves stage 2) | same |
 | Embedding | `embedding_contrastive` | query/positive/negative triples (InfoNCE) | `bi_encoder` (Qwen3-Embedding-0.6B) |
 | TTS | `tts_piper` | recordings and their texts: a Piper (VITS) voice fine-tuned from a Piper checkpoint, exported to ONNX | `model.quality`: `medium`, `high` (Piper's sizes) |
+| Wake word | `wakeword` | recordings of the agent's name ("Jarvis") and of everything else: an openWakeWord detector, exported to ONNX | openWakeWord's `dnn` head on its frozen speech features |
 | Evaluation | `evaluation_custom` | nothing: scores a checkpoint of any experiment above on any rows, with that recipe's metrics | the experiment's |
 | Evaluation | `evaluation_benchmark` | nothing: scores a checkpoint on public benchmarks (lm-evaluation-harness), one cached stage per benchmark | the experiment's (LLM) |
 | Evaluation | `evaluation_compare` | nothing: several checkpoints (the base model among them) on the same benchmarks and rows; table, deltas with intervals, polygon chart | the experiments' |
 | Evaluation | `evaluation_decision` | nothing: a decision checkpoint on Jev rows or the JevBench tiers, without and with reasoning; accuracy, NLL, ECE, per tier, latency | the experiment's (decision) |
 | Evaluation | `evaluation_embedding` | nothing: an embedding checkpoint on MTEB tasks (mteb), one cached stage per task | the experiment's (embedding) |
 | Data | `data_synthetic` | nothing: rows for the recipes above from seeds through a teacher model (seeds, prompts, evolve, respond, verify, select) | teachers: anthropic, openai, ollama, local |
-| Data | `data_speech` | nothing: a Piper training set from seeds: texts (a teacher, or the seeds as they are) read by a Piper voice, checked by Whisper | voice: any Piper `.onnx` |
+| Data | `data_speech` | nothing: a Piper training set from seeds: texts (a teacher, or the seeds as they are) read by a Piper voice, checked by Whisper | voice: any Piper `.onnx`, one speaker or many |
 
 The decision recipes follow the Jev request format. The readout head and one-pass training follow
 [jeff](https://github.com/firelex/jeff); the pointer head, reasoning chains and CISPO follow
@@ -68,9 +69,13 @@ LLMClick/
 │   │   ├── models/               #     Model Catalog: base.py (EmbeddingBackbone), bi_encoder.py
 │   │   ├── methods/              #     Training Method: contrastive.py
 │   │   └── config.py pipeline.py
-│   └── tts/                      #   family: text-to-speech (tts_piper)
-│       ├── piper.py              #     the Piper program (GPL) as a separate process: speak, fit, export
-│       ├── audio.py asr.py       #     WAV measurements; Whisper transcripts and word error rate
+│   ├── tts/                      #   family: text-to-speech (tts_piper)
+│   │   ├── piper.py              #     the Piper program (GPL) as a separate process: speak, fit, export
+│   │   ├── audio.py asr.py       #     WAV measurements; Whisper transcripts and word error rate
+│   │   └── config.py stages.py pipeline.py
+│   └── wakeword/                 #   family: wake word detection (wakeword)
+│       ├── features.py           #     openWakeWord's frozen front end on onnxruntime: audio -> embeddings every 80 ms
+│       ├── detector.py           #     the DNN head: trained with torch, exported and scored in ONNX
 │       └── config.py stages.py pipeline.py
 ├── data/                         # Data channel: seeds -> prompts -> evolve -> respond -> verify -> select (data_synthetic)
 │   ├── teachers.py               #   anthropic, openai, ollama, local behind one complete()
@@ -170,7 +175,8 @@ pipeline:
 | `score:<run>:<task>`..., `rows`, `rows:<run>`..., `report` | `evaluation_compare`: the stages above per run, shared with the single-model recipes; the report compares every run with the base |
 | `rows`, `score`, `report` | `evaluation_decision`: every question through the head without reasoning and after greedy reasoning; `items.jsonl` per question |
 | `score:<task>`..., `report` | `evaluation_embedding`: one mteb run per task (fingerprint: checkpoint content, task, max_length, mteb version) |
-| `data`, `train`, `validate` | `tts_piper`: recordings found and split; `piper.train fit` from the starting checkpoint, exported to `voice.onnx`; the voice reads the held-out texts and Whisper transcribes them |
+| `data`, `train`, `validate` | `tts_piper`: recordings found and split; `piper.train fit` from the starting checkpoint, exported to `voice.onnx`; the voice reads the held-out texts and the fixed replies, Whisper transcribes them |
+| `data`, `features`, `train`, `validate` | `wakeword`: recordings of both classes found and split; noisy windows as embeddings; the detector trained and exported; held-out streams scored every 80 ms |
 
 | Recipe | Row keys | Metrics for `validation.min`/`max` |
 |---|---|---|
@@ -181,7 +187,8 @@ pipeline:
 | `llm_decision_sft` | `state`, `questions` (Jev records) or `state`, `question`, `label` (one question per row) | `accuracy`, `nll`, `ece` |
 | `llm_decision_cispo` | same | `accuracy`, `nll`, `ece`, `think_accuracy` (after reasoning) |
 | `embedding_contrastive` | `query`, `positive`, `negative`? | `accuracy` (positive ranked first), `mrr` |
-| `tts_piper` | `audio` (a WAV file), `text` | `wer` (Whisper on the voice), `reference_wer` (Whisper on the recordings), `duration_ratio` |
+| `tts_piper` | `audio` (a WAV file), `text` | `wer` (Whisper on the voice), `reference_wer` (Whisper on the recordings), `duration_ratio`, `phrase_wer` (the worst-heard fixed reply) |
+| `wakeword` | `audio`, `text`? (a positive's must be the phrase) | `recall`, `false_accepts`, `scenario` (phrase then command: one firing, on the phrase) |
 
 By default every weight is trained, in FP32. `training.adapter` switches any of these recipes to LoRA:
 
@@ -275,9 +282,86 @@ validation: {asr: {language: en}, max: {wer: 0.15}}
 - **Validation.** The voice reads up to `validation.rows` held-out texts; Whisper (`validation.asr`, pinned) transcribes
   them and the original recordings. `reference_wer` is the floor `wer` can reach with that recognizer; numbers written
   as digits in one text and as words in the other count as errors.
+- **Fixed replies.** `validation.phrases` (`name: text`) are the lines the agent plays as they are, such as the
+  read-back before a task (`web_search: Searching Reference.`). Each is spoken once into
+  `<experiment>/validate/phrases/<name>.wav`, listed in `phrases.json`, and `phrase_wer` is the worst of them, so a
+  voice that garbles one reply fails validation. Changing a reply reruns only `validate`; a rerun keeps the recording
+  that passed.
 
 Before training on a voice, read its terms. `jgkawell/jarvis` is MIT on its weights per its model card, but it imitates
 a film character played by a real actor; MIT does not cover the voice, so treat it as personal and non-commercial.
+
+### Wake word recipe (`wakeword`)
+
+`wakeword` trains the detector that wakes a voice agent: a small model that listens to the microphone all the time
+and fires when it hears one phrase. It follows [openWakeWord](https://github.com/dscripka/openWakeWord) (Apache-2.0):
+audio becomes a melspectrogram and then a 96-number speech embedding every 80 ms through two frozen ONNX models
+(pinned by hash, downloaded once), and a small `dnn` head scores the last 16 embeddings (2 s). Only the head is
+trained, so a few hundred synthetic recordings are enough, and the exported file loads in openWakeWord's runtime.
+
+```yaml
+phrase: Jarvis                     # the wake word: the agent's name; what follows it is the command
+data:
+  positive: [{name: local_jsonl, path: output/wake-phrase-<hash>/select/rows.jsonl}]     # data/wake_phrase.yaml
+  negative: [{name: local_jsonl, path: output/wake-negatives-<hash>/select/rows.jsonl}]  # data/wake_negatives.yaml
+  background: []                   # directories of noise WAVs; empty: Gaussian noise
+augment: {rounds: 4, followed: 2, noise: 200, snr: [5, 25]}            # followed: "Jarvis" + a command, as negatives
+validation: {threshold: 0.5, min: {recall: 0.9, scenario: 0.9}, max: {false_accepts: 0.05}}
+```
+
+- **Phrase.** The wake word is the agent's name; the command after it ("Jarvis, wake up", "Jarvis, search the web
+  for ...") is not part of it, and speech recognition hears it once the detector has fired. Positives say the phrase
+  and nothing else (a positive row with a `text` must say it); negatives must never contain it, and the `data` stage
+  stops on one that does. The hardest negatives are near misses ("Travis", "Davis", "Karen"), and the commands said
+  alone. The model file is named after the phrase: `jarvis.onnx`.
+- **Recordings.** `data_speech` with a multi-speaker voice (`voice.speakers`) and `select.per_text: null` makes them:
+  the name read by hundreds of speakers, each checked by Whisper. Recordings of the people who will use the agent
+  (`delimited` or `local_jsonl`) belong in `positive` too: synthetic voices are a start, not the target.
+- **Windows.** Every training recording becomes `augment.rounds` 2-second windows over noise at a random SNR and gain,
+  ending up to `augment.tail` seconds after the speech. Negatives are also cut short at random, so half a phrase is a
+  negative; `augment.followed` windows per phrase put other speech after it, so the detector fires as the name ends
+  and not again while the command that follows is spoken. All randomness comes from the seed and the recording.
+- **Training.** Balanced batches (half positive), BCE, Adam, `training.steps` steps on the CPU, seeded: a rerun after a
+  crash trains the same detector again.
+- **Validation.** Held-out recordings in noise (`validation.snr`), scored every 80 ms as the runtime scores them, a
+  firing counted at most once a second: `recall` and `false_accepts` per recording, and `scenario`, the agent's
+  first moment: "Jarvis", a pause, then another held-out utterance (a command such as "Please search to the paper
+  reference on the web", a near miss, or ordinary speech). It passes when the detector fires exactly once, while or
+  just after the name is said.
+- **Checkpoint.** `<experiment>/validate/checkpoint/` holds `jarvis.onnx`, the two feature models and
+  `wakeword.json` (the phrase, the files, the feature models' hashes):
+
+```python
+from openwakeword.model import Model      # pip install openwakeword
+detector = Model(wakeword_models=["checkpoint/jarvis.onnx"], inference_framework="onnx",
+                 melspec_model_path="checkpoint/melspectrogram.onnx", embedding_model_path="checkpoint/embedding_model.onnx")
+score = detector.predict(chunk)["jarvis"]   # chunk: 1280 samples, 16 kHz, int16; wake at >= the threshold
+```
+
+`false_accepts` is measured on the negatives you give, not on hours of real audio; openWakeWord's own models add a
+large corpus of everyday speech and music for that. Add real background recordings and your own speech before
+trusting the rate. openWakeWord's code is Apache-2.0 and its README puts its pre-trained models under CC BY-NC-SA 4.0;
+the two feature models are derived from Google's Apache-2.0 `speech_embedding`, so treat a detector as
+non-commercial until you have checked their terms.
+
+### A voice agent from these recipes
+
+The four configs below build what a voice agent says and hears; what it decides stays in the agent.
+
+| Moment | What runs | Built by |
+|---|---|---|
+| User: "Jarvis, wake up" | the wake word detector fires as "Jarvis" ends, once | `wakeword` (`wakeword/jarvis.yaml`) |
+| | speech to text hears the command after it ("wake up"), and the agent's model picks the command `wake_up` | the agent (an LLM recipe can tune it) |
+| Agent: ready | plays the read-back of `wake_up`, `phrases/wake_up.wav` | `tts_piper` `validation.phrases` |
+| User: "Please search to the paper reference on the web" | speech to text, then the agent's model picks `web_search` | the agent |
+| Agent: "Searching Reference.", then works | plays `phrases/web_search.wav`, then runs the search | `tts_piper` `validation.phrases` |
+
+`tts/piper_jarvis.yaml` holds nine read-backs: `wake_up` (At your service, sir.), `web_search` (Searching Reference.),
+`horizontal_task` (Processing Long Task.), `remember_pattern` (Checking the Pattern.), `analysis` (Target
+Analysis.), `focus_mode_enter` (Activate Focus mode.), `focus_mode_quit` (Deactivate Focus mode.), `persona_karen`
+(Change to KAREN.) and `persona_jarvis` (Change to JARVIS.). The voice's training set (`data/speech.yaml`) reads them
+too. Which utterance means which command is the agent's to decide: no recipe here maps "enter the focus mode" to
+`focus_mode_enter` yet.
 
 ## 03. Quick start
 
@@ -314,7 +398,10 @@ curl -X POST localhost:8000/api/jobs -H 'content-type: application/json' \
 | `evaluation/embedding.yaml` | the `embedding/contrastive.yaml` checkpoint on three MTEB tasks (needs `uv sync --extra eval`) |
 | `data/synthetic.yaml` | Korean conversation rows for `llm_sft` from four topic seeds through a local Ollama model, evolved, judged, deduplicated |
 | `data/speech.yaml` | a Piper training set: assistant lines written by a local Ollama model, read by the `jgkawell/jarvis` voice, checked by Whisper (needs `environment/piper/setup.sh`) |
-| `tts/piper_jarvis.yaml` | fine-tuning from the `jgkawell/jarvis` medium checkpoint on that set; replace `<hash>` with the `data/speech.yaml` experiment's |
+| `tts/piper_jarvis.yaml` | fine-tuning from the `jgkawell/jarvis` medium checkpoint on that set, with the agent's nine read-backs; replace `<hash>` with the `data/speech.yaml` experiment's |
+| `data/wake_phrase.yaml` | "Jarvis." (statement, question, call) read by 300 speakers of the `libritts_r` Piper voice, kept if Whisper hears it exactly |
+| `data/wake_negatives.yaml` | near misses of the name, the commands said alone, and ordinary lines, read by 40 speakers of the same voice |
+| `wakeword/jarvis.yaml` | the "Jarvis" wake word detector from those two sets; replace both `<hash>` |
 
 The `llm/` and `embedding/` configs ship as pilots: sample rows from `samples/` and `max_steps: 4`. Point
 `data.sources` at your rows and remove `max_steps` for a real run.
@@ -345,7 +432,8 @@ modeling
 ├── embedding
 │   ├── Model Catalog      bi_encoder
 │   └── Training Method    contrastive
-└── tts                    one recipe, trained by the Piper program; `model.quality` picks its size
+├── tts                    one recipe, trained by the Piper program; `model.quality` picks its size
+└── wakeword               one recipe: openWakeWord's dnn head on its frozen features
 ```
 
 ### A new architecture in a catalog
@@ -462,7 +550,7 @@ Inside a stage, `self.progress.update(done, total, note)` drives the progress ba
 ## 05. Tests
 
 ```bash
-uv run pytest tests/core tests/modeling  # runner, progress, validation gate, API, every recipe on a tiny random model
+uv run pytest tests/core tests/modeling  # runner, progress, validation gate, API, every recipe on a tiny random model (wakeword: a fake front end)
 uv run pytest tests/data                # data recipes with fake teachers, a fake Piper and a fake Whisper
 uv run ruff check . && uv run mypy      # what CI runs on every pull request, besides the tests
 ```

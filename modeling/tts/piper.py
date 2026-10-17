@@ -46,14 +46,16 @@ def options(values: dict[str, Any]) -> list[str]:
     return flags
 
 
-def speak(voice: Path, text: str, wav: Path, log: Path, scales: dict[str, float]) -> None:
+def speak(voice: Path, text: str, wav: Path, log: Path, scales: dict[str, float], speaker: int | None = None) -> None:
     """`text` read by `voice` (an .onnx with its .onnx.json beside it) into `wav`, written whole or not at all.
-    `scales`: length_scale, noise_scale, noise_w_scale; a missing one keeps the voice's own."""
+    `scales`: length_scale, noise_scale, noise_w_scale; a missing one keeps the voice's own. `speaker`: the id of
+    one speaker of a multi-speaker voice."""
     wav.parent.mkdir(parents=True, exist_ok=True)
     temporary = wav.with_suffix(".tmp")
     # idempotent: Piper draws its noise unseeded, so speaking the same text twice gives two different files; callers
     # keep the first under its natural key and never speak it again
-    run(["piper", "-m", str(voice), "-f", str(temporary), *options(scales)], log, stdin=text)
+    run(["piper", "-m", str(voice), "-f", str(temporary), *options(scales),
+         *(["--speaker", str(speaker)] if speaker is not None else [])], log, stdin=text)
     temporary.replace(wav)
 
 

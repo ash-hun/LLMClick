@@ -33,4 +33,15 @@ training:
 validation:
   asr: {language: en}
   rows: 50
-  max: {wer: 0.15}                  # compare with reference_wer: Whisper's error on the recordings themselves
+  phrases:                          # the agent's read-backs, kept in <experiment>/validate/phrases/<name>.wav; the
+                                    # agent plays one when it recognises that command after the wake word (wakeword/jarvis.yaml)
+    wake_up: At your service, sir.
+    web_search: Searching Reference.
+    horizontal_task: Processing Long Task.
+    remember_pattern: Checking the Pattern.
+    analysis: Target Analysis.
+    focus_mode_enter: Activate Focus mode.
+    focus_mode_quit: Deactivate Focus mode.
+    persona_karen: Change to KAREN.
+    persona_jarvis: Change to JARVIS.
+  max: {wer: 0.15, phrase_wer: 0.0}  # compare wer with reference_wer: Whisper's error on the recordings themselves

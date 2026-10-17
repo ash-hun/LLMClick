@@ -1,4 +1,4 @@
-"""Stand-ins for the Piper program and Whisper, so the speech recipes run in tests without either."""
+"""Stand-ins for the Piper program, Whisper and openWakeWord's front end, so the speech recipes run in tests without them."""
 
 import wave
 from pathlib import Path
@@ -9,9 +9,15 @@ import numpy as np
 RATE = 22050
 
 
-def tone(path: Path, seconds: float, amplitude: float = 0.3) -> None:
+def tone(path: Path, seconds: float, amplitude: float = 0.3, frequency: float = 440) -> None:
+    melody(path, [(frequency, seconds)], amplitude)
+
+
+def melody(path: Path, notes: list[tuple[float, float]], amplitude: float = 0.3) -> None:
+    """(frequency, seconds) notes one after another: a stand-in for words, whose order matters."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    samples = (amplitude * np.sin(np.arange(int(RATE * seconds)) * 440 * 2 * np.pi / RATE) * 32767).astype(np.int16)
+    parts = [np.sin(np.arange(int(RATE * seconds)) * frequency * 2 * np.pi / RATE) for frequency, seconds in notes]
+    samples = (amplitude * np.concatenate(parts) * 32767).astype(np.int16)
     with wave.open(str(path), "wb") as stream:
         stream.setnchannels(1)
         stream.setsampwidth(2)
@@ -26,13 +32,15 @@ class FakePiper:
     def __init__(self) -> None:
         self.spoken: dict[str, str] = {}
         self.calls: list[str] = []
+        self.speakers: list[int | None] = []
         self.fits: list[dict[str, Any]] = []
         self.fail_after: int | None = None
 
-    def speak(self, voice: Path, text: str, wav: Path, log: Path, scales: dict[str, float]) -> None:
+    def speak(self, voice: Path, text: str, wav: Path, log: Path, scales: dict[str, float], speaker: int | None = None) -> None:
         if self.fail_after is not None and len(self.calls) >= self.fail_after:
             raise RuntimeError("piper went away")
         self.calls.append(text)
+        self.speakers.append(speaker)
         tone(wav, 0.2 * len(text.split()), amplitude=1.0 if "loud" in text else 0.3)
         self.spoken[str(wav.resolve())] = text
 
@@ -65,3 +73,26 @@ class FakeListener:
 
     def release(self) -> None:
         pass
+
+
+class FakeEmbedder:
+    """openWakeWord's front end in shape only: per 80 ms, the log spectrum of the last 0.79 s in 96 bands, so a
+    tone's pitch is what tells two recordings apart."""
+
+    def __init__(self, directory: Path) -> None:
+        pass
+
+    def __call__(self, samples: np.ndarray) -> np.ndarray:
+        from modeling.wakeword import features
+        count = max(0, (len(samples) - features.SPAN) // features.HOP + 1)
+        rows = [np.abs(np.fft.rfft(samples[i * features.HOP: i * features.HOP + features.SPAN]))[:features.DIM * 40]
+                for i in range(count)]
+        return np.array([np.log1p(row.reshape(features.DIM, 40).mean(axis=1)) for row in rows], dtype=np.float32).reshape(-1, features.DIM)
+
+
+def fake_feature_models(directory: Path) -> Path:
+    from modeling.wakeword import features
+    directory.mkdir(parents=True, exist_ok=True)
+    for name in features.MODELS:
+        (directory / name).write_text("a feature model")
+    return directory

@@ -1,0 +1,32 @@
+# Recordings of the wake word for `wakeword` (configs/wakeword/jarvis.yaml): the name said three ways (statement,
+# question, call), each read by many speakers of a multi-speaker Piper voice, so the detector learns the word and not
+# one voice. Every recording that Whisper hears as the name is kept (select.per_text: null). Needs the Piper
+# environment (environment/piper/setup.sh).
+pipeline:
+  recipe: data_speech
+  name: wake-phrase
+  seed: 20260920
+  output_dir: ./output
+
+seeds:
+  - {kind: line, values: ["Jarvis.", "Jarvis?", "Jarvis!"]}
+
+prompts: {generator: passthrough}
+
+voice:
+  model:
+    name: rhasspy/piper-voices
+    revision: c10ece1aade47bb51c153c893d14e5bf8e5b7117
+    file: en/en_US/libritts_r/medium/en_US-libritts_r-medium.onnx
+  speakers: 300                     # ids 0-299 of the voice's 904
+  samples: 1                        # more than 1: Piper's noise varies the timing of each reading
+  length_scale: 1.0
+
+# max_wer 0: only readings Whisper hears as the name. Some speakers of this voice say "Dervus" or "Service" (in a
+# trial of "Jarvis, wake up", 31 of 80 readings passed), so expect a few hundred of the 900 readings to remain.
+verify: {min_seconds: 0.3, max_seconds: 4, max_wer: 0.0, asr: {language: en}}
+select: {per_text: null}
+
+licence: >-
+  rhasspy/piper-voices en_US-libritts_r-medium: MIT (repository card, revision c10ece1a); trained on LibriTTS-R,
+  CC BY 4.0 (model card). Synthetic speech for training a wake word detector.

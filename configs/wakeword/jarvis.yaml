@@ -1,0 +1,33 @@
+# A detector for the agent's name, "Jarvis": it fires as the name ends, and what follows ("wake up", "search the web
+# for ...") is the command, heard by speech recognition. Trained on openWakeWord's frozen speech features; the
+# checkpoint directory holds the model, the two feature models and wakeword.json, and loads in openWakeWord's runtime:
+#   openwakeword.Model(wakeword_models=["<checkpoint>/jarvis.onnx"], inference_framework="onnx",
+#                      melspec_model_path="<checkpoint>/melspectrogram.onnx", embedding_model_path="<checkpoint>/embedding_model.onnx")
+# Replace <hash> with the data experiments' (`llmclick validate configs/data/wake_phrase.yaml`, and wake_negatives).
+pipeline:
+  recipe: wakeword
+  name: jarvis-wake
+  seed: 20260920
+  output_dir: ./output
+
+phrase: Jarvis                      # the wake word; data/wake_phrase.yaml must say it, data/wake_negatives.yaml must not
+
+data:
+  positive:
+    - {name: local_jsonl, path: output/wake-phrase-<hash>/select/rows.jsonl}
+    # - {name: delimited, path: recordings/wake/metadata.csv, audio_dir: recordings/wake/wavs}   # your own voice
+  negative:
+    - {name: local_jsonl, path: output/wake-negatives-<hash>/select/rows.jsonl}
+  background: []                    # directories of noise WAVs (room tone, music, a fan); empty: Gaussian noise
+  validation: 0.2
+
+# followed: "Jarvis" with a command after it, as negatives, so the detector fires as the name ends and not again
+augment: {rounds: 4, followed: 2, noise: 200, snr: [5, 25], gain: [-12, 0], tail: 0.3}
+
+training: {steps: 3000, batch_size: 256, learning_rate: 1.0e-3, layer_dim: 32, blocks: 1}
+
+validation:
+  threshold: 0.5
+  snr: 20
+  min: {recall: 0.9, scenario: 0.9}  # scenario: "Jarvis", then another utterance; it must fire once, on the name
+  max: {false_accepts: 0.05}

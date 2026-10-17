@@ -27,6 +27,7 @@ PAGES: dict[str, tuple[str, list[tuple[str, str | None, bool]]]] = {
     "modeling/recipes": ("modeling/recipes", [("README.md", "Reusing sampled groups (`llm_grpo`, `llm_decision_cispo`)", False), ("README.md", "A reward for `llm_grpo`", False)]),
     "modeling/decision-recipes": ("modeling/decision-recipes", [("README.md", "Decision recipes", False)]),
     "modeling/tts": ("modeling/tts", [("README.md", "Text-to-speech recipe (`tts_piper`)", False)]),
+    "modeling/wakeword": ("modeling/wakeword", [("README.md", "Wake word recipe (`wakeword`)", False), ("README.md", "A voice agent from these recipes", False)]),
     "modeling/extending": ("modeling/extending", [("README.md", "04. Extending", False)]),
     "evaluation/overview": ("evaluation/overview", [("evaluation/README.md", "Purpose", False), ("evaluation/README.md", "How it differs from `validate` and from `training.eval_every`", False)]),
     "evaluation/custom": ("evaluation/custom", [("evaluation/README.md", "Built: `evaluation_custom`", False)]),

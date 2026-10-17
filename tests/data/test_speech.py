@@ -84,10 +84,20 @@ def test_a_changed_threshold_reverifies_without_speaking_or_transcribing_again(t
     assert listener.calls == 12  # a new verify stage: its own transcript cache, filled once
 
 
+def test_a_line_seed_is_read_as_it_is_by_every_speaker_and_all_recordings_kept(tmp_path: Path, piper: FakePiper) -> None:
+    keys = {"seeds": [{"kind": "line", "values": ["Jarvis, wake up."]}], "prompts": {"generator": "utterances"},
+            "voice": {"model": {"name": str(tmp_path / "voice.onnx")}, "speakers": [3, 7, 11]}, "select": {"per_text": None}}
+    result = pipeline.build(config(tmp_path, **keys)).run()  # utterances asks no teacher for a line
+    assert sorted(piper.speakers) == [3, 7, 11] and piper.calls == ["Jarvis, wake up."] * 3
+    assert result["stages"]["select"]["counts"]["rows"] == 3
+
+
 def test_choosing_and_cleaning_texts(tmp_path: Path, piper: FakePiper) -> None:
     assert spoken_text(" a |b\n c ") == "a ,b c"
     rows = [{"id": "2", "text": "Hi there", "wer": 0.5, "sample": 0}, {"id": "1", "text": "hi  there", "wer": 0.0, "sample": 1},
             {"id": "3", "text": "Other", "wer": 0.0, "sample": 0}]
     assert [row["id"] for row in chosen(rows)] == ["1", "3"]
+    assert [row["id"] for row in chosen(rows, None)] == ["1", "2", "3"]
     with pytest.raises(ValueError, match="set `teacher`"):
-        pipeline.build(config(tmp_path, prompts={"generator": "utterances"})).run()
+        pipeline.build(config(tmp_path, seeds=[{"kind": "situation", "values": ["a security alert"]}],
+                              prompts={"generator": "utterances"})).run()
