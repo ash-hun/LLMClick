@@ -27,6 +27,9 @@ dependencies = [
   "pyyaml>=6.0",
   "tqdm>=4.66",
   "peft>=0.21.2",
+  # wake word: openWakeWord's feature models run on onnxruntime, the trained detector is exported with onnx
+  "onnx==1.23.2",
+  "onnxruntime==1.31.0",
 ]
 
 [project.optional-dependencies]
@@ -79,5 +82,5 @@ python_version = "3.12"
 strict = true
 
 [[tool.mypy.overrides]]
-module = ["datasets.*", "wandb.*", "lm_eval.*", "mteb.*", "anthropic.*"]
+module = ["datasets.*", "wandb.*", "lm_eval.*", "mteb.*", "anthropic.*", "onnxruntime.*"]
 ignore_missing_imports = true

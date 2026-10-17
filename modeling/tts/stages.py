@@ -144,7 +144,8 @@ class FitStage(TrainStage[PiperConfig]):
 class ListenStage(ValidateStage[PiperConfig]):
     """The exported voice reads the held-out texts; Whisper transcribes them and the original recordings. Metrics:
     `wer` (the voice), `reference_wer` (the recordings, the floor `wer` can reach), `duration_ratio` (voice length
-    over recording length)."""
+    over recording length), and with `validation.phrases`, `phrase_wer`: the worst-heard of the agent's fixed
+    replies, which are kept in phrases/ with phrases.json for the agent to play."""
     requires: ClassVar[tuple[str, ...]] = ("train", "data")
     sections: ClassVar[tuple[str, ...]] = ("validation", "device")
 
@@ -166,8 +167,25 @@ class ListenStage(ValidateStage[PiperConfig]):
                 items.append({"text": row["text"], "heard": heard, "wer": wer(row["text"], heard),
                               "reference_heard": reference, "reference_wer": wer(row["text"], reference),
                               "duration_ratio": audio.seconds(spoken) / max(audio.seconds(recorded), 1e-6)})
+            replies = self.phrases(voice, workdir, listener)
         finally:
             listener.release()
         self.progress.update(len(rows), len(rows))
         write_rows(workdir / "items.jsonl", items)
-        return {metric: statistics.fmean(item[metric] for item in items) for metric in ("wer", "reference_wer", "duration_ratio")}
+        metrics = {metric: statistics.fmean(item[metric] for item in items) for metric in ("wer", "reference_wer", "duration_ratio")}
+        return {**metrics, **({"phrase_wer": max(reply["wer"] for reply in replies.values())} if replies else {})}
+
+    def phrases(self, voice: Path, workdir: Path, listener: Listener) -> dict[str, dict[str, Any]]:
+        """Each fixed reply spoken once and heard; a rerun keeps the recording it already has, so the agent plays the
+        file that passed."""
+        replies: dict[str, dict[str, Any]] = {}
+        for name, text in sorted(self.config.validation.phrases.items()):
+            self.progress.update(0, None, f"speaking the reply {name!r}")
+            wav = workdir / "phrases" / f"{name}.wav"
+            if not wav.is_file():
+                piper.speak(voice, text, wav, workdir / "speak.log", {})
+            heard = listener.transcribe(wav)
+            replies[name] = {"text": text, "audio": f"phrases/{name}.wav", "heard": heard, "wer": wer(text, heard)}
+        if replies:
+            write_json(workdir / "phrases.json", replies)
+        return replies

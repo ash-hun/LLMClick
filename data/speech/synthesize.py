@@ -31,20 +31,22 @@ class SynthesizeStage(Stage[SpeechConfig]):
         self.progress.update(0, None, "loading the voice")
         voice = settings.model.local(".json")
         prompts = read_rows(Path(inputs["prompts"]["rows"]))
-        jobs = [(prompt, sample) for prompt in prompts for sample in range(settings.samples)]
+        jobs = [(prompt, speaker, sample) for prompt in prompts for speaker in settings.ids() for sample in range(settings.samples)]
         rows: list[Row] = []
         made = 0
-        for done, (prompt, sample) in enumerate(jobs):
+        for done, (prompt, speaker, sample) in enumerate(jobs):
             self.progress.update(done, len(jobs), "speaking")
-            identifier, text = key("speech", prompt["id"], sample), spoken_text(prompt["instruction"])
+            # a single-speaker voice keeps the key it had before speakers existed, so its recordings stay valid
+            parts = (prompt["id"], sample) if speaker is None else (prompt["id"], speaker, sample)
+            identifier, text = key("speech", *parts), spoken_text(prompt["instruction"])
             wav = workdir / "audio" / f"{identifier}.wav"
             if not text:
                 continue
             if not wav.is_file():
-                piper.speak(voice, text, wav, workdir / "speak.log", settings.scales())
+                piper.speak(voice, text, wav, workdir / "speak.log", settings.scales(), speaker)
                 made += 1
-            rows.append({"id": identifier, "prompt_id": prompt["id"], "seed_id": prompt.get("seed_id"), "sample": sample,
-                         "text": text, "audio": str(wav)})
+            rows.append({"id": identifier, "prompt_id": prompt["id"], "seed_id": prompt.get("seed_id"), "speaker": speaker,
+                         "sample": sample, "text": text, "audio": str(wav)})
         self.progress.update(len(jobs), len(jobs))
         write_rows(workdir / SPOKEN, rows)
         summary = {"count": len(rows), "prompts": len(prompts), "spoken_now": made}

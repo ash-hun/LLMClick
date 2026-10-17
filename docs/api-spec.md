@@ -601,6 +601,8 @@ Data 채널 레시피(`data_synthetic`)의 필드: `stages`(`["seeds","prompts",
 TTS 계열 레시피(`tts_piper`)의 필드: `stages`(`["data","train","validate"]`), `quality`(`model.quality` 에 쓸 수 있는
 값: `high`, `medium`), `source`.
 
+Wake word 레시피(`wakeword`)의 필드: `stages`(`["data","features","train","validate"]`), `source`.
+
 #### 응답 코드
 
 | 코드 | 의미 | 본문 |
@@ -611,7 +613,7 @@ TTS 계열 레시피(`tts_piper`)의 필드: `stages`(`["data","train","validate
 
 ```bash
 $ curl -s http://localhost:8000/api/system/recipes
-{"embedding_contrastive":{"stages":["data","train","validate"],"architecture":["bi_encoder"],"source":["delimited","huggingface","jevbench","local_jsonl"],"method_keys":["query_instruction","temperature"]},"llm_dpo":{"stages":["data","train","validate"],"architecture":["hybrid","transformer"],"source":["delimited","huggingface","jevbench","local_jsonl"],"method_keys":["beta"]},"llm_grpo":{...,"method_keys":["group_size","max_new_tokens","reward","temperature"],"reward":["contains","exact_match","last_number"]},"llm_decision_sft":{...,"method_keys":["calibration","eval_think","head_lr","max_think","think_fraction"],"head":["pointer","readout"]},"llm_decision_cispo":{...,"head":["pointer","readout"]},"llm_instruction":{...,"method_keys":["system"]},"llm_sft":{...,"method_keys":[]},"tts_piper":{"stages":["data","train","validate"],"quality":["high","medium"],"source":["delimited","huggingface","jevbench","local_jsonl"]},"data_speech":{"stages":["seeds","prompts","synthesize","verify","select"],...}}
+{"embedding_contrastive":{"stages":["data","train","validate"],"architecture":["bi_encoder"],"source":["delimited","huggingface","jevbench","local_jsonl"],"method_keys":["query_instruction","temperature"]},"llm_dpo":{"stages":["data","train","validate"],"architecture":["hybrid","transformer"],"source":["delimited","huggingface","jevbench","local_jsonl"],"method_keys":["beta"]},"llm_grpo":{...,"method_keys":["group_size","max_new_tokens","reward","temperature"],"reward":["contains","exact_match","last_number"]},"llm_decision_sft":{...,"method_keys":["calibration","eval_think","head_lr","max_think","think_fraction"],"head":["pointer","readout"]},"llm_decision_cispo":{...,"head":["pointer","readout"]},"llm_instruction":{...,"method_keys":["system"]},"llm_sft":{...,"method_keys":[]},"tts_piper":{"stages":["data","train","validate"],"quality":["high","medium"],"source":["delimited","huggingface","jevbench","local_jsonl"]},"wakeword":{"stages":["data","features","train","validate"],"source":["delimited","huggingface","jevbench","local_jsonl"]},"data_speech":{"stages":["seeds","prompts","synthesize","verify","select"],...}}
 ```
 
 #### 특이사항

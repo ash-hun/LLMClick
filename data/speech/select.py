@@ -17,12 +17,14 @@ MANIFEST = "manifest.json"
 WAVS = "wavs"
 
 
-def chosen(rows: list[Row]) -> list[Row]:
-    """Pure: per text the recording Whisper understood best (then the first sample), in a stable order."""
-    best: dict[str, Row] = {}
+def chosen(rows: list[Row], per_text: int | None = 1) -> list[Row]:
+    """Pure: per text the `per_text` recordings Whisper understood best (then the first sample), in a stable order."""
+    best: dict[str, list[Row]] = {}
     for row in sorted(rows, key=lambda row: (normalized(row["text"]), float(row.get("wer", 0)), int(row["sample"]), row["id"])):
-        best.setdefault(normalized(row["text"]), row)
-    return sorted(best.values(), key=lambda row: row["id"])
+        kept = best.setdefault(normalized(row["text"]), [])
+        if per_text is None or len(kept) < per_text:
+            kept.append(row)
+    return sorted((row for kept in best.values() for row in kept), key=lambda row: row["id"])
 
 
 def placed(source: Path, target: Path) -> None:
@@ -46,7 +48,7 @@ class SpeechSelectStage(Stage[SpeechConfig]):
     def run(self, workdir: Path, inputs: dict[str, Outputs]) -> Outputs:
         config = self.config
         verified = read_rows(Path(inputs["verify"]["rows"]))
-        unique = chosen(verified)
+        unique = chosen(verified, config.select.per_text)
         rows = unique[: config.select.max_rows]
         (workdir / WAVS).mkdir(exist_ok=True)
         for done, row in enumerate(rows):

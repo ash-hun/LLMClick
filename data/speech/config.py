@@ -1,6 +1,6 @@
 """Config of `data_speech`: the seeds and prompts of the text recipes, plus the voice and the speech checks."""
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from modeling.tts.config import AsrConfig, HubFile
 from core.config.schema import Section
@@ -11,9 +11,23 @@ class VoiceSettings(Section):
     """The voice that reads the texts, and how."""
     model: HubFile = Field(description="A Piper voice (.onnx); its .onnx.json is taken from beside it")
     samples: int = Field(default=1, ge=1, description="Recordings per text; Piper's noise makes each one different")
+    speakers: list[int] | int | None = Field(default=None, description="Speakers of a multi-speaker voice, by id, or n "
+                                                                        "for ids 0 to n-1; every text is read by each of them")
     length_scale: float | None = Field(default=None, gt=0, description="Above 1 speaks slower; null: the voice's own")
     noise_scale: float | None = Field(default=None, ge=0, description="null: the voice's own")
     noise_w_scale: float | None = Field(default=None, ge=0, description="null: the voice's own")
+
+    @model_validator(mode="after")
+    def _speakers(self) -> "VoiceSettings":
+        if self.speakers is not None and not self.ids():
+            raise ValueError("voice.speakers names no speaker")
+        return self
+
+    def ids(self) -> list[int | None]:
+        """Who reads each text: the listed speakers, or None for a voice's only one."""
+        if self.speakers is None:
+            return [None]
+        return list(range(self.speakers)) if isinstance(self.speakers, int) else list(self.speakers)
 
     def scales(self) -> dict[str, float]:
         return {name: value for name in ("length_scale", "noise_scale", "noise_w_scale") if (value := getattr(self, name)) is not None}
@@ -29,6 +43,8 @@ class SpeechVerifySettings(Section):
 
 
 class SpeechSelectSettings(Section):
+    per_text: int | None = Field(default=1, ge=1, description="Recordings kept per text, best heard first; null: all, "
+                                                               "for a wake word read by many speakers")
     max_rows: int | None = Field(default=None, ge=1)
 
 

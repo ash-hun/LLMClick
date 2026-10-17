@@ -14,6 +14,14 @@ seeds:
   - kind: situation
     values: [a morning briefing, a system diagnostic, an incoming call, the weather forecast, a security alert,
              calendar reminders, a suit malfunction, a quiet evening at the workshop]
+  # The agent's name and its fixed replies, read as they are (a `line` seed skips the generator): the voice learns to
+  # say exactly what configs/tts/piper_jarvis.yaml plays from validation.phrases.
+  - kind: line
+    values: ["At your service, sir.", "Jarvis here, sir. How can I help?", "Good morning, sir. Jarvis is online.",
+             "Searching Reference.", "Yes, sir. Searching Reference.", "Processing Long Task.", "Processing Long Task, sir.",
+             "Checking the Pattern.", "Checking the Pattern now.", "Target Analysis.", "Running Target Analysis, sir.",
+             "Activate Focus mode.", "Focus mode is active.", "Deactivate Focus mode.", "Focus mode is off, sir.",
+             "Change to KAREN.", "Change to JARVIS.", "JARVIS is back online, sir."]
   # The reference voice's own lines (jgkawell/jarvis metadata.csv), read again; with only these, use the passthrough
   # generator and drop `teacher`:
   # - {kind: line, source: {name: delimited, path: <dir>/metadata.csv}, field: text}

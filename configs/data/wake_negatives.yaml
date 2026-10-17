@@ -1,0 +1,39 @@
+# Everything that must not wake the agent, for `wakeword`: near misses of the name, the commands that come after it,
+# and ordinary speech, read by many speakers. No line may contain "Jarvis": that is the wake word. A near miss is the
+# hardest negative: it is what teaches the detector that "Travis" or "Karen" is not the name.
+pipeline:
+  recipe: data_speech
+  name: wake-negatives
+  seed: 20260920
+  output_dir: ./output
+
+seeds:
+  # near misses: names and words that sound like "Jarvis" but are not it
+  - kind: line
+    values: ["Travis.", "Davis.", "Harvest.", "Service.", "Darvish.", "Charges.", "Marvis.", "Jars.", "Garbage.",
+             "Karen.", "Jasmine.", "Nervous.", "Thank you, Travis.", "Mister Davis is here."]
+  # the commands that follow the name, said without it: the agent is already awake when they come
+  - kind: line
+    values: ["Wake up.", "Please search to the paper reference on the web.", "Process the long task in the background.",
+             "Remember this pattern.", "Analyze the target.", "Enter the focus mode.", "Quit the focus mode.",
+             "Change to Karen.", "Open my calendar for tomorrow.", "Turn off the lights in the lab."]
+  # ordinary speech
+  - kind: line
+    values: ["The meeting starts at nine in the morning.", "I will be there in a minute.", "Could you pass me the salt?",
+             "We should take the train instead.", "That was a long day at the office.", "The garden needs water again."]
+
+prompts: {generator: passthrough}
+
+voice:
+  model:
+    name: rhasspy/piper-voices
+    revision: c10ece1aade47bb51c153c893d14e5bf8e5b7117
+    file: en/en_US/libritts_r/medium/en_US-libritts_r-medium.onnx
+  speakers: 40
+
+verify: {min_seconds: 0.3, max_seconds: 6, max_wer: 0.5, asr: {language: en}}
+select: {per_text: null}
+
+licence: >-
+  rhasspy/piper-voices en_US-libritts_r-medium: MIT (repository card, revision c10ece1a); trained on LibriTTS-R,
+  CC BY 4.0 (model card). Synthetic speech for training a wake word detector.

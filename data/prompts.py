@@ -77,7 +77,10 @@ def document_qa(teacher: Teacher | None, seed: Row, index: int, params: dict[str
 @GENERATORS.register("utterances")
 def utterances(teacher: Teacher | None, seed: Row, index: int, params: dict[str, Any], ask: Any) -> list[Row]:
     """Lines to be read aloud for a speech dataset: `n` things a `speaker` would say about the seed, short enough for
-    one recording each, with numbers written as words so the text says what the voice says."""
+    one recording each, with numbers written as words so the text says what the voice says. A `line` seed is
+    already such a line (the agent's name, a fixed reply) and is read as it is."""
+    if seed["kind"] == "line":
+        return [{"instruction": seed["text"]}]
     count, language = int(params.get("n", 5)), params.get("language", "English")
     speaker = params.get("speaker", "a voice assistant")
     text = ask([{"role": "user", "content": f"Write {count} different things {speaker} would say about {seed['text']}. "

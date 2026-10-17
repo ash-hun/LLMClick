@@ -90,6 +90,19 @@ def test_a_voice_that_mumbles_fails_validation(tmp_path: Path, piper: FakePiper)
         pipeline.build(config(root)).run()
 
 
+def test_the_agents_fixed_replies_are_spoken_once_and_must_be_understood(tmp_path: Path, piper: FakePiper) -> None:
+    replies = {"wake_up": "At your service, sir.", "web_search": "Searching Reference."}
+    result = pipeline.build(config(recordings(tmp_path), validation={"phrases": replies, "max": {"wer": 0.1, "phrase_wer": 0.0}})).run()
+    report = Path(result["stages"]["validate"]["report"]).parent
+    kept = json.loads((report / "phrases.json").read_text())
+    assert {name: entry["text"] for name, entry in kept.items()} == replies and (report / "phrases" / "web_search.wav").is_file()
+    assert result["stages"]["validate"]["metrics"]["phrase_wer"] == 0.0
+    with pytest.raises(ValidationFailed, match="phrase_wer"):
+        pipeline.build(config(tmp_path, validation={"phrases": {"web_search": "Searching mumble."}, "max": {"phrase_wer": 0.0}})).run()
+    with pytest.raises(ValueError, match="may only use letters"):
+        pipeline.build(config(tmp_path, validation={"phrases": {"web search": "Searching Reference."}}))
+
+
 def test_config_errors_and_units(tmp_path: Path) -> None:
     root = recordings(tmp_path)
     with pytest.raises(ValueError, match="training.args cannot set"):

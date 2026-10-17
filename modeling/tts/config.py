@@ -1,5 +1,6 @@
 """Config of `tts_piper`: the voice to start from, the recordings, Piper's training settings and the listening test."""
 
+import re
 from pathlib import Path
 from typing import Any, Literal
 
@@ -95,6 +96,16 @@ class PiperTrainingConfig(Section):
 class PiperValidationConfig(ValidationConfig):
     asr: AsrConfig = Field(default_factory=AsrConfig)
     rows: int | None = Field(default=50, ge=1, description="Held-out rows to synthesize and transcribe; null: all of them")
+    phrases: dict[str, str] = Field(default_factory=dict,
+                                    description="Fixed replies the agent plays (name -> text), e.g. web_search: Searching "
+                                                "Reference.; each is spoken once into phrases/<name>.wav and must be understood")
+
+    @model_validator(mode="after")
+    def _named(self) -> "PiperValidationConfig":
+        bad = sorted(name for name in self.phrases if not re.fullmatch(r"[A-Za-z0-9_-]+", name))
+        if bad:
+            raise ValueError(f"validation.phrases names become file names: {bad} may only use letters, digits, _ and -")
+        return self
 
 
 class PiperConfig(ModelingConfig):
