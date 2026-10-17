@@ -63,3 +63,9 @@ class Listener:
 
     def release(self) -> None:
         self.model = self.processor = None
+
+    def __enter__(self) -> "Listener":
+        return self
+
+    def __exit__(self, *failure: object) -> None:
+        self.release()

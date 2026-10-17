@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
-from core.utils.files import sha256_file
+from core.utils.files import atomic_path, sha256_file
 from modeling.tts import audio
 
 RATE = 16000
@@ -30,12 +30,10 @@ def ensure(directory: Path) -> Path:
         path = directory / name
         if path.is_file() and sha256_file(path) == digest:
             continue
-        temporary = path.with_suffix(".tmp")
-        urllib.request.urlretrieve(RELEASE + name, temporary)
-        if sha256_file(temporary) != digest:
-            temporary.unlink()
-            raise ValueError(f"{RELEASE + name} does not match its pinned sha256 {digest}")
-        temporary.replace(path)
+        with atomic_path(path) as temporary:
+            urllib.request.urlretrieve(RELEASE + name, temporary)
+            if sha256_file(temporary) != digest:
+                raise ValueError(f"{RELEASE + name} does not match its pinned sha256 {digest}")
     return directory
 
 

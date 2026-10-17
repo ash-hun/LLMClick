@@ -7,7 +7,7 @@ from typing import ClassVar
 from pydantic import Field, model_validator
 
 from core.config.schema import BaseConfig, Section
-from modeling.config import Keyed, TrackerConfig
+from modeling.config import Keyed, TrackerConfig, local_paths
 
 BUILT = ("validate", "train", "base")  # `model.checkpoint` values that name a checkpoint of the experiment
 
@@ -52,7 +52,7 @@ class EvaluationData(Section):
     sources: list[Keyed] = Field(min_length=1, description="Rows in the format of the experiment's recipe")
 
     def paths(self) -> list[str]:
-        return [str(path) for source in self.sources if (path := source.params.get("path")) is not None]
+        return local_paths(self.sources)
 
 
 class EvaluationSettings(Section):

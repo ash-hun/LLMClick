@@ -11,13 +11,13 @@ from contextlib import contextmanager
 import yaml
 
 from core.utils.files import read_json, sha256_json, write_json
+from core.settings import LOG_FORMAT
 from core.config.schema import BaseConfig
 
 HASH_LENGTH = 8
 STAGE_HASH_LENGTH = 12
 STORE = "_stages"
 DONE = "stage.json"
-LOG_FORMAT = "%(asctime)s %(name)s %(levelname)s %(message)s"
 
 
 def config_hash(config: BaseConfig) -> str:

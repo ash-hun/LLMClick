@@ -8,7 +8,7 @@ from typing import ClassVar
 from data.rows import Row, normalized, read_rows, trail, write_rows
 from data.speech.config import SpeechConfig
 from data.teachers import teacher_from
-from core.utils.files import write_json
+from core.utils.files import atomic_path, write_json
 from core.stage import Outputs, Stage
 
 ROWS = "rows.jsonl"
@@ -31,13 +31,11 @@ def placed(source: Path, target: Path) -> None:
     """`target` holds the recording: a hard link where the file system allows one, else a copy; never half a file."""
     if target.is_file():
         return
-    temporary = target.with_suffix(".tmp")
-    temporary.unlink(missing_ok=True)
-    try:
-        os.link(source, temporary)
-    except OSError:
-        shutil.copyfile(source, temporary)
-    temporary.replace(target)
+    with atomic_path(target) as temporary:
+        try:
+            os.link(source, temporary)
+        except OSError:
+            shutil.copyfile(source, temporary)
 
 
 class SpeechSelectStage(Stage[SpeechConfig]):

@@ -7,6 +7,7 @@ from collections.abc import Callable
 import numpy as np
 
 from modeling.wakeword.config import WakewordTraining
+from core.utils.files import atomic_path
 from modeling.wakeword import features
 
 LOG_EVERY = 50
@@ -50,13 +51,12 @@ def fit(x: np.ndarray, y: np.ndarray, training: WakewordTraining, seed: int, onn
             history.append([step, loss.item()])
             report(step)
     model.eval()
-    temporary = onnx.with_suffix(".tmp")
     # ponytail: the TorchScript exporter, deprecated since torch 2.9 but enough for a few linear layers; move to
     # dynamo=True (and add onnxscript) when torch drops it
-    torch.onnx.export(model, (torch.zeros(1, features.FRAMES, features.DIM),), str(temporary), dynamo=False,
-                      opset_version=OPSET, input_names=["input"], output_names=["score"],
-                      dynamic_axes={"input": {0: "batch"}, "score": {0: "batch"}})
-    temporary.replace(onnx)
+    with atomic_path(onnx) as temporary:
+        torch.onnx.export(model, (torch.zeros(1, features.FRAMES, features.DIM),), str(temporary), dynamo=False,
+                          opset_version=OPSET, input_names=["input"], output_names=["score"],
+                          dynamic_axes={"input": {0: "batch"}, "score": {0: "batch"}})
     return history
 
 

@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from core.settings import get_settings
 from core.api import store as job_store
+from core.api.schema import EXAMPLE_CONFIG, EXAMPLE_PLAN
 from core.api.store import JobStore
 from core.progress import StateProgress
 from core.utils import device
@@ -195,3 +196,15 @@ def test_api_token_guards_every_api_route_but_not_health(monkeypatch: pytest.Mon
         assert request({}).status_code == 401 and request({"Authorization": "Bearer wrong"}).status_code == 401
         assert request({"Authorization": "Bearer s3cret"}).status_code != 401
     assert client.get("/api/jobs", headers={"Authorization": "Bearer s3cret"}).json() == []
+
+
+def test_every_route_is_documented_and_the_example_config_is_valid() -> None:
+    schema = client.get("/openapi.json").json()
+    for route, operations in schema["paths"].items():
+        for method, operation in operations.items():
+            assert operation.get("summary"), f"{method.upper()} {route} has no summary"
+            for parameter in operation.get("parameters", []):
+                assert parameter.get("description"), f"{method.upper()} {route}: {parameter['name']} has no description"
+    response = client.post("/api/config/validate", json=EXAMPLE_CONFIG)
+    assert response.status_code == 200, response.text
+    assert {key: response.json()[key] for key in EXAMPLE_PLAN} == EXAMPLE_PLAN

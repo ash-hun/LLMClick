@@ -1,15 +1,54 @@
-"""WAV files as numbers: read, resample, and the measurements the speech checks use."""
+"""WAV files: where a source's recordings are, their samples, resampling, and the measurements the speech checks use."""
 
 import wave
 from pathlib import Path
+from typing import Any
+from collections.abc import Iterator
 
 import numpy as np
 
+from core.utils.files import directory_signature
+from modeling.tuning.sources import SOURCES
+from modeling.config import Keyed
+
+AUDIO_KEYS = ("path", "audio_dir")  # source keys that name local files: the rows, and where their audio starts
 PCM16 = 2
 FULL_SCALE = 32768.0
 CLIPPED = 0.999        # |sample| at or above this share of full scale counts as clipped
 SILENT = 0.01          # a frame whose RMS is below this is silence
 FRAME_SECONDS = 0.02
+
+
+def audio_root(source: Keyed) -> Path | None:
+    """Where a source's relative audio paths start: `audio_dir`, else the directory of the source file."""
+    params = source.params
+    if params.get("audio_dir"):
+        return Path(params["audio_dir"])
+    return Path(params["path"]).parent if params.get("path") else None
+
+
+def located(value: Any, root: Path | None) -> Path | None:
+    """A row's audio file, absolute; an LJSpeech id without `.wav` finds its file too."""
+    if not value:
+        return None
+    path = Path(str(value))
+    path = path if path.is_absolute() or root is None else root / path
+    for candidate in (path, path.with_name(path.name + ".wav")):
+        if candidate.is_file():
+            return candidate.resolve()
+    return None
+
+
+def recordings(source: Keyed) -> Iterator[tuple[int, dict[str, Any], Path | None]]:
+    """(row number, row, its audio file or None) for every row of a source; the caller decides what is missing."""
+    root = audio_root(source)
+    for number, row in enumerate(SOURCES.get(source.name)(source.params)):
+        yield number, row, located(row.get("audio"), root)
+
+
+def signatures(sources: list[Keyed]) -> list[Any]:
+    """Each source's audio directory as content, so re-recorded files are a new input to a stage."""
+    return [directory_signature(root) if (root := audio_root(source)) else None for source in sources]
 
 
 def seconds(path: Path) -> float:

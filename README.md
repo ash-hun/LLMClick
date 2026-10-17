@@ -550,6 +550,23 @@ class MyPipeline(ModelingPipeline[MyConfig]):
 
 Inside a stage, `self.progress.update(done, total, note)` drives the progress bar.
 
+### Building blocks a new recipe reuses
+
+A data, evaluation or modeling recipe is safe to rerun because its stages write through these. Use them rather than
+writing the step again, so the guarantee holds in one place:
+
+| Need | Use | Where |
+|---|---|---|
+| Write a file whole or not at all | `with atomic_path(path) as temporary:` | `core/utils/files.py` |
+| Build a checkpoint directory whole or not at all | `with staged_directory(workdir / "checkpoint") as staging:` | `core/utils/files.py` |
+| Rows between stages | `read_jsonl`, `write_jsonl` (atomic); the data channel's `read_rows` also reads a missing file as empty | `core/utils/files.py`, `data/rows.py` |
+| Per-item results that survive a crash | `cached(directory, key)`, `keep(directory, key, row)` under a natural `key(...)` | `data/rows.py` |
+| Hold out validation rows | `held_out_positions(count, seed, share)`: a row's side depends only on the seed and its position | `modeling/stages.py` |
+| Load a model for one block | `with backbone.loaded(device, checkpoint):` releases it afterwards, also on failure | `modeling/tuning/backbone.py` |
+| A `name:` key in the config | a `Registry`; in the config validator `REGISTRY.check(*names)` gives the standard error | `core/registry.py` |
+| Local files a config reads | `local_paths(entries, keys)` in `paths()`, so the API can confine them | `modeling/config.py` |
+| Recordings named by rows | `audio.recordings(source)`, `audio.signatures(sources)` for the fingerprint | `modeling/tts/audio.py` |
+
 ## 05. Tests
 
 ```bash

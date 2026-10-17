@@ -5,6 +5,8 @@ import hashlib
 from pathlib import Path
 from typing import Any
 
+from core.utils.files import atomic_path, read_jsonl, write_jsonl
+
 Row = dict[str, Any]
 KEY_LENGTH = 16
 
@@ -19,17 +21,12 @@ def normalized(text: str) -> str:
 
 
 def read_rows(path: Path) -> list[Row]:
-    if not path.is_file():
-        return []
-    return [json.loads(line) for line in path.read_text().split("\n") if line.strip()]
+    """A stage's rows, or none when the file is not there yet."""
+    return read_jsonl(path) if path.is_file() else []
 
 
 def write_rows(path: Path, rows: list[Row]) -> None:
-    """The whole file at once, through a temporary name: a reader never sees a half-written file."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text("".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in rows))
-    temporary.replace(path)
+    write_jsonl(path, rows)
 
 
 def trail(inputs: dict[str, Any], name: str, summary: Row) -> dict[str, Row]:
@@ -51,9 +48,6 @@ def cached(directory: Path, identifier: str) -> Row | None:
 
 
 def keep(directory: Path, identifier: str, row: Row) -> Row:
-    directory.mkdir(parents=True, exist_ok=True)
-    path = directory / f"{identifier}.json"
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(json.dumps(row, ensure_ascii=False, sort_keys=True))
-    temporary.replace(path)
+    with atomic_path(directory / f"{identifier}.json") as temporary:
+        temporary.write_text(json.dumps(row, ensure_ascii=False, sort_keys=True))
     return row

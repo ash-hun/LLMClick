@@ -7,17 +7,15 @@ from typing import Any, ClassVar
 
 import numpy as np
 
-from modeling.tuning.stages import held_out_positions, read_rows, write_rows
+from core.utils.files import atomic_path, directory_signature, read_json, read_jsonl, sha256_file, staged_directory, write_json, write_jsonl
 from modeling.wakeword.config import AugmentConfig, WakewordConfig
-from core.utils.files import directory_signature, read_json, write_json
-from modeling.stages import TrainStage, ValidateStage
-from modeling.tts.stages import audio_root, located
-from modeling.tuning.sources import SOURCES
-from modeling.config import Keyed, keyed_identity
+from modeling.stages import TrainStage, ValidateStage, held_out_positions
 from modeling.wakeword import features, detector
+from modeling.config import Keyed, keyed_identity
 from modeling.tracker import History
 from core.stage import Outputs, Stage
 from modeling.tts.asr import words
+from modeling.tts import audio
 
 FEATURES = "features.npz"
 SUMMARY = "summary.json"
@@ -30,8 +28,13 @@ MARGIN = 0.2              # seconds between the latest a positive window ends an
 
 
 def rng_for(seed: int, *parts: Any) -> np.random.Generator:
-    """A generator that depends only on the seed and the item, so a window is the same whenever it is made."""
+    """A generator that depends only on the seed and the item, so a window is the same whenever it is made. A
+    recording is named by `content`, not its path, so moving the recordings does not change the windows."""
     return np.random.default_rng([seed, int(hashlib.sha256(repr(parts).encode()).hexdigest()[:15], 16)])
+
+
+def content(path: str) -> str:
+    return sha256_file(Path(path))
 
 
 def backdrop(rng: np.random.Generator, background: list[np.ndarray], length: int) -> np.ndarray:
@@ -111,19 +114,17 @@ class ClipsStage(Stage[WakewordConfig]):
     def identity(self) -> Any:
         data = self.config.data
         sources = [*data.positive, *data.negative]
-        return [self.config.seed, self.config.phrase, keyed_identity(sources), data.validation,
-                [directory_signature(root) if (root := audio_root(source)) else None for source in sources],
+        return [self.config.seed, self.config.phrase, keyed_identity(sources), data.validation, audio.signatures(sources),
                 [directory_signature(Path(path)) for path in data.background]]
 
     def rows(self, sources: list[Keyed], label: int) -> list[dict[str, Any]]:
         phrase = words(self.config.phrase)
         rows: list[dict[str, Any]] = []
         for index, source in enumerate(sources):
-            root = audio_root(source)
-            for number, row in enumerate(SOURCES.get(source.name)(source.params)):
-                path = located(row.get("audio"), root)
+            for number, row, path in audio.recordings(source):
                 if path is None:
-                    raise ValueError(f"{source.name} row {number}: no audio file at {row.get('audio')!r} under {root}")
+                    raise ValueError(f"{source.name} row {number}: no audio file at {row.get('audio')!r} under "
+                                     f"{audio.audio_root(source)}")
                 said = words(str(row.get("text") or ""))
                 if label and said and said != phrase:
                     raise ValueError(f"{source.name} row {number} says {row['text']!r}, not the phrase {self.config.phrase!r}")
@@ -147,8 +148,8 @@ class ClipsStage(Stage[WakewordConfig]):
         if data.background and not background:
             raise ValueError(f"no .wav files under {data.background}")
         for name, fold in split.items():
-            write_rows(workdir / f"{name}.jsonl", fold)
-        write_rows(workdir / "background.jsonl", [{"audio": path} for path in background])
+            write_jsonl(workdir / f"{name}.jsonl", fold)
+        write_jsonl(workdir / "background.jsonl", [{"audio": path} for path in background])
         counts = {name: {"positive": sum(row["label"] for row in fold), "negative": sum(1 - row["label"] for row in fold)}
                   for name, fold in split.items()}
         return {**{name: str(workdir / f"{name}.jsonl") for name in split}, "background": str(workdir / "background.jsonl"),
@@ -157,7 +158,7 @@ class ClipsStage(Stage[WakewordConfig]):
 
 def background_of(inputs: dict[str, Outputs]) -> list[np.ndarray]:
     # ponytail: every background file is held in memory at 16 kHz; stream from disk when the noise set reaches gigabytes
-    return [features.clip(Path(row["audio"])) for row in read_rows(Path(inputs["data"]["background"]))]
+    return [features.clip(Path(row["audio"])) for row in read_jsonl(Path(inputs["data"]["background"]))]
 
 
 class WindowsStage(Stage[WakewordConfig]):
@@ -166,6 +167,7 @@ class WindowsStage(Stage[WakewordConfig]):
     alone, all turned into embeddings. Every window's randomness comes from the seed and its recording, so a rerun
     makes the same file."""
     name: ClassVar[str] = "features"
+    version: ClassVar[int] = 2
     requires: ClassVar[tuple[str, ...]] = ("data",)
     sections: ClassVar[tuple[str, ...]] = ("seed", "augment")
 
@@ -177,19 +179,19 @@ class WindowsStage(Stage[WakewordConfig]):
         self.progress.update(0, None, "loading the feature models")
         embed = features.Embedder(features.ensure(workdir / "models"))
         background = background_of(inputs)
-        rows = read_rows(Path(inputs["data"]["train"]))
+        rows = read_jsonl(Path(inputs["data"]["train"]))
         others = [row["audio"] for row in rows if not row["label"]]
         windows: list[np.ndarray] = []
         labels: list[int] = []
         for done, row in enumerate(rows):
             self.progress.update(done, len(rows), "embedding windows")
-            samples = features.clip(Path(row["audio"]))
+            samples, key = features.clip(Path(row["audio"])), content(row["audio"])
             for round_ in range(augment.rounds):
-                rng = rng_for(seed, row["audio"], round_)
+                rng = rng_for(seed, key, round_)
                 windows.append(embed(window(samples, rng, augment, background, crop=not row["label"]))[-features.FRAMES:])
                 labels.append(int(row["label"]))
             for round_ in range(augment.followed if row["label"] else 0):
-                rng = rng_for(seed, row["audio"], "followed", round_)
+                rng = rng_for(seed, key, "followed", round_)
                 other = features.clip(Path(others[int(rng.integers(len(others)))]))
                 windows.append(embed(window(then(samples, other, rng, augment), rng, augment, background, crop=False))[-features.FRAMES:])
                 labels.append(0)
@@ -198,9 +200,8 @@ class WindowsStage(Stage[WakewordConfig]):
             windows.append(embed(window(np.zeros(0, dtype=np.float32), rng, augment, background, crop=False))[-features.FRAMES:])
             labels.append(0)
         self.progress.update(len(rows), len(rows))
-        temporary = workdir / (FEATURES + ".tmp.npz")
-        np.savez(temporary, x=np.stack(windows).astype(np.float32), y=np.asarray(labels, dtype=np.float32))
-        temporary.replace(workdir / FEATURES)
+        with atomic_path(workdir / FEATURES) as temporary, temporary.open("wb") as stream:
+            np.savez(stream, x=np.stack(windows).astype(np.float32), y=np.asarray(labels, dtype=np.float32))
         counts = {"positive": int(sum(labels)), "negative": len(labels) - int(sum(labels))}
         return {"features": str(workdir / FEATURES), "models": str(workdir / "models"), "windows": counts}
 
@@ -219,18 +220,15 @@ class FitDetectorStage(TrainStage[WakewordConfig]):
         if not (checkpoint / SUMMARY).is_file():
             self.progress.update(0, self.config.training.steps, "training the detector")
             data = np.load(inputs["features"]["features"])
-            staging = workdir / "checkpoint.tmp"
-            shutil.rmtree(staging, ignore_errors=True)
-            staging.mkdir()
             model_file = f"{self.config.slug}.onnx"
-            history = detector.fit(data["x"], data["y"], self.config.training, self.config.seed, staging / model_file,
-                                   lambda step: self.progress.update(step, self.config.training.steps, "training the detector"))
-            for name in features.MODELS:
-                shutil.copyfile(Path(inputs["features"]["models"]) / name, staging / name)
-            write_json(staging / BUNDLE, {"phrase": self.config.phrase, "model": model_file, "frames": features.FRAMES,
-                                          "sample_rate": features.RATE, "features": {"release": features.RELEASE, **features.MODELS}})
-            write_json(staging / SUMMARY, {"model": model_file, "windows": inputs["features"]["windows"], "history": history})
-            staging.rename(checkpoint)
+            with staged_directory(checkpoint) as staging:
+                history = detector.fit(data["x"], data["y"], self.config.training, self.config.seed, staging / model_file,
+                                       lambda step: self.progress.update(step, self.config.training.steps, "training the detector"))
+                for name in features.MODELS:
+                    shutil.copyfile(Path(inputs["features"]["models"]) / name, staging / name)
+                write_json(staging / BUNDLE, {"phrase": self.config.phrase, "model": model_file, "frames": features.FRAMES,
+                                              "sample_rate": features.RATE, "features": {"release": features.RELEASE, **features.MODELS}})
+                write_json(staging / SUMMARY, {"model": model_file, "windows": inputs["features"]["windows"], "history": history})
         return {"checkpoint": str(checkpoint), **read_json(checkpoint / SUMMARY)}
 
 
@@ -240,26 +238,27 @@ class StreamTestStage(ValidateStage[WakewordConfig]):
     a command in one stream, where the detector must fire once, on the phrase, and not on the command."""
     requires: ClassVar[tuple[str, ...]] = ("train", "data")
     sections: ClassVar[tuple[str, ...]] = ("validation", "seed")
+    version: ClassVar[int] = 2
 
     def measure(self, workdir: Path, inputs: dict[str, Outputs]) -> dict[str, float]:
         settings, seed = self.config.validation, self.config.seed
         bundle = Path(inputs["train"]["checkpoint"])
         score = detector.Scorer(bundle, read_json(bundle / BUNDLE)["model"])
         background = background_of(inputs)
-        rows = read_rows(Path(inputs["data"]["validation"]))
+        rows = read_jsonl(Path(inputs["data"]["validation"]))
         positives = [row for row in rows if row["label"]]
         negatives = [row for row in rows if not row["label"]]
         items: list[dict[str, Any]] = []
         for done, row in enumerate(rows):
             self.progress.update(done, len(rows) + len(positives), "listening for the phrase")
-            fired = firings(score(stream([features.clip(Path(row["audio"]))], rng_for(seed, "test", row["audio"]),
+            fired = firings(score(stream([features.clip(Path(row["audio"]))], rng_for(seed, "test", content(row["audio"])),
                                          background, settings.snr)), settings.threshold)
             items.append({"test": "single", "audio": row["audio"], "label": row["label"], "fired": len(fired)})
         for done, row in enumerate(positives):
             self.progress.update(len(rows) + done, len(rows) + len(positives), "phrase, then a command")
             phrase = features.clip(Path(row["audio"]))
             command = negatives[done % len(negatives)]
-            scores = score(stream([phrase, features.clip(Path(command["audio"]))], rng_for(seed, "scenario", row["audio"]),
+            scores = score(stream([phrase, features.clip(Path(command["audio"]))], rng_for(seed, "scenario", content(row["audio"])),
                                   background, settings.snr))
             fired_at = [features.window_end(index) / features.RATE for index in firings(scores, settings.threshold)]
             said = (LEAD, LEAD + len(phrase) / features.RATE)
@@ -267,7 +266,7 @@ class StreamTestStage(ValidateStage[WakewordConfig]):
             items.append({"test": "scenario", "audio": row["audio"], "command": command["audio"], "fired_at": fired_at,
                           "phrase_at": said, "passed": passed})
         self.progress.update(len(rows) + len(positives), len(rows) + len(positives))
-        write_rows(workdir / "items.jsonl", items)
+        write_jsonl(workdir / "items.jsonl", items)
         singles = [item for item in items if item["test"] == "single"]
         return {"recall": float(np.mean([item["fired"] > 0 for item in singles if item["label"]])),
                 "false_accepts": float(np.mean([item["fired"] > 0 for item in singles if not item["label"]])),

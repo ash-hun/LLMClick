@@ -27,6 +27,12 @@ class Registry:
         except KeyError:
             raise KeyError(f"Unknown {self.kind} {name!r}; registered: {self.names()}") from None
 
+    def check(self, *names: str) -> None:
+        """A config validator's check: every name is registered. ValueError, so pydantic reports it on the config."""
+        for name in names:
+            if name not in self._items:
+                raise ValueError(f"Unknown {self.kind} {name!r}; registered: {self.names()}")
+
     def names(self) -> list[str]:
         return sorted(self._items)
 

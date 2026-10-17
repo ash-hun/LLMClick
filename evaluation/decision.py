@@ -16,7 +16,7 @@ from core.config.schema import Section
 from core.progress import Progress
 from core.stage import Outputs, Stage
 from core.utils.device import resolve_device
-from core.utils.files import write_json
+from core.utils.files import atomic_path, read_jsonl, write_json
 from evaluation.config import EvaluationData, MeasureSettings, SourceModel
 from evaluation.source import SourceExperiment
 from evaluation.stages import contamination, named
@@ -24,7 +24,6 @@ from modeling.llm.methods.decision.base import DecisionMethod, Item, expected_ca
 from modeling.llm.models.base import LLMBackbone
 from modeling.tuning.method import Row, chunks, fitting
 from modeling.tuning.sources import SOURCES
-from modeling.tuning.stages import read_rows
 
 ITEMS = "items.jsonl"
 SCORES = "scores.json"
@@ -61,9 +60,8 @@ def fetch_jevbench(revision: str, repository: str = JEVBENCH_REPOSITORY) -> Path
             continue
         with urlopen(JEVBENCH_URL.format(repository=repository, revision=revision, file=file)) as response:  # noqa: S310 - fixed host
             content = response.read()
-        temporary = target.with_suffix(".tmp")
-        temporary.write_bytes(content)
-        temporary.replace(target)
+        with atomic_path(target) as temporary:
+            temporary.write_bytes(content)
     return root
 
 
@@ -187,18 +185,15 @@ class DecisionScoreStage(Stage[MeasureSettings]):
         method.config = method.config.model_copy(update={"eval_think": think != "off", **({"max_think": max_think} if max_think else {})})
         checkpoint = source.checkpoint()
         self.progress.update(0, None, "loading checkpoint" if checkpoint else "loading base model")
-        backbone.load(resolve_device(self.config.device), checkpoint)
         modes: dict[str, list[dict[str, Any]]] = {}
-        try:
-            rows = read_rows(Path(inputs[self.rows_stage]["rows"]))
+        with backbone.loaded(resolve_device(self.config.device), checkpoint):
+            rows = read_jsonl(Path(inputs[self.rows_stage]["rows"]))
             kept = fitting(backbone, method, rows, trained.training, self.progress, "evaluation")
             if think != "on":
                 modes["nothink"] = self.mode(backbone, method, kept, think=False)
             if think != "off":
                 modes["think"] = self.mode(backbone, method, kept, think=True)
             temperature = method.head(backbone).temperature
-        finally:
-            backbone.release()
         with (workdir / ITEMS).open("w") as stream:
             for mode, records in modes.items():
                 for record in records:
@@ -227,7 +222,7 @@ class DecisionReport(Stage[DecisionConfig]):
                   "settings": scores["settings"],
                   "rows": {"sources": [source.model_dump(mode="json") for source in self.config.data.sources], **scores["rows"]},
                   "scores": scores["metrics"], "items": scores["items"],
-                  "contamination": contamination(self.config.model, read_rows(Path(inputs["rows"]["rows"])))}
+                  "contamination": contamination(self.config.model, read_jsonl(Path(inputs["rows"]["rows"])))}
         write_json(workdir / REPORT, report)
         return {"report": str(workdir / REPORT), "scores": scores["metrics"]}
 

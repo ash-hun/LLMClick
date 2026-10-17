@@ -1,17 +1,14 @@
 """CLI: `llmclick run CONFIG`, `llmclick validate CONFIG`, `llmclick recipes`, `llmclick serve`."""
 
-import argparse
-import json
-import logging
 import sys
+import json
+import argparse
 
-from dotenv import load_dotenv
 from tqdm.contrib.logging import logging_redirect_tqdm
 
-from core.config.experiment import LOG_FORMAT
+from core.settings import prepare_process
 from core.progress import BarProgress
 from core.registry import catalogue
-from core.settings import ENV_FILE
 from core import pipeline
 
 
@@ -26,8 +23,7 @@ def main(argv: list[str] | None = None) -> int:
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8000)
     args = parser.parse_args(argv)
-    load_dotenv(ENV_FILE)  # Hugging Face downloads read HF_TOKEN from the environment
-    logging.basicConfig(level=logging.INFO, format=LOG_FORMAT, stream=sys.stderr)
+    prepare_process()
 
     if args.command == "serve":
         import uvicorn

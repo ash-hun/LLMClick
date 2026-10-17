@@ -5,7 +5,7 @@ from typing import Any, ClassVar, Literal
 from pydantic import Field, model_validator
 
 from core.config.schema import BaseConfig, Section
-from modeling.config import Keyed, TrackerConfig
+from modeling.config import Keyed, TrackerConfig, local_paths
 
 
 class SeedSpec(Section):
@@ -99,18 +99,13 @@ class SeedConfig(BaseConfig):
         from data.prompts import GENERATORS
         from data.teachers import TEACHERS
         from modeling.tuning.sources import SOURCES
-        if self.teacher is not None and self.teacher.name not in TEACHERS:
-            raise ValueError(f"Unknown teacher {self.teacher.name!r}; registered: {TEACHERS.names()}")
-        if self.prompts.generator not in GENERATORS:
-            raise ValueError(f"Unknown generator {self.prompts.generator!r}; registered: {GENERATORS.names()}")
-        for seed in self.seeds:
-            if seed.source is not None and seed.source.name not in SOURCES:
-                raise ValueError(f"Unknown source {seed.source.name!r}; registered: {SOURCES.names()}")
+        TEACHERS.check(*([self.teacher.name] if self.teacher is not None else []))
+        GENERATORS.check(self.prompts.generator)
+        SOURCES.check(*(seed.source.name for seed in self.seeds if seed.source is not None))
         return self
 
     def paths(self) -> list[str]:
-        own = [str(path) for seed in self.seeds if seed.source is not None and (path := seed.source.params.get("path")) is not None]
-        return [*super().paths(), *own]
+        return [*super().paths(), *local_paths([seed.source for seed in self.seeds if seed.source is not None])]
 
 
 class SyntheticConfig(SeedConfig):
@@ -133,12 +128,10 @@ class SyntheticConfig(SeedConfig):
             unknown = [name for name in self.evolve.operators if name not in EVOLVERS]
             if unknown:
                 raise ValueError(f"Unknown evolve operators {unknown}; registered: {EVOLVERS.names()}")
-        if self.verify.reward is not None and self.verify.reward.name not in REWARDS:
-            raise ValueError(f"Unknown reward {self.verify.reward.name!r}; registered: {REWARDS.names()}")
+        REWARDS.check(*([self.verify.reward.name] if self.verify.reward is not None else []))
         if self.verify.judge is not None and self.verify.judge.teacher is not None and self.verify.judge.teacher.name not in TEACHERS:
             raise ValueError(f"Unknown judge teacher {self.verify.judge.teacher.name!r}; registered: {TEACHERS.names()}")
         return self
 
     def paths(self) -> list[str]:
-        leak = [str(path) for source in (self.select.leak.against if self.select.leak else []) if (path := source.params.get("path")) is not None]
-        return [*super().paths(), *leak]
+        return [*super().paths(), *local_paths(self.select.leak.against if self.select.leak else [])]

@@ -2,6 +2,7 @@
 
 import os
 import math
+import hashlib
 import logging
 from abc import abstractmethod
 from collections.abc import Callable, Iterator
@@ -16,6 +17,13 @@ from modeling.tracker import History, Tracker
 
 ModelingConfigT = TypeVar("ModelingConfigT", bound=ModelingConfig)
 logger = logging.getLogger(__name__)
+
+
+def held_out_positions(count: int, seed: int, share: float) -> set[int]:
+    """Which rows validation gets. A row's side depends only on the seed and its position, so adding sources never
+    reshuffles earlier rows."""
+    ranked = sorted(range(count), key=lambda i: hashlib.sha256(f"{seed}:{i}".encode()).hexdigest())
+    return set(ranked[: min(count - 1, max(1, round(count * share)))])
 
 
 class ValidationFailed(RuntimeError):

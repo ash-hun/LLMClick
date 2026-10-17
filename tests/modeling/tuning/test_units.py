@@ -209,3 +209,14 @@ def test_rows_are_tokenized_once_across_the_length_check_the_loss_and_evaluation
     ids = backbone.token_ids("\n")
     ids.append(0)  # a caller may extend what it got without touching the cache
     assert backbone.token_ids("\n") != ids
+
+
+def test_loaded_weights_are_released_after_the_block_even_when_it_fails(tiny_model: Path) -> None:
+    model = TransformerBackbone(LLMBackboneConfig(architecture="transformer", name=str(tiny_model)))
+    with model.loaded("cpu"):
+        assert model.model is not None and model.tokenizer is not None
+    assert model.model is None
+    with pytest.raises(RuntimeError, match="measurement failed"):
+        with model.loaded("cpu"):
+            raise RuntimeError("measurement failed")
+    assert model.model is None

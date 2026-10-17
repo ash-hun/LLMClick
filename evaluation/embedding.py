@@ -133,14 +133,11 @@ class EmbeddingStage(Stage[MeasureSettings]):
             raise ValueError(f"{self.model.reference!r} is not an embedding model (recipe or architecture)")
         checkpoint = source.checkpoint()
         self.progress.update(0, None, f"{self.task}: loading " + ("checkpoint" if checkpoint else "base model"))
-        backbone.load(resolve_device(config.device), checkpoint)
-        try:
+        with backbone.loaded(resolve_device(config.device), checkpoint):
             self.progress.update(0, None, f"{self.task}: encoding")
             encoder = Encoder(backbone, max_length, model_meta(mteb, source, max_length))
             outcome = mteb.evaluate(encoder, [task], cache=None, show_progress_bar=False,
                                     encode_kwargs={"batch_size": config.evaluation.batch_size})
-        finally:
-            backbone.release()
         (result,) = outcome.task_results
         dumped = json.loads(json.dumps(result.model_dump(), default=str))
         write_json(workdir / RESULTS, dumped)

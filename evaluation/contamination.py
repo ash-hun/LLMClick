@@ -8,7 +8,7 @@ from typing import Any
 
 import numpy as np
 
-from modeling.tuning.stages import read_rows
+from core.utils.files import read_jsonl
 
 NGRAM = 8
 NEAR = 0.5       # share of an item's n-grams found in the training rows that makes it a near-duplicate
@@ -66,7 +66,7 @@ def measure(training_rows: Path | None, items: list[Any], ngram: int = NGRAM, ne
     experiment's training rows cannot be found (a base model, or a recipe without a data stage)."""
     if training_rows is None or not training_rows.is_file():
         return None
-    rows = read_rows(training_rows)
+    rows = read_jsonl(training_rows)
     overlap = Overlap(" ".join(texts_of(row)) for row in rows)
     texts = [" ".join(texts_of(item)) for item in items]
     exact = [index for index, text in enumerate(texts) if overlap.is_exact(text)]

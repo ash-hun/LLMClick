@@ -4,7 +4,7 @@ import re
 
 from pydantic import Field, model_validator
 
-from modeling.config import Keyed, ModelingConfig, ValidationConfig
+from modeling.config import Keyed, ModelingConfig, ValidationConfig, local_paths
 from core.config.schema import Section
 
 
@@ -49,9 +49,7 @@ class WakewordConfig(ModelingConfig):
     @model_validator(mode="after")
     def _registered(self) -> "WakewordConfig":
         from modeling.tuning.sources import SOURCES
-        for source in [*self.data.positive, *self.data.negative]:
-            if source.name not in SOURCES:
-                raise ValueError(f"Unknown source {source.name!r}; registered: {SOURCES.names()}")
+        SOURCES.check(*(source.name for source in [*self.data.positive, *self.data.negative]))
         for name, (low, high) in (("augment.snr", self.augment.snr), ("augment.gain", self.augment.gain)):
             if low > high:
                 raise ValueError(f"{name} is a range: [low, high]")
@@ -63,6 +61,5 @@ class WakewordConfig(ModelingConfig):
         return "_".join(re.findall(r"[a-z0-9]+", self.phrase.lower())) or "wakeword"
 
     def paths(self) -> list[str]:
-        local = [str(path) for source in [*self.data.positive, *self.data.negative] for key in ("path", "audio_dir")
-                 if (path := source.params.get(key)) is not None]
-        return [*super().paths(), *local, *self.data.background]
+        from modeling.tts.audio import AUDIO_KEYS
+        return [*super().paths(), *local_paths([*self.data.positive, *self.data.negative], AUDIO_KEYS), *self.data.background]

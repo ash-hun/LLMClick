@@ -14,7 +14,7 @@ from modeling.tuning.method import Row, TrainingMethod
 from modeling.tuning.config import TrainingConfig
 from modeling.tuning.backbone import Backbone
 from core.utils import device
-from core.utils.files import write_json
+from core.utils.files import atomic_path, write_json
 from core.progress import Progress
 
 logger = logging.getLogger(__name__)
@@ -122,9 +122,8 @@ def fit(backbone: Backbone, method: TrainingMethod[Any], rows: list[Row], traini
             on_step(done, tracked(event))
         progress.update(done, len(steps), ", ".join(f"{k} {v:.4f}" for k, v in event.items() if k not in {"step", "lr"}))
         if every and done >= next_snapshot and done % method.repeats == 0 and done < len(steps):
-            temporary = resume.with_suffix(".tmp")
-            torch.save({"step": done, "model": backbone.snapshot(), "optimizer": optimizer.state_dict()}, temporary)
-            temporary.replace(resume)
+            with atomic_path(resume) as temporary:
+                torch.save({"step": done, "model": backbone.snapshot(), "optimizer": optimizer.state_dict()}, temporary)
             next_snapshot = done + every
     backbone.model.eval()
     finished = method.finish(backbone, progress)
