@@ -283,10 +283,11 @@ validation: {asr: {language: en}, max: {wer: 0.15}}
   them and the original recordings. `reference_wer` is the floor `wer` can reach with that recognizer; numbers written
   as digits in one text and as words in the other count as errors.
 - **Fixed replies.** `validation.phrases` (`name: text`) are the lines the agent plays as they are, such as the
-  read-back before a task (`web_search: Searching Reference.`). Each is spoken once into
-  `<experiment>/validate/phrases/<name>.wav`, listed in `phrases.json`, and `phrase_wer` is the worst of them, so a
-  voice that garbles one reply fails validation. Changing a reply reruns only `validate`; a rerun keeps the recording
-  that passed.
+  read-back before a task (`web_search: Searching Reference.`). Piper's noise makes every take of a text different,
+  so each is spoken `validation.phrase_takes` times (default 3) and the take Whisper hears best becomes
+  `<experiment>/validate/phrases/<name>.wav`; `phrases.json` lists every take and what was heard, and `phrase_wer` is
+  the worst kept take, so a voice that garbles one reply fails validation. Changing a reply reruns only `validate`;
+  a rerun keeps the takes it has, so the agent plays the file that passed.
 
 Before training on a voice, read its terms. `jgkawell/jarvis` is MIT on its weights per its model card, but it imitates
 a film character played by a real actor; MIT does not cover the voice, so treat it as personal and non-commercial.
@@ -303,7 +304,8 @@ trained, so a few hundred synthetic recordings are enough, and the exported file
 phrase: Jarvis                     # the wake word: the agent's name; what follows it is the command
 data:
   positive: [{name: local_jsonl, path: output/wake-phrase-<hash>/select/rows.jsonl}]     # data/wake_phrase.yaml
-  negative: [{name: local_jsonl, path: output/wake-negatives-<hash>/select/rows.jsonl}]  # data/wake_negatives.yaml
+  negative: [{name: local_jsonl, path: output/wake-negatives-<hash>/select/rows.jsonl},  # data/wake_negatives.yaml
+             {name: local_jsonl, path: output/wake-nearmiss-<hash>/select/rows.jsonl}]   # data/wake_nearmiss.yaml
   background: []                   # directories of noise WAVs; empty: Gaussian noise
 augment: {rounds: 4, followed: 2, noise: 200, snr: [5, 25]}            # followed: "Jarvis" + a command, as negatives
 validation: {threshold: 0.5, min: {recall: 0.9, scenario: 0.9}, max: {false_accepts: 0.05}}
@@ -357,8 +359,8 @@ The four configs below build what a voice agent says and hears; what it decides 
 | Agent: "Searching Reference.", then works | plays `phrases/web_search.wav`, then runs the search | `tts_piper` `validation.phrases` |
 
 `tts/piper_jarvis.yaml` holds nine read-backs: `wake_up` (At your service, sir.), `web_search` (Searching Reference.),
-`horizontal_task` (Processing Long Task.), `remember_pattern` (Checking the Pattern.), `analysis` (Target
-Analysis.), `focus_mode_enter` (Activate Focus mode.), `focus_mode_quit` (Deactivate Focus mode.), `persona_karen`
+`horizontal_task` (Processing Long Task.), `remember_pattern` (Checking the Pattern.), `analysis` (Target.
+Analysis.: a full stop so the voice pauses), `focus_mode_enter` (Activate Focus mode.), `focus_mode_quit` (Deactivate Focus mode.), `persona_karen`
 (Change to KAREN.) and `persona_jarvis` (Change to JARVIS.). The voice's training set (`data/speech.yaml`) reads them
 too. Which utterance means which command is the agent's to decide: no recipe here maps "enter the focus mode" to
 `focus_mode_enter` yet.
@@ -401,7 +403,8 @@ curl -X POST localhost:8000/api/jobs -H 'content-type: application/json' \
 | `tts/piper_jarvis.yaml` | fine-tuning from the `jgkawell/jarvis` medium checkpoint on that set, with the agent's nine read-backs; replace `<hash>` with the `data/speech.yaml` experiment's |
 | `data/wake_phrase.yaml` | "Jarvis." (statement, question, call) read by 300 speakers of the `libritts_r` Piper voice, kept if Whisper hears it exactly |
 | `data/wake_negatives.yaml` | near misses of the name, the commands said alone, and ordinary lines, read by 40 speakers of the same voice |
-| `wakeword/jarvis.yaml` | the "Jarvis" wake word detector from those two sets; replace both `<hash>` |
+| `data/wake_nearmiss.yaml` | 20 near misses of the name ("Travis", "Jars", "Jarrett", ...) by 120 more speakers, kept without a listening check |
+| `wakeword/jarvis.yaml` | the "Jarvis" wake word detector from those three sets; replace each `<hash>` |
 
 The `llm/` and `embedding/` configs ship as pilots: sample rows from `samples/` and `max_steps: 4`. Point
 `data.sources` at your rows and remove `max_steps` for a real run.

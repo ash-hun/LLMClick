@@ -3,7 +3,7 @@
 # checkpoint directory holds the model, the two feature models and wakeword.json, and loads in openWakeWord's runtime:
 #   openwakeword.Model(wakeword_models=["<checkpoint>/jarvis.onnx"], inference_framework="onnx",
 #                      melspec_model_path="<checkpoint>/melspectrogram.onnx", embedding_model_path="<checkpoint>/embedding_model.onnx")
-# Replace <hash> with the data experiments' (`llmclick validate configs/data/wake_phrase.yaml`, and wake_negatives).
+# Replace <hash> with the data experiments' (`llmclick validate configs/data/wake_phrase.yaml`, wake_negatives, wake_nearmiss).
 pipeline:
   recipe: wakeword
   name: jarvis-wake
@@ -18,6 +18,7 @@ data:
     # - {name: delimited, path: recordings/wake/metadata.csv, audio_dir: recordings/wake/wavs}   # your own voice
   negative:
     - {name: local_jsonl, path: output/wake-negatives-<hash>/select/rows.jsonl}
+    - {name: local_jsonl, path: output/wake-nearmiss-<hash>/select/rows.jsonl}           # data/wake_nearmiss.yaml
   background: []                    # directories of noise WAVs (room tone, music, a fan); empty: Gaussian noise
   validation: 0.2
 
