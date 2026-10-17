@@ -2,12 +2,16 @@
 the working directory). Per-experiment settings live in the YAML config instead."""
 
 import os
+import sys
+import logging
 from functools import lru_cache
 from pathlib import Path
 
+from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ENV_FILE = os.environ.get("LLMCLICK_ENV", "environment/.env")
+LOG_FORMAT = "%(asctime)s %(name)s %(levelname)s %(message)s"  # the console and every pipeline.log
 
 
 class Settings(BaseSettings):
@@ -23,6 +27,13 @@ class Settings(BaseSettings):
     @property
     def api_roots(self) -> list[Path]:
         return [Path(root).resolve() for root in self.API_PATHS.split(":") if root]
+
+
+def prepare_process() -> None:
+    """What every entry point (CLI, API server) does first: the env file into the environment, where Hugging Face
+    downloads read HF_TOKEN, and log records to stderr. Safe to call again: neither step repeats itself."""
+    load_dotenv(ENV_FILE)
+    logging.basicConfig(level=logging.INFO, format=LOG_FORMAT, stream=sys.stderr)
 
 
 @lru_cache

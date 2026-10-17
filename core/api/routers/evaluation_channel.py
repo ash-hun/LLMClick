@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Path as Segment, Query
 
 from core.api.guard import confined
 from core.api.schema import EvaluationSummary
@@ -43,7 +43,8 @@ def reports(output_dir: Path) -> list[dict[str, Any]]:
     return found
 
 
-@evaluation_channel_router.get("", response_model=list[EvaluationSummary])
+@evaluation_channel_router.get("", response_model=list[EvaluationSummary], summary="List evaluation reports",
+                               description="Every report the evaluation recipes wrote under the output directory, with its headline scores.")
 def index(output_dir: Annotated[str, Query(description="Where the experiments are")] = "./output",
           recipe: Annotated[str | None, Query(description="Only this evaluation recipe")] = None,
           experiment: Annotated[str | None, Query(description="Only evaluations of this modeling experiment (directory)")] = None) -> list[EvaluationSummary]:
@@ -63,8 +64,10 @@ def index(output_dir: Annotated[str, Query(description="Where the experiments ar
     return [EvaluationSummary(**entry) for entry in found]
 
 
-@evaluation_channel_router.get("/{experiment}")
-def show(experiment: str, output_dir: Annotated[str, Query(description="Where the experiments are")] = "./output") -> dict[str, Any]:
+@evaluation_channel_router.get("/{experiment}", summary="Get one evaluation report in full")
+def show(experiment: Annotated[str, Segment(description="The evaluation experiment's key, as the list shows it",
+                                            examples=["sft-qwen3.5-0.8b-benchmarks-e7b8dffd"])],
+         output_dir: Annotated[str, Query(description="Where the experiments are")] = "./output") -> dict[str, Any]:
     confined(output_dir, "output_dir")
     for entry in reports(Path(output_dir)):
         if entry["experiment"] == experiment:

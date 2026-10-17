@@ -1,6 +1,8 @@
 """Model Catalog base: one architecture family that knows how to load, save and expose its trainable weights."""
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -44,6 +46,16 @@ class Backbone(ABC):
     @abstractmethod
     def load(self, device: Device, checkpoint: Path | None = None) -> None:
         """Set `model`, `tokenizer` and `device` from the base model, or from `checkpoint` when given."""
+
+    @contextmanager
+    def loaded(self, device: Device, checkpoint: Path | None = None) -> Iterator[None]:
+        """The weights loaded for the block and released after it, also when it fails: every stage that measures or
+        trains a model loads it this way, so the next stage or job gets the accelerator memory back."""
+        self.load(device, checkpoint)
+        try:
+            yield
+        finally:
+            self.release()
 
     @abstractmethod
     def save(self, path: Path) -> None:

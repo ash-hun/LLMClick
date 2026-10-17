@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pydantic import Field, model_validator
 
-from modeling.config import Keyed, ModelingConfig, ValidationConfig
+from modeling.config import Keyed, ModelingConfig, ValidationConfig, local_paths
 from core.config.schema import Section
 from core.registry import Registry
 
@@ -84,15 +84,13 @@ class TuningConfig(ModelingConfig):
         from modeling.tuning.sources import SOURCES
         if self.model.architecture not in self.backbones:
             raise ValueError(f"Unknown architecture {self.model.architecture!r}; registered: {self.backbones.names()}")
-        for source in self.data.sources:
-            if source.name not in SOURCES:
-                raise ValueError(f"Unknown source {source.name!r}; registered: {SOURCES.names()}")
+        SOURCES.check(*(source.name for source in self.data.sources))
         return self
 
     def paths(self) -> list[str]:
         """`model.name` is a Hub ID or a directory; a Hub ID has no `..` or leading slash, so it passes as a path."""
-        local = [str(path) for source in self.data.sources if (path := source.params.get("path")) is not None]
-        return [*super().paths(), self.model.name, *([self.model.init] if self.model.init else []), *local]
+        return [*super().paths(), self.model.name, *([self.model.init] if self.model.init else []),
+                *local_paths(self.data.sources)]
 
     def versions(self) -> dict[str, int]:
         """Code versions of the parts this config selects; they join the train fingerprint, so bumping one part's

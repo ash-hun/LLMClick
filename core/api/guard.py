@@ -8,7 +8,7 @@ from fastapi import Header, HTTPException
 from core.settings import get_settings
 
 
-def authorized(authorization: Annotated[str | None, Header()] = None) -> None:
+def authorized(authorization: Annotated[str | None, Header(description="`Bearer <API_TOKEN>`; needed only when the server sets API_TOKEN")] = None) -> None:
     """Dependency of every /api route: with `API_TOKEN` set, the request must carry `Authorization: Bearer <token>`;
     without it the API is open, as on a machine only its owner can reach."""
     token = get_settings().API_TOKEN

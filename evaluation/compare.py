@@ -8,14 +8,13 @@ from typing import Any, ClassVar
 from pydantic import Field, model_validator
 
 from core.stage import Outputs, Stage
-from core.utils.files import write_json
+from core.utils.files import read_jsonl, write_json
 from evaluation.benchmark import HARNESS, Benchmarks, HarnessSettings, documents, harness_version
 from evaluation.config import EvaluationData, SourceModel
 from evaluation.source import SourceExperiment
 from evaluation.decision import DecisionSettings
 from evaluation.embedding import EmbeddingSettings
 from evaluation.stages import contamination
-from modeling.tuning.stages import read_rows
 
 REPORT = "report.json"
 CHART = "axes.svg"
@@ -194,8 +193,8 @@ class CompareReport(Stage[CompareConfig]):
         overlap: dict[str, dict[str, Any]] = {}
         for run in config.runs:
             items: list[Any] = []
-            items += read_rows(Path(inputs["rows"]["rows"])) if self.row_stages else []
-            items += read_rows(Path(inputs["questions"]["rows"])) if self.decision_stages else []
+            items += read_jsonl(Path(inputs["rows"]["rows"])) if self.row_stages else []
+            items += read_jsonl(Path(inputs["questions"]["rows"])) if self.decision_stages else []
             for stage in self.benchmark_stages.get(run.label, {}).values():
                 items += documents(Path(inputs[stage]["samples"]))
             overlap[run.label] = {"items": contamination(run.model, items)} if items else {"items": None}

@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from pydantic import Field, model_validator
 
-from modeling.config import ModelingConfig, ValidationConfig
+from modeling.config import ModelingConfig, ValidationConfig, local_paths
 from modeling.tuning.config import DataConfig, is_commit
 from core.utils.files import directory_signature, sha256_file
 from core.config.schema import Section
@@ -119,12 +119,10 @@ class PiperConfig(ModelingConfig):
     @model_validator(mode="after")
     def _registered(self) -> "PiperConfig":
         from modeling.tuning.sources import SOURCES
-        for source in self.data.sources:
-            if source.name not in SOURCES:
-                raise ValueError(f"Unknown source {source.name!r}; registered: {SOURCES.names()}")
+        SOURCES.check(*(source.name for source in self.data.sources))
         return self
 
     def paths(self) -> list[str]:
-        local = [str(path) for source in self.data.sources for key in ("path", "audio_dir")
-                 if (path := source.params.get(key)) is not None]
-        return [*super().paths(), *([] if self.model.init.hub else [self.model.init.name]), *local]
+        from modeling.tts.audio import AUDIO_KEYS
+        return [*super().paths(), *([] if self.model.init.hub else [self.model.init.name]),
+                *local_paths(self.data.sources, AUDIO_KEYS)]

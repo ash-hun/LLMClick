@@ -5,14 +5,12 @@ import statistics
 from pathlib import Path
 from typing import Any, ClassVar
 
-from modeling.tuning.stages import held_out_positions, read_rows, write_rows
-from modeling.stages import TrainStage, ValidateStage
+from core.utils.files import atomic_path, read_json, read_jsonl, staged_directory, write_json, write_jsonl
 from modeling.tts.config import CHECKPOINT_FILE, PiperConfig
-from modeling.tuning.sources import SOURCES
-from modeling.config import Keyed, keyed_identity
-from modeling.tts.asr import Listener, wer
-from core.utils.files import directory_signature, read_json, write_json
+from modeling.stages import TrainStage, ValidateStage, held_out_positions
 from core.utils.device import resolve_device
+from modeling.tts.asr import Listener, wer
+from modeling.config import keyed_identity
 from modeling.tts import audio, piper
 from core.stage import Outputs, Stage
 
@@ -25,26 +23,6 @@ QUALITY: dict[str, dict[str, Any]] = {
              "model.resblock_dilation_sizes": "((1, 3, 5), (1, 3, 5), (1, 3, 5))", "model.upsample_rates": "(8, 8, 2, 2)",
              "model.upsample_initial_channel": 512, "model.upsample_kernel_sizes": "(16, 16, 4, 4)"},
 }
-
-
-def audio_root(source: Keyed) -> Path | None:
-    """Where a source's relative audio paths start: `audio_dir`, else the directory of the source file."""
-    params = source.params
-    if params.get("audio_dir"):
-        return Path(params["audio_dir"])
-    return Path(params["path"]).parent if params.get("path") else None
-
-
-def located(value: Any, root: Path | None) -> Path | None:
-    """A row's audio file, absolute; an LJSpeech id without `.wav` finds its file too."""
-    if not value:
-        return None
-    path = Path(str(value))
-    path = path if path.is_absolute() or root is None else root / path
-    for candidate in (path, path.with_name(path.name + ".wav")):
-        if candidate.is_file():
-            return candidate.resolve()
-    return None
 
 
 def latest(run: Path) -> Path | None:
@@ -68,20 +46,18 @@ class VoiceDataStage(Stage[PiperConfig]):
         # ponytail: the audio counts through each source's directory (sizes, content of files under 1 MiB); a large
         # set rehashes it on every run, so switch to a manifest of hashes when that wait becomes noticeable
         data = self.config.data
-        return [self.config.seed, keyed_identity(data.sources), data.validation,
-                [directory_signature(root) if (root := audio_root(source)) else None for source in data.sources]]
+        return [self.config.seed, keyed_identity(data.sources), data.validation, audio.signatures(data.sources)]
 
     def run(self, workdir: Path, inputs: dict[str, Outputs]) -> Outputs:
         sources = self.config.data.sources
         rows: list[dict[str, str]] = []
         for index, source in enumerate(sources):
             self.progress.update(index, len(sources), source.name)
-            root = audio_root(source)
-            for number, row in enumerate(SOURCES.get(source.name)(source.params)):
-                text, path = " ".join(str(row.get("text") or "").split()), located(row.get("audio"), root)
+            for number, row, path in audio.recordings(source):
+                text = " ".join(str(row.get("text") or "").split())
                 if not text or path is None:
                     raise ValueError(f"Source {index} ({source.name}) row {number}: needs `text` and an `audio` file "
-                                     f"that exists (got {row.get('audio')!r} under {root})")
+                                     f"that exists (got {row.get('audio')!r} under {audio.audio_root(source)})")
                 rows.append({"audio": str(path), "text": text})
         if len(rows) < 2:
             raise ValueError(f"{len(rows)} recordings cannot be split into training and validation")
@@ -89,7 +65,7 @@ class VoiceDataStage(Stage[PiperConfig]):
         split = {"train": [row for i, row in enumerate(rows) if i not in held_out],
                  "validation": [row for i, row in enumerate(rows) if i in held_out]}
         for name, fold in split.items():
-            write_rows(workdir / f"{name}.jsonl", fold)
+            write_jsonl(workdir / f"{name}.jsonl", fold)
         return {**{name: str(workdir / f"{name}.jsonl") for name in split}, "rows": {name: len(fold) for name, fold in split.items()}}
 
 
@@ -106,7 +82,7 @@ class FitStage(TrainStage[PiperConfig]):
         checkpoint = workdir / "checkpoint"
         if not (checkpoint / VOICE).is_file():
             model, training = self.config.model, self.config.training
-            rows = read_rows(Path(inputs["data"]["train"]))
+            rows = read_jsonl(Path(inputs["data"]["train"]))
             (workdir / METADATA).write_text("".join(f"{row['audio']}|{row['text']}\n" for row in rows))
             self.progress.update(0, None, "loading the starting checkpoint")
             start = model.init.local()
@@ -130,14 +106,11 @@ class FitStage(TrainStage[PiperConfig]):
             if last is None:
                 raise piper.PiperFailed(f"piper.train fit wrote no checkpoint under {workdir / 'run'}")
             self.progress.update(0, None, "exporting the voice")
-            staging = workdir / "checkpoint.tmp"
-            shutil.rmtree(staging, ignore_errors=True)
-            staging.mkdir()
-            shutil.copyfile(last, staging / CHECKPOINT_FILE)
-            shutil.copyfile(workdir / (VOICE + ".json"), staging / (VOICE + ".json"))
-            piper.export(staging / CHECKPOINT_FILE, staging / VOICE, workdir / "fit.log")
-            write_json(staging / SUMMARY, {"rows": len(rows), "epochs": training.epochs, "init": model.init.identity()})
-            staging.rename(checkpoint)
+            with staged_directory(checkpoint) as staging:
+                shutil.copyfile(last, staging / CHECKPOINT_FILE)
+                shutil.copyfile(workdir / (VOICE + ".json"), staging / (VOICE + ".json"))
+                piper.export(staging / CHECKPOINT_FILE, staging / VOICE, workdir / "fit.log")
+                write_json(staging / SUMMARY, {"rows": len(rows), "epochs": training.epochs, "init": model.init.identity()})
         return {"checkpoint": str(checkpoint), **read_json(checkpoint / SUMMARY)}
 
 
@@ -154,10 +127,9 @@ class ListenStage(ValidateStage[PiperConfig]):
 
     def measure(self, workdir: Path, inputs: dict[str, Outputs]) -> dict[str, float]:
         voice = Path(inputs["train"]["checkpoint"]) / VOICE
-        rows = read_rows(Path(inputs["data"]["validation"]))[: self.config.validation.rows]
-        listener = Listener(self.config.validation.asr, self.config.device)
+        rows = read_jsonl(Path(inputs["data"]["validation"]))[: self.config.validation.rows]
         items: list[dict[str, Any]] = []
-        try:
+        with Listener(self.config.validation.asr, self.config.device) as listener:
             for index, row in enumerate(rows):
                 self.progress.update(index, len(rows), "speaking and listening")
                 spoken, recorded = workdir / "audio" / f"{index:05d}.wav", Path(row["audio"])
@@ -168,10 +140,8 @@ class ListenStage(ValidateStage[PiperConfig]):
                               "reference_heard": reference, "reference_wer": wer(row["text"], reference),
                               "duration_ratio": audio.seconds(spoken) / max(audio.seconds(recorded), 1e-6)})
             replies = self.phrases(voice, workdir, listener)
-        finally:
-            listener.release()
         self.progress.update(len(rows), len(rows))
-        write_rows(workdir / "items.jsonl", items)
+        write_jsonl(workdir / "items.jsonl", items)
         metrics = {metric: statistics.fmean(item[metric] for item in items) for metric in ("wer", "reference_wer", "duration_ratio")}
         return {**metrics, **({"phrase_wer": max(reply["wer"] for reply in replies.values())} if replies else {})}
 
@@ -190,10 +160,8 @@ class ListenStage(ValidateStage[PiperConfig]):
                 heard = listener.transcribe(wav)
                 takes.append({"take": take, "heard": heard, "wer": wer(text, heard)})
             best = min(takes, key=lambda entry: (entry["wer"], entry["take"]))
-            kept = workdir / "phrases" / f"{name}.wav"
-            temporary = kept.with_suffix(".tmp")
-            shutil.copyfile(workdir / "phrases" / "takes" / f"{name}-{best['take']}.wav", temporary)
-            temporary.replace(kept)
+            with atomic_path(workdir / "phrases" / f"{name}.wav") as temporary:
+                shutil.copyfile(workdir / "phrases" / "takes" / f"{name}-{best['take']}.wav", temporary)
             replies[name] = {"text": text, "audio": f"phrases/{name}.wav", **best, "takes": takes}
         if replies:
             write_json(workdir / "phrases.json", replies)

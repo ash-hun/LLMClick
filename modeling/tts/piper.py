@@ -4,7 +4,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from core.utils.files import sha256_file
+from core.utils.files import atomic_path, sha256_file
 from core.settings import get_settings
 
 LOCK = Path(__file__).resolve().parents[2] / "environment" / "piper" / "uv.lock"
@@ -50,13 +50,11 @@ def speak(voice: Path, text: str, wav: Path, log: Path, scales: dict[str, float]
     """`text` read by `voice` (an .onnx with its .onnx.json beside it) into `wav`, written whole or not at all.
     `scales`: length_scale, noise_scale, noise_w_scale; a missing one keeps the voice's own. `speaker`: the id of
     one speaker of a multi-speaker voice."""
-    wav.parent.mkdir(parents=True, exist_ok=True)
-    temporary = wav.with_suffix(".tmp")
     # idempotent: Piper draws its noise unseeded, so speaking the same text twice gives two different files; callers
     # keep the first under its natural key and never speak it again
-    run(["piper", "-m", str(voice), "-f", str(temporary), *options(scales),
-         *(["--speaker", str(speaker)] if speaker is not None else [])], log, stdin=text)
-    temporary.replace(wav)
+    with atomic_path(wav) as temporary:
+        run(["piper", "-m", str(voice), "-f", str(temporary), *options(scales),
+             *(["--speaker", str(speaker)] if speaker is not None else [])], log, stdin=text)
 
 
 def fit(values: dict[str, Any], resume: Path | None, log: Path) -> None:
@@ -65,6 +63,5 @@ def fit(values: dict[str, Any], resume: Path | None, log: Path) -> None:
 
 
 def export(checkpoint: Path, onnx: Path, log: Path) -> None:
-    temporary = onnx.with_suffix(".tmp")
-    run(["piper.train.export_onnx", "--checkpoint", str(checkpoint), "--output-file", str(temporary)], log)
-    temporary.replace(onnx)
+    with atomic_path(onnx) as temporary:
+        run(["piper.train.export_onnx", "--checkpoint", str(checkpoint), "--output-file", str(temporary)], log)

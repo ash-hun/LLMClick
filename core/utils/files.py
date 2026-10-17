@@ -1,8 +1,9 @@
-"""Content hashing and JSON helpers shared by stages and manifests."""
+"""File helpers shared by stages and manifests: content hashes, atomic writes, JSON, locks."""
 
 import fcntl
 import hashlib
 import json
+import shutil
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -18,15 +19,50 @@ def sha256_json(value: Any) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()
 
 
-def write_json(path: Path, value: Any) -> None:
+@contextmanager
+def atomic_path(path: Path) -> Iterator[Path]:
+    """A temporary path beside `path` to write into, moved onto `path` only when the block finishes: a reader never
+    sees half a file, and a write that fails leaves no temporary behind."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(value, indent=2, ensure_ascii=False, sort_keys=True) + "\n")
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.unlink(missing_ok=True)
+    try:
+        yield temporary
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
     temporary.replace(path)
+
+
+@contextmanager
+def staged_directory(path: Path) -> Iterator[Path]:
+    """An empty directory beside `path` to fill, renamed to `path` only when the block finishes, so `path` exists
+    whole or not at all. A staging directory a crash left behind is cleared first."""
+    staging = path.with_name(path.name + ".tmp")
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True)
+    yield staging
+    staging.rename(path)
+
+
+def write_json(path: Path, value: Any) -> None:
+    with atomic_path(path) as temporary:
+        temporary.write_text(json.dumps(value, indent=2, ensure_ascii=False, sort_keys=True) + "\n")
 
 
 def read_json(path: Path) -> Any:
     return json.loads(path.read_text())
+
+
+def read_jsonl(path: Path) -> list[Any]:
+    """One JSON value per line; blank lines are skipped."""
+    return [json.loads(line) for line in path.read_text().split("\n") if line.strip()]
+
+
+def write_jsonl(path: Path, rows: list[Any]) -> None:
+    """The whole file at once, through a temporary name: a reader never sees a half-written file."""
+    with atomic_path(path) as temporary:
+        temporary.write_text("".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in rows))
 
 
 @contextmanager

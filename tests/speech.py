@@ -74,6 +74,12 @@ class FakeListener:
     def release(self) -> None:
         pass
 
+    def __enter__(self) -> "FakeListener":
+        return self
+
+    def __exit__(self, *failure: object) -> None:
+        self.release()
+
 
 class FakeEmbedder:
     """openWakeWord's front end in shape only: per 80 ms, the log spectrum of the last 0.79 s in 96 bands, so a

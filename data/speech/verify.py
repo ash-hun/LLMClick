@@ -1,6 +1,7 @@
 """Stage `verify`: length, clipping and silence of every recording, then Whisper's transcript against its text."""
 
 from pathlib import Path
+from contextlib import nullcontext
 from typing import Any, ClassVar
 
 from data.rows import Row, cached, keep, read_rows, trail, write_rows
@@ -36,11 +37,10 @@ class SpeechVerifyStage(Stage[SpeechConfig]):
     def run(self, workdir: Path, inputs: dict[str, Outputs]) -> Outputs:
         settings = self.config.verify
         rows = read_rows(Path(inputs["synthesize"]["rows"]))
-        listener = Listener(settings.asr, self.config.device) if settings.asr else None
         verified: list[Row] = []
         rejected: list[Row] = []
         reasons: dict[str, int] = {}
-        try:
+        with Listener(settings.asr, self.config.device) if settings.asr else nullcontext() as listener:
             for done, row in enumerate(rows):
                 self.progress.update(done, len(rows), "listening")
                 measured: dict[str, Any] = audio.measure(*audio.read(Path(row["audio"])))
@@ -55,9 +55,6 @@ class SpeechVerifyStage(Stage[SpeechConfig]):
                 else:
                     reasons[reason] = reasons.get(reason, 0) + 1
                     rejected.append({**row, **measured, "rejected": reason})
-        finally:
-            if listener is not None:
-                listener.release()
         self.progress.update(len(rows), len(rows))
         write_rows(workdir / VERIFIED, verified)
         write_rows(workdir / REJECTED, rejected)

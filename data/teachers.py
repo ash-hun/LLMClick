@@ -3,10 +3,13 @@
 import os
 import json
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 from urllib.request import Request, urlopen
 
 from core.registry import Registry
+
+if TYPE_CHECKING:
+    from evaluation.source import SourceExperiment
 
 TEACHERS = Registry("teacher")
 Message = dict[str, str]
@@ -130,19 +133,20 @@ class Local(Teacher):
         super().__init__(params)
         self.backbone: Any = None
 
-    def identity(self) -> dict[str, Any]:
+    def source(self) -> "SourceExperiment":
+        """The model as the evaluation channel resolves it, from the params."""
         from evaluation.config import SourceModel
         from evaluation.source import SourceExperiment
-        model = SourceModel(**{k: v for k, v in self.params.items() if k in SourceModel.model_fields})
-        return {"name": self.name, "model": SourceExperiment(model).identity(), "device": self.params.get("device")}
+        return SourceExperiment(SourceModel(**{k: v for k, v in self.params.items() if k in SourceModel.model_fields}))
+
+    def identity(self) -> dict[str, Any]:
+        return {"name": self.name, "model": self.source().identity(), "device": self.params.get("device")}
 
     def load(self) -> Any:
         from core.utils.device import resolve_device
-        from evaluation.config import SourceModel
-        from evaluation.source import SourceExperiment
         from modeling.llm.models.base import LLMBackbone
         if self.backbone is None:
-            source = SourceExperiment(SourceModel(**{k: v for k, v in self.params.items() if k in SourceModel.model_fields}))
+            source = self.source()
             backbone = source.hub_backbone() if source.hub else source.build()[0]
             if not isinstance(backbone, LLMBackbone):
                 raise ValueError("the local teacher needs a language model")

@@ -19,6 +19,11 @@ class Keyed(BaseModel):
         return dict(self.model_extra or {})
 
 
+def local_paths(entries: list[Keyed], keys: tuple[str, ...] = ("path",)) -> list[str]:
+    """The local files and directories registry entries read, for a config's `paths()` (the API's confinement)."""
+    return [str(path) for entry in entries for key in keys if (path := entry.params.get(key)) is not None]
+
+
 def keyed_identity(entries: list[Keyed]) -> list[Any]:
     """Registry entries plus the content of any local file they read, so an edited file is a new input."""
     return [[entry.model_dump(mode="json"), sha256_file(Path(path)) if (path := entry.params.get("path"))

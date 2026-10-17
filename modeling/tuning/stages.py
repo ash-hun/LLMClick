@@ -1,37 +1,20 @@
 """The three stages every fine-tuning recipe runs: data -> train -> validate."""
 
-import json
-import hashlib
 from pathlib import Path
 from typing import Any, ClassVar
 
 from modeling.tuning.loop import CHECKPOINT, SUMMARY, fit, history, tracked
-from modeling.stages import TrainStage, ValidateStage
+from modeling.stages import TrainStage, ValidateStage, held_out_positions
 from modeling.tuning.sources import SOURCES
 from modeling.tuning.config import TuningConfig
 from modeling.tuning.method import Row, fitting
 from modeling.config import keyed_identity
 from core.utils.device import resolve_device
-from core.utils.files import directory_signature, read_json
+from core.utils.files import directory_signature, read_json, read_jsonl, write_jsonl
 from modeling.tracker import History
 from core.stage import Outputs, Stage
 
 MINIMUM_ROWS = 2
-
-
-def read_rows(path: Path) -> list[Row]:
-    return [json.loads(line) for line in path.read_text().split("\n") if line]
-
-
-def write_rows(path: Path, rows: list[Row]) -> None:
-    path.write_text("".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in rows))
-
-
-def held_out_positions(count: int, seed: int, share: float) -> set[int]:
-    """Which rows validation gets. A row's side depends only on the seed and its position, so adding sources never
-    reshuffles earlier rows."""
-    ranked = sorted(range(count), key=lambda i: hashlib.sha256(f"{seed}:{i}".encode()).hexdigest())
-    return set(ranked[: min(count - 1, max(1, round(count * share)))])
 
 
 class DataStage(Stage[TuningConfig]):
@@ -61,7 +44,7 @@ class DataStage(Stage[TuningConfig]):
         split = {"train": [row for i, row in enumerate(rows) if i not in held_out],
                  "validation": [row for i, row in enumerate(rows) if i in held_out]}
         for name, fold in split.items():
-            write_rows(workdir / f"{name}.jsonl", fold)
+            write_jsonl(workdir / f"{name}.jsonl", fold)
         return {**{name: str(workdir / f"{name}.jsonl") for name in split},
                 "rows": {name: len(fold) for name, fold in split.items()}}
 
@@ -83,11 +66,10 @@ class TuneStage(TrainStage[TuningConfig]):
         if not (summary.exists() and checkpoint.is_dir()):
             backbone, method, training = self.config.build_backbone(), self.config.build_method(), self.config.training
             self.progress.update(0, None, "loading model")
-            backbone.load(resolve_device(self.config.device))
-            try:
+            with backbone.loaded(resolve_device(self.config.device)):
                 # Both folds are checked now: a held-out row that does not fit would otherwise fail after training.
-                held_out = fitting(backbone, method, read_rows(Path(inputs["data"]["validation"])), training, self.progress, "validation")
-                rows = fitting(backbone, method, read_rows(Path(inputs["data"]["train"])), training, self.progress, "training")
+                held_out = fitting(backbone, method, read_jsonl(Path(inputs["data"]["validation"])), training, self.progress, "validation")
+                rows = fitting(backbone, method, read_jsonl(Path(inputs["data"]["train"])), training, self.progress, "training")
                 rows = method.prepare(backbone, rows, workdir, self.progress)
                 backbone.adapt(training.adapter)
                 sample, batch_size = held_out[: training.eval_rows], self.config.validation.batch_size
@@ -97,8 +79,6 @@ class TuneStage(TrainStage[TuningConfig]):
 
                 with self.tracking(workdir) as log:
                     fit(backbone, method, rows, training, workdir, self.config.seed, self.progress, log, evaluation)
-            finally:
-                backbone.release()
         return {"checkpoint": str(checkpoint), "run": str(workdir), **read_json(summary)}
 
     def history(self, outputs: Outputs) -> History:
@@ -117,10 +97,7 @@ class MeasureStage(ValidateStage[TuningConfig]):
     def measure(self, workdir: Path, inputs: dict[str, Outputs]) -> dict[str, float]:
         backbone, method = self.config.build_backbone(), self.config.build_method()
         self.progress.update(0, None, "loading checkpoint")
-        backbone.load(resolve_device(self.config.device), Path(inputs["train"]["checkpoint"]))
-        try:
-            rows = fitting(backbone, method, read_rows(Path(inputs["data"]["validation"])), self.config.training,
+        with backbone.loaded(resolve_device(self.config.device), Path(inputs["train"]["checkpoint"])):
+            rows = fitting(backbone, method, read_jsonl(Path(inputs["data"]["validation"])), self.config.training,
                            self.progress, "validation")
             return method.evaluate(backbone, rows, self.config.validation.batch_size, self.progress)
-        finally:
-            backbone.release()

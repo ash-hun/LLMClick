@@ -12,7 +12,8 @@ from modeling.stages import ValidationFailed
 from modeling.tts import audio
 from modeling.tts.asr import wer
 from modeling.tts.stages import latest
-from modeling.tuning.sources import delimited
+from modeling.tuning.sources import SOURCES, delimited
+from modeling.config import Keyed, local_paths
 from tests.speech import FakeListener, FakePiper, tone
 
 TEXTS = ["Good evening, sir.", "All systems are online.", "Shall I run the diagnostics?", "The suit is ready.",
@@ -109,6 +110,19 @@ def test_the_agents_fixed_replies_keep_their_best_take_and_must_be_understood(tm
     assert {entry["take"] for entry in picked.values()} == {1} and [take["heard"] for take in picked["web_search"]["takes"]] == ["garbled", "Searching Reference."]
     with pytest.raises(ValueError, match="may only use letters"):
         pipeline.build(config(tmp_path, validation={"phrases": {"web search": "Searching Reference."}}))
+
+
+def test_recordings_of_a_source_are_found_on_disk(tmp_path: Path) -> None:
+    root = recordings(tmp_path)
+    source = Keyed(name="delimited", path=str(root / "metadata.csv"), audio_dir=str(root / "wavs"))
+    found = list(audio.recordings(source))
+    assert [number for number, _, _ in found] == list(range(len(TEXTS))) and all(path and path.is_file() for _, _, path in found)
+    (root / "metadata.csv").write_text("utt0|ok\nmissing|no file\n")
+    assert [path is None for _, _, path in audio.recordings(source)] == [False, True]
+    assert audio.signatures([source, Keyed(name="huggingface")])[1] is None
+    assert local_paths([source], audio.AUDIO_KEYS) == [str(root / "metadata.csv"), str(root / "wavs")]
+    with pytest.raises(ValueError, match="Unknown source 'nowhere'; registered: \\['delimited'"):
+        SOURCES.check("delimited", "nowhere")
 
 
 def test_config_errors_and_units(tmp_path: Path) -> None:

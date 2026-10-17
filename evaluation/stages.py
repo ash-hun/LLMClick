@@ -7,14 +7,13 @@ from typing import Any, ClassVar
 from core.progress import Progress
 from core.stage import Outputs, Stage
 from core.utils.device import resolve_device
-from core.utils.files import write_json
+from core.utils.files import read_jsonl, write_json, write_jsonl
 from evaluation.config import EvaluationConfig, EvaluationData, MeasureSettings, SourceModel
 from evaluation.contamination import measure, training_rows_of
 from evaluation.source import SourceExperiment
 from modeling.config import keyed_identity
 from modeling.tuning.method import Row, fitting
 from modeling.tuning.sources import SOURCES
-from modeling.tuning.stages import read_rows, write_rows
 
 SCORES = "scores.json"
 REPORT = "report.json"
@@ -58,7 +57,7 @@ class RowsStage(Stage[MeasureSettings]):
                 raise ValueError(f"Row {index} does not fit the experiment's recipe: {error}") from None
         if not rows:
             raise ValueError("no rows to score")
-        write_rows(workdir / "rows.jsonl", rows)
+        write_jsonl(workdir / "rows.jsonl", rows)
         return {"rows": str(workdir / "rows.jsonl"), "count": len(rows)}
 
 
@@ -88,13 +87,10 @@ class ScoreStage(Stage[MeasureSettings]):
         backbone, method, trained = source.build()
         checkpoint = source.checkpoint()
         self.progress.update(0, None, "loading checkpoint" if checkpoint else "loading base model")
-        backbone.load(resolve_device(self.config.device), checkpoint)
-        try:
-            rows = read_rows(Path(inputs[self.rows_stage]["rows"]))
+        with backbone.loaded(resolve_device(self.config.device), checkpoint):
+            rows = read_jsonl(Path(inputs[self.rows_stage]["rows"]))
             kept = fitting(backbone, method, rows, trained.training, self.progress, "evaluation")
             metrics = method.evaluate(backbone, kept, self.config.evaluation.batch_size, self.progress)
-        finally:
-            backbone.release()
         scores = {"metrics": metrics, "rows": {"scored": len(kept), "skipped": len(rows) - len(kept)},
                   "checkpoint": str(checkpoint) if checkpoint else "base", "recipe": trained.recipe,
                   "settings": {"batch_size": self.config.evaluation.batch_size, "max_length": trained.training.max_length,
@@ -122,6 +118,6 @@ class ReportStage(Stage[EvaluationConfig]):
                   "settings": scores["settings"],
                   "rows": {"sources": [source.model_dump(mode="json") for source in self.config.data.sources], **scores["rows"]},
                   "scores": scores["metrics"],
-                  "contamination": contamination(self.config.model, read_rows(Path(inputs["rows"]["rows"])))}
+                  "contamination": contamination(self.config.model, read_jsonl(Path(inputs["rows"]["rows"])))}
         write_json(workdir / REPORT, report)
         return {"report": str(workdir / REPORT), "scores": scores["metrics"]}
