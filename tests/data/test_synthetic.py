@@ -28,7 +28,16 @@ class Fake(Teacher):
             raise ConnectionError("the teacher went away")
         Fake.calls.append(messages)
         content = messages[-1]["content"]
-        if "questions or requests related to" in content:
+        if messages[0]["role"] == "system" and "Reply with one word" in messages[0]["content"]:
+            text = "think" if "plan" in content.lower() else "direct"  # a router that thinks planning needs thought
+        elif "An assistant decides, for every request" in content:
+            option, language = content.split("must clearly be '")[1].split("'")[0], content.split("Write them in ")[1].split(".")[0]
+            turns = int(content.split("with exactly ")[1].split(" ")[0])
+            requests = ([f"Plan a three-day trip to Busan ({language})", f"Plan my week around two deadlines ({language})"] if option == "think"
+                        else [f"Good morning ({language})", f"Plan nothing, just say hi ({language})"])  # the second is a trap
+            history = [{"user": f"Hi ({turn})", "assistant": "Hello."} for turn in range(turns)]
+            text = "Here you go:\n```json\n" + json.dumps([{"history": history, "request": request} for request in requests]) + "\n```"
+        elif "questions or requests related to" in content:
             topic = content.split("related to ")[1].split("?")[0]
             text = "\n".join(f"{i + 1}. What is {topic} question {i + 1}?" for i in range(3))
         elif content.startswith("Rewrite this question"):
@@ -213,6 +222,12 @@ def test_ollama_and_openai_teachers_speak_their_protocols(monkeypatch: pytest.Mo
     assert done.text == "openai says hi" and done.cost_usd == pytest.approx((7 * 1 + 3 * 2) / 1_000_000)
     assert sent[1][0] == "http://vllm:8000/v1/chat/completions" and sent[1][2]["authorization"] == "Bearer k"
     assert openai.identity() == {"name": "openai", "model": "gpt-x"}  # keys and prices are not identity
+    assert sent[1][1]["max_tokens"] == 10 and sent[1][1]["temperature"] == 0.5
+    reasoning = teachers.OpenAIFormat({"model": "gpt-r", "reasoning_effort": "low"})
+    reasoning.complete([{"role": "user", "content": "hi"}], max_tokens=10, temperature=0.5, seed=1)
+    assert sent[-1][1]["max_completion_tokens"] == 10 and sent[-1][1]["reasoning_effort"] == "low"
+    assert "temperature" not in sent[-1][1] and "max_tokens" not in sent[-1][1]
+    assert reasoning.identity() == {"name": "openai", "model": "gpt-r", "reasoning_effort": "low"}
     teachers.Ollama({"model": "m", "think": True}).complete([{"role": "user", "content": "hi"}], max_tokens=1, temperature=0, seed=0)
     assert sent[-1][1]["think"] is True and teachers.Ollama({"model": "m"}).identity() == {"name": "ollama", "model": "m", "think": False}
 
@@ -242,3 +257,27 @@ def test_the_anthropic_teacher_uses_the_sdk_and_prices_the_call(monkeypatch: pyt
     done = teacher.complete([{"role": "system", "content": "be brief"}, {"role": "user", "content": "hi"}], max_tokens=10, temperature=0.5, seed=1)
     assert done.text == "claude says hi" and done.cost_usd == pytest.approx(100 * 4 / 1_000_000 + 50 * 20 / 1_000_000)
     monkeypatch.setattr(io, "BytesIO", io.BytesIO)  # keep the import used
+
+
+def test_decision_rows_keep_the_requests_the_teacher_routes_as_their_seed_says(tmp_path: Path) -> None:
+    labels = {"direct": "answer right away", "think": "say it needs a moment, then reason"}
+    routed = config(tmp_path,
+                    seeds=[{"kind": "direct", "values": ["small talk"]}, {"kind": "think", "values": ["planning"]}],
+                    prompts={"generator": "labelled_requests", "per_seed": 4,
+                             "params": {"n": 2, "languages": ["English", "Korean"], "history": [0, 2], "labels": labels}},
+                    respond={"answers_per_question": 3, "max_tokens": 4, "system": "Route the request. Reply with one word: direct or think."},
+                    verify={"schema_recipe": "llm_decision_sft", "reward": {"name": "exact_match"}, "majority": "exact"},
+                    select={"assemble": "decision", "dedup": {"near": None},
+                            "decision": {"name": "route", "instructions": "How should the assistant respond?", "criteria": labels}})
+    stages = pipeline.build(routed).run()["stages"]
+    assert stages["prompts"]["count"] == 16 and stages["verify"]["reasons"] == {"reward": 12}  # the trap, four times, three answers each
+    rows = [json.loads(line) for line in Path(stages["select"]["rows"]).read_text().splitlines()]
+    assert len(rows) == 12 and all(set(row) == {"state", "questions"} for row in rows)
+    labels_of = {row["state"]: row["questions"]["route"]["label"] for row in rows}
+    assert labels_of["Good morning (English)"] == "direct" and labels_of["Plan my week around two deadlines (Korean)"] == "think"
+    assert labels_of["User: Hi (0)\nAssistant: Hello.\nUser: Hi (1)\nAssistant: Hello.\n\nGood morning (Korean)"] == "direct"
+    assert sum(state.startswith("User: ") for state in labels_of) == 6  # half the prompts carry two earlier turns
+    assert rows[0]["questions"]["route"]["criteria"] == labels and rows[0]["questions"]["route"]["type"] == "choice"
+
+    with pytest.raises(ValueError, match="need select.decision"):
+        pipeline.build(config(tmp_path, verify={"schema_recipe": "llm_decision_sft"}))

@@ -47,6 +47,7 @@ PAGES: dict[str, tuple[str, list[tuple[str, str | None, bool]]]] = {
     "data/design": ("data/design", [("data/README.md", "Design", False), ("data/README.md", "Plan", False), ("data/README.md", "Known starting points", False)]),
     "data/survey": ("data/survey", [("data/README.md", "Survey", False), ("data/README.md", "Sources", False)]),
     "experiments/jarvis-agent": ("experiments/jarvis-agent", []),
+    "experiments/jarvis-router": ("experiments/jarvis-router", []),
     "operations/jobs": ("operations/jobs", []),
     "operations/security": ("operations/security", []),
     "contributing/development": ("contributing/development", [("README.md", "05. Tests", False)]),

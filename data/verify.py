@@ -6,9 +6,10 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from core.stage import Outputs, Stage
-from data.config import SyntheticConfig
+from data.config import DecisionQuestion, SyntheticConfig
 from data.prompts import spend
 from data.respond import CANDIDATES
+from data.select import decision_row
 from data.rows import Row, cached, keep, key, normalized, read_rows, trail, write_rows
 from data.teachers import Teacher, teacher_from
 from modeling.llm.methods.grpo import REWARDS, last_number
@@ -43,10 +44,14 @@ def majority_keys(rows: list[Row], how: str) -> dict[str, str | None]:
     return {prompt: max(sorted(counts), key=lambda v: counts[v]) if counts else None for prompt, counts in by_prompt.items()}
 
 
-def assembled(row: Row, recipe: str) -> Row:
+def assembled(row: Row, recipe: str, question: DecisionQuestion | None = None) -> Row:
     """The candidate as the target recipe's row, for its `check`."""
     content = f"{row['context']}\n\n{row['instruction']}" if row.get("context") else row["instruction"]
-    if recipe in {"llm_sft", "llm_decision_sft"}:
+    if recipe == "llm_decision_sft":
+        if question is None:
+            raise ValueError("verify.schema_recipe llm_decision_sft needs select.decision")
+        return decision_row(row, question)
+    if recipe == "llm_sft":
         return {"messages": [{"role": "user", "content": content}, {"role": "assistant", "content": row["text"]}]}
     if recipe == "llm_instruction":
         return {"instruction": row["instruction"], **({"input": row["context"]} if row.get("context") else {}), "output": row["text"]}
@@ -55,13 +60,13 @@ def assembled(row: Row, recipe: str) -> Row:
     raise ValueError(f"verify.schema_recipe {recipe!r} is not a recipe this stage can assemble")
 
 
-def schema_error(row: Row, recipe: str) -> str | None:
+def schema_error(row: Row, recipe: str, question: DecisionQuestion | None = None) -> str | None:
     from core.registry import RECIPES, load_channels
     load_channels()
     config_class = RECIPES.get(recipe).config_class
     method = config_class.method_class(config_class.model_fields["method"].default_factory(), None)
     try:
-        method.check(assembled(row, recipe))
+        method.check(assembled(row, recipe, question))
     except (KeyError, TypeError, ValueError) as error:
         return str(error)
     return None
@@ -112,7 +117,7 @@ class VerifyStage(Stage[SyntheticConfig]):
             if sorry_short(row["text"], settings.sorry_words):
                 reject(row, "sorry")
                 continue
-            if settings.schema_recipe and (error := schema_error(row, settings.schema_recipe)):
+            if settings.schema_recipe and (error := schema_error(row, settings.schema_recipe, config.select.decision)):
                 reject(row, f"schema: {error}")
                 continue
             if reward is not None:

@@ -1,6 +1,7 @@
 """Stage `prompts`: instructions from seeds, through a generator; answers come later, in `respond`."""
 
 import re
+import json
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -87,6 +88,56 @@ def utterances(teacher: Teacher | None, seed: Row, index: int, params: dict[str,
                                             f"Each is one or two sentences of 4 to 30 words, in {language}, with numbers and "
                                             "symbols written out as words. One per line, numbered. Only the lines."}])
     return [{"instruction": line.strip(' "')} for line in lines_of(text)[:count]]
+
+
+def conversation(history: list[dict[str, str]]) -> str:
+    """Pure: earlier turns as the transcript a decision row's state starts with, "User: ..." and "Assistant: ..."."""
+    return "\n".join(f"User: {turn['user']}\nAssistant: {turn['assistant']}" for turn in history)
+
+
+def json_array(text: str) -> list[Any]:
+    """The JSON array in a teacher's answer, code fences and words around it ignored; [] when there is none."""
+    start, end = text.find("["), text.rfind("]")
+    try:
+        found = json.loads(text[start:end + 1]) if 0 <= start < end else []
+    except json.JSONDecodeError:
+        return []
+    return found if isinstance(found, list) else []
+
+
+@GENERATORS.register("labelled_requests")
+def labelled_requests(teacher: Teacher | None, seed: Row, index: int, params: dict[str, Any], ask: Any) -> list[Row]:
+    """Requests that belong to one option of a decision, for decision rows: the seed's `kind` is the option and its
+    text the situation; `labels` (option -> meaning) shows the teacher every option, so the requests fit theirs and
+    not the others'. Each prompt carries its option as `answer` and the turns before it as `context`, so the option
+    can depend on the conversation. `languages` and `history` (turns before the request, e.g. [0, 1, 2]) turn by
+    index: `per_seed` prompts cover every combination in turn."""
+    labels: dict[str, str] = params.get("labels") or {}
+    if seed["kind"] not in labels:
+        raise ValueError(f"seed kind {seed['kind']!r} is not one of prompts.params.labels {list(labels)}")
+    languages = params.get("languages") or [params.get("language", "English")]
+    lengths = [int(turns) for turns in params.get("history") or [0]]
+    language, turns = languages[index % len(languages)], lengths[(index // len(languages)) % len(lengths)]
+    count = int(params.get("n", 5))
+    options = "\n".join(f"- {label}: {meaning}" for label, meaning in labels.items())
+    before = (f"Each example has the {turns} exchange(s) right before the request (what the user said and what the "
+              "assistant replied), and the request continues that conversation. " if turns else "")
+    shape = '[{"history": [{"user": "...", "assistant": "..."}], "request": "..."}]'
+    text = ask([{"role": "user", "content": f"An assistant decides, for every request it gets, which of these applies:\n{options}\n\n"
+                                            f"Write {count} different examples of a request a user would say or type to the "
+                                            f"assistant in this situation: {seed['text']}. {before}Each request must clearly be "
+                                            f"'{seed['kind']}' and none of the other options. Vary the length, wording and "
+                                            f"register, as people really talk to an assistant. Write them in {language}. Reply "
+                                            f"with a JSON array only, {shape}, with exactly {turns} item(s) in every history."}])
+    rows = []
+    for example in json_array(text)[:count]:
+        if not isinstance(example, dict) or not str(example.get("request") or "").strip():
+            continue
+        history = [turn for turn in example.get("history") or [] if isinstance(turn, dict) and turn.get("user") and turn.get("assistant")]
+        context = conversation(history[-turns:]) if turns else ""
+        rows.append({"instruction": str(example["request"]).strip(), "answer": seed["kind"], "language": language,
+                     "turns": turns, **({"context": context} if context else {})})
+    return rows
 
 
 class Calls:

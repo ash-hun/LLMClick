@@ -1,0 +1,38 @@
+# A router for the agent: given the request (and up to two turns before it, see configs/data/route.yaml for the state's
+# shape), whether to run inner thought (`think`) or not (`direct`). The agent replies either way. A pointer head reads
+# the two options' meanings, and the router itself never reasons (think_fraction 0): it is asked on every request, so
+# it has to be one forward pass. Replace <hash> with the data experiment's key (`llmclick validate configs/data/route.yaml`).
+pipeline:
+  recipe: llm_decision_sft
+  name: route-qwen3-0.6b
+  seed: 20261017
+  output_dir: ./output
+
+# Qwen3-0.6B over Qwen3.5-0.8B: the same held-out accuracy (166/167) at a quarter of the latency on a Mac (0.08 s against
+# 0.3 s a request), and its few errors are unsure ones, which a threshold on P(think) catches; Qwen3.5-0.8B is
+# architecture: hybrid, name: Qwen/Qwen3.5-0.8B, revision: 2fc06364715b967f1860aea9cf38778875588b17
+model:
+  architecture: transformer
+  name: Qwen/Qwen3-0.6B
+  revision: c1899de289a04d12100db370d81485cdf75e47ca
+  head: pointer
+
+data:
+  sources:
+    - {name: local_jsonl, path: output/route-<hash>/select/rows.jsonl}
+  validation: 0.15
+
+method:
+  think_fraction: 0
+  head_lr: 1.0e-4
+  calibration: 0.15               # the probability of `think` is calibrated, so the agent can pick its own threshold
+
+training:
+  epochs: 2
+  lr: 5.0e-5
+  batch_size: 4                   # 16 swapped on a 48 GB Mac sharing memory with a VM (7 min a step); 4 takes 2-10 s
+  max_length: 1024                # two turns of conversation before the request fit
+  adapter: {name: lora, r: 16, alpha: 32}
+
+validation:
+  min: {accuracy: 0.85}

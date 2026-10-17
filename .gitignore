@@ -29,3 +29,6 @@ output/
 
 # downloaded evaluation audio (configs/evaluation/wakeword.yaml)
 /corpora/
+
+# evaluation sets made for an experiment stay local: the repository holds recipes and the framework
+/samples/evaluation/
