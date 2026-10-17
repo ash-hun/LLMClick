@@ -94,3 +94,10 @@ def test_windows_firings_and_config_errors(tmp_path: Path) -> None:
         pipeline.build(config(root)).run()
     with pytest.raises(ValueError, match="is a range"):
         pipeline.build(config(root, augment={"snr": [30, 5]}))
+
+
+def test_moved_recordings_make_the_same_windows(tmp_path: Path) -> None:
+    built = [pipeline.build(config(recordings(tmp_path / where))).run()["stages"] for where in ("here", "there")]
+    arrays = [np.load(stages["features"]["features"]) for stages in built]
+    assert np.array_equal(arrays[0]["x"], arrays[1]["x"]) and np.array_equal(arrays[0]["y"], arrays[1]["y"])
+    assert built[0]["validate"]["metrics"] == built[1]["validate"]["metrics"]

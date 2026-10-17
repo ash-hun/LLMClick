@@ -7,7 +7,7 @@ from typing import Any, ClassVar
 
 import numpy as np
 
-from core.utils.files import atomic_path, directory_signature, read_json, read_jsonl, staged_directory, write_json, write_jsonl
+from core.utils.files import atomic_path, directory_signature, read_json, read_jsonl, sha256_file, staged_directory, write_json, write_jsonl
 from modeling.wakeword.config import AugmentConfig, WakewordConfig
 from modeling.stages import TrainStage, ValidateStage, held_out_positions
 from modeling.wakeword import features, detector
@@ -28,8 +28,13 @@ MARGIN = 0.2              # seconds between the latest a positive window ends an
 
 
 def rng_for(seed: int, *parts: Any) -> np.random.Generator:
-    """A generator that depends only on the seed and the item, so a window is the same whenever it is made."""
+    """A generator that depends only on the seed and the item, so a window is the same whenever it is made. A
+    recording is named by `content`, not its path, so moving the recordings does not change the windows."""
     return np.random.default_rng([seed, int(hashlib.sha256(repr(parts).encode()).hexdigest()[:15], 16)])
+
+
+def content(path: str) -> str:
+    return sha256_file(Path(path))
 
 
 def backdrop(rng: np.random.Generator, background: list[np.ndarray], length: int) -> np.ndarray:
@@ -162,6 +167,7 @@ class WindowsStage(Stage[WakewordConfig]):
     alone, all turned into embeddings. Every window's randomness comes from the seed and its recording, so a rerun
     makes the same file."""
     name: ClassVar[str] = "features"
+    version: ClassVar[int] = 2
     requires: ClassVar[tuple[str, ...]] = ("data",)
     sections: ClassVar[tuple[str, ...]] = ("seed", "augment")
 
@@ -179,13 +185,13 @@ class WindowsStage(Stage[WakewordConfig]):
         labels: list[int] = []
         for done, row in enumerate(rows):
             self.progress.update(done, len(rows), "embedding windows")
-            samples = features.clip(Path(row["audio"]))
+            samples, key = features.clip(Path(row["audio"])), content(row["audio"])
             for round_ in range(augment.rounds):
-                rng = rng_for(seed, row["audio"], round_)
+                rng = rng_for(seed, key, round_)
                 windows.append(embed(window(samples, rng, augment, background, crop=not row["label"]))[-features.FRAMES:])
                 labels.append(int(row["label"]))
             for round_ in range(augment.followed if row["label"] else 0):
-                rng = rng_for(seed, row["audio"], "followed", round_)
+                rng = rng_for(seed, key, "followed", round_)
                 other = features.clip(Path(others[int(rng.integers(len(others)))]))
                 windows.append(embed(window(then(samples, other, rng, augment), rng, augment, background, crop=False))[-features.FRAMES:])
                 labels.append(0)
@@ -232,6 +238,7 @@ class StreamTestStage(ValidateStage[WakewordConfig]):
     a command in one stream, where the detector must fire once, on the phrase, and not on the command."""
     requires: ClassVar[tuple[str, ...]] = ("train", "data")
     sections: ClassVar[tuple[str, ...]] = ("validation", "seed")
+    version: ClassVar[int] = 2
 
     def measure(self, workdir: Path, inputs: dict[str, Outputs]) -> dict[str, float]:
         settings, seed = self.config.validation, self.config.seed
@@ -244,14 +251,14 @@ class StreamTestStage(ValidateStage[WakewordConfig]):
         items: list[dict[str, Any]] = []
         for done, row in enumerate(rows):
             self.progress.update(done, len(rows) + len(positives), "listening for the phrase")
-            fired = firings(score(stream([features.clip(Path(row["audio"]))], rng_for(seed, "test", row["audio"]),
+            fired = firings(score(stream([features.clip(Path(row["audio"]))], rng_for(seed, "test", content(row["audio"])),
                                          background, settings.snr)), settings.threshold)
             items.append({"test": "single", "audio": row["audio"], "label": row["label"], "fired": len(fired)})
         for done, row in enumerate(positives):
             self.progress.update(len(rows) + done, len(rows) + len(positives), "phrase, then a command")
             phrase = features.clip(Path(row["audio"]))
             command = negatives[done % len(negatives)]
-            scores = score(stream([phrase, features.clip(Path(command["audio"]))], rng_for(seed, "scenario", row["audio"]),
+            scores = score(stream([phrase, features.clip(Path(command["audio"]))], rng_for(seed, "scenario", content(row["audio"])),
                                   background, settings.snr))
             fired_at = [features.window_end(index) / features.RATE for index in firings(scores, settings.threshold)]
             said = (LEAD, LEAD + len(phrase) / features.RATE)
