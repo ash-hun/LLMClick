@@ -1,19 +1,41 @@
 ---
 title: Data overview
-description: Make the rows a recipe trains on, with the filtering the published recipes use.
+description: What the Data channel makes, for which recipe, how a generation run flows, and which teachers it can use.
 ---
 
 # Data overview
 
-Most of the work in a good fine-tune is the data. The Data channel produces rows in the exact format a training
-recipe expects, two ways: by converting open datasets, and by generating rows with a teacher model. Both end with
-the same filters (duplicates out, evaluation items out) and the same manifest (what came from where, how much was
-dropped at each step, what it cost).
+Most of the work in a good fine-tune is the data. The Data channel makes the rows a Modeling recipe trains on, in
+the exact format that recipe reads, with a manifest that says what came from where, how much was dropped at each
+step and what it cost. Today rows are made by a teacher model from seeds; converting open datasets is designed.
 
-Today the synthetic route is built: `data_synthetic` takes seeds (topics, personas, documents, existing rows), writes
-instructions, optionally makes them harder, answers them several times with a teacher, verifies and judges the
-answers, and assembles training rows. Teachers can be the Anthropic API, any OpenAI-format server, a local Ollama
-model, or a checkpoint LLMClick trained. Converting open datasets (`data_open`) is designed and listed under Design.
+![Data channel flow](/img/data-flow.svg)
 
-Everything here is a recipe on the same runner, so a generation run that crashes or runs out of budget continues
-where it stopped, and a second run of the same config costs nothing.
+## What it makes, for which recipe
+
+| Recipe | Makes | For | Shipped configs |
+|---|---|---|---|
+| [`data_synthetic`](./synthetic) | conversations, instruction rows, preference pairs, prompts with answers, decision questions | `llm_sft`, `llm_dpo`, `llm_grpo`, `llm_decision_sft` (`select.assemble`: `sft`, `dpo`, `grpo`, `decision`) | `data/synthetic.yaml` (Korean conversations), `data/route.yaml` (router decisions) |
+| [`data_speech`](./speech) | recordings with their texts, checked by Whisper | `tts_piper`, `wakeword`, `evaluation_wakeword` | `data/speech.yaml`, `data/wake_*.yaml`, `data/wake_eval_*.yaml` |
+| `data_open` (designed, not built) | rows converted from open datasets | every recipe | |
+
+## Teachers
+
+| `teacher.name` | Calls | Cost |
+|---|---|---|
+| `anthropic` | the Anthropic API (`ANTHROPIC_API_KEY`) | from a price table or `price: [in, out]` per million tokens |
+| `openai` | any chat-completions server: OpenAI, vLLM, LM Studio, gateways (`base_url`); reasoning models with `reasoning_effort` | the same |
+| `ollama` | a local Ollama server | free |
+| `local` | a checkpoint Modeling trained, or a Hub model | free |
+
+## What every data recipe guarantees
+
+- **Every teacher call is cached** under a key made from the request, so a run that crashes or runs out of budget
+  continues where it stopped, and the same config run twice costs nothing.
+- **The budget is checked before each uncached call** (`budget.max_usd`), and the cache is the ledger.
+- **Rows leave in the target recipe's format**: the last check is that recipe's own row check.
+- **Duplicates and evaluation items are removed** before the rows are written, so a benchmark score is not inflated
+  by its own items.
+
+A Modeling config reads the result through `data.sources`:
+`{name: local_jsonl, path: output/<data experiment>/select/rows.jsonl}`.

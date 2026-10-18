@@ -1,26 +1,70 @@
-/* LLMClick docs: a restrained palette, generous line height, tables that fit. */
+/* LLMClick docs: white pages, light blue accents, generous line height, tables that fit. */
 :root {
-  --ifm-color-primary: #01453a;
-  --ifm-color-primary-dark: #013e34;
-  --ifm-color-primary-darker: #013a31;
-  --ifm-color-primary-darkest: #013028;
-  --ifm-color-primary-light: #024c40;
-  --ifm-color-primary-lighter: #025043;
-  --ifm-color-primary-lightest: #035a4c;
+  --ifm-color-primary: #1f78d1;
+  --ifm-color-primary-dark: #1c6cbc;
+  --ifm-color-primary-darker: #1a66b2;
+  --ifm-color-primary-darkest: #155492;
+  --ifm-color-primary-light: #3586d8;
+  --ifm-color-primary-lighter: #4590db;
+  --ifm-color-primary-lightest: #6ba8e4;
+  --ifm-background-color: #ffffff;
+  --ifm-font-color-base: #1b2b3c;
+  --ifm-heading-color: #0f2a47;
   --ifm-code-font-size: 92%;
   --ifm-line-height-base: 1.7;
-  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.08);
+  --ifm-navbar-shadow: none;
+  --ifm-toc-border-color: #e3eefb;
+  --ifm-hr-border-color: #e3eefb;
+  --ifm-table-border-color: #d9e8f8;
+  --ifm-table-stripe-background: #f6faff;
+  --ifm-code-background: #eef5fd;
+  --ifm-menu-color-background-active: #e8f2fd;
+  --ifm-menu-color-background-hover: #f2f8fe;
+  --ifm-footer-background-color: #f3f8fe;
+  --llmclick-tint: #f3f8fe;
+  --llmclick-line: #cfe3f8;
+  --docusaurus-highlighted-code-line-bg: rgba(31, 120, 209, 0.1);
 }
 
 [data-theme='dark'] {
-  --ifm-color-primary: #a8d86b;
-  --ifm-color-primary-dark: #99d053;
-  --ifm-color-primary-darker: #92cc47;
-  --ifm-color-primary-darkest: #78ad32;
-  --ifm-color-primary-light: #b7e083;
-  --ifm-color-primary-lighter: #bee48f;
-  --ifm-color-primary-lightest: #d3f0a0;
-  --docusaurus-highlighted-code-line-bg: rgba(255, 255, 255, 0.1);
+  --ifm-color-primary: #7cbcf5;
+  --ifm-color-primary-dark: #5eacf3;
+  --ifm-color-primary-darker: #4fa4f2;
+  --ifm-color-primary-darkest: #218cee;
+  --ifm-color-primary-light: #9accf7;
+  --ifm-color-primary-lighter: #a9d3f8;
+  --ifm-color-primary-lightest: #d6eafc;
+  --ifm-background-color: #0f1a27;
+  --ifm-font-color-base: #e3ecf6;
+  --ifm-heading-color: #f2f7fc;
+  --ifm-toc-border-color: #213449;
+  --ifm-hr-border-color: #213449;
+  --ifm-table-border-color: #26405c;
+  --ifm-table-stripe-background: #13212f;
+  --ifm-code-background: #172738;
+  --ifm-menu-color-background-active: #18304a;
+  --ifm-menu-color-background-hover: #142538;
+  --ifm-footer-background-color: #0c1520;
+  --llmclick-tint: #13212f;
+  --llmclick-line: #26405c;
+  --docusaurus-highlighted-code-line-bg: rgba(124, 188, 245, 0.12);
+}
+
+.navbar {
+  border-bottom: 1px solid var(--llmclick-line);
+}
+
+.navbar__title {
+  color: var(--ifm-color-primary-darkest);
+  font-weight: 700;
+}
+
+[data-theme='dark'] .navbar__title {
+  color: var(--ifm-color-primary);
+}
+
+.footer {
+  border-top: 1px solid var(--llmclick-line);
 }
 
 .markdown table {
@@ -29,8 +73,30 @@
   font-size: 0.92rem;
 }
 
+.markdown table thead tr {
+  background: var(--llmclick-tint);
+  border-bottom: 2px solid var(--llmclick-line);
+}
+
 .markdown > h2 {
   margin-top: 2.2rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--llmclick-line);
+}
+
+.markdown img[src$='.svg'] {
+  display: block;
+  width: 100%;
+  margin: 1.2rem 0 1.6rem;
+  border: 1px solid var(--llmclick-line);
+  border-radius: 12px;
+}
+
+.markdown blockquote {
+  background: var(--llmclick-tint);
+  border-left-color: var(--ifm-color-primary-lightest);
+  border-radius: 0 8px 8px 0;
+  padding: 0.6rem 1rem;
 }
 
 .sourced {

@@ -21,7 +21,7 @@ All listening checks use Whisper `openai/whisper-base` (revision `e37978b9`, Eng
 
 | Model | Experiment | Validation |
 |---|---|---|
-| KWS: "Jarvis" (`jarvis.onnx`, 204 KB, plus openWakeWord's 2.4 MB front end) | jarvis-wake-b6 | passed at threshold 0.5: recall 1.000, false_accepts 0.047, scenario 0.963 |
+| KWS: "Jarvis" (`jarvis.onnx`, 204 KB, plus openWakeWord's 2.4 MB front end) | jarvis-wake-b7 | passed at threshold 0.5: recall 1.000, false_accepts 0.037, scenario 0.981 |
 | TTS: Jarvis voice (`voice.onnx`, 64 MB) with nine read-backs | jarvis-medium-ft (best of 5 takes) | passed: wer 0.072 (source recordings 0.072), phrase_wer 0.000 |
 
 ### Wake word: every iteration

@@ -35,7 +35,7 @@ module.exports = {
   themeConfig:
     /** @type {import('@docusaurus/preset-classic').ThemeConfig} */
     ({
-      colorMode: {respectPrefersColorScheme: true},
+      colorMode: {defaultMode: 'light', respectPrefersColorScheme: false},   // white and light blue first; dark on request
       navbar: {
         title: 'LLMClick',
         items: [
@@ -45,7 +45,7 @@ module.exports = {
         ],
       },
       footer: {
-        style: 'dark',
+        style: 'light',
         links: [
           {title: 'Docs', items: [{label: 'Quick start', to: '/quick-start'}, {label: 'Reference', to: '/reference/recipes'}]},
           {title: 'Project', items: [{label: 'GitHub', href: 'https://github.com/ash-hun/LLMClick'}]},
