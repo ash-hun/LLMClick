@@ -17,7 +17,9 @@ npm run build --prefix website
 ```
 
 To change a page: edit the README section or the code it comes from, or its intro under `intros/`, then run `sync`.
-To add a page: add its intro, list it in `PAGES` of `scripts/sync.py` and in `sidebars.js`.
+To add a page: add its intro, list it in `PAGES` of `scripts/sync.py` and in `sidebars.js`. An intro line
+`<!-- include: configs/<file>.yaml -->` becomes that file in a code block, so recipe pages show the shipped configs.
+The channel diagrams in `static/img/*-flow.svg` are plain SVG in the site's colours; edit them as files.
 
 `.github/workflows/docs.yml` builds the site on every pull request that touches the sources and deploys it to GitHub
 Pages on every push to `main`.

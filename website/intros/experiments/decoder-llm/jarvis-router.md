@@ -7,7 +7,7 @@ description: A Jev decision model that decides, for every request the agent gets
 
 The agent always replies. For each request it also has to decide whether to run inner thought on it, which costs
 time and tokens, or to answer from what it already has. This experiment builds that decision as a small Jev
-decision model: two options, `direct` and `think`, read by a pointer head on Qwen3.5-0.8B, with up to two earlier
+decision model: two options, `direct` and `think`, read by a pointer head on Qwen3-0.6B (Qwen3.5-0.8B compared), with up to two earlier
 turns of the conversation in view. The data comes from a teacher model through `data_synthetic`; the router is
 trained with `llm_decision_sft` and measured with `evaluation_decision`.
 

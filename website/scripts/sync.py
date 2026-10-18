@@ -14,9 +14,12 @@ SITE = ROOT / "website"
 INTROS = SITE / "intros"
 DOCS = SITE / "docs"
 HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
+INCLUDE = re.compile(r"^<!-- include: (\S+) -->$", re.MULTILINE)
 sys.path.insert(0, str(ROOT))
 
-# page -> (intro file, [(source file, heading, own_only)]) ; None heading = the preamble before the first "## "
+# page -> (intro file, [(source file, heading, own_only)]) ; None heading = the preamble before the first "## ".
+# An intro line `<!-- include: <path> -->` becomes that repository file in a code block (configs, so a page shows the
+# YAML the repository ships rather than a copy that drifts).
 PAGES: dict[str, tuple[str, list[tuple[str, str | None, bool]]]] = {
     "index": ("index", [("README.md", None, False)]),
     "quick-start": ("quick-start", [("README.md", "03. Quick start", False)]),
@@ -24,10 +27,19 @@ PAGES: dict[str, tuple[str, list[tuple[str, str | None, bool]]]] = {
     "concepts/how-a-run-works": ("concepts/how-a-run-works", [("README.md", "02. How a run works", True)]),
     "concepts/stages": ("concepts/stages", [("README.md", "Stages", False)]),
     "concepts/idempotency": ("concepts/idempotency", []),
-    "modeling/recipes": ("modeling/recipes", [("README.md", "Reusing sampled groups (`llm_grpo`, `llm_decision_cispo`)", False), ("README.md", "A reward for `llm_grpo`", False)]),
-    "modeling/decision-recipes": ("modeling/decision-recipes", [("README.md", "Decision recipes", False)]),
-    "modeling/tts": ("modeling/tts", [("README.md", "Text-to-speech recipe (`tts_piper`)", False)]),
-    "modeling/wakeword": ("modeling/wakeword", [("README.md", "Wake word recipe (`wakeword`)", False), ("README.md", "A voice agent from these recipes", False)]),
+    "modeling/overview": ("modeling/overview", []),
+    "modeling/llm/overview": ("modeling/llm/overview", [("README.md", "Apple silicon", False)]),
+    "modeling/llm/sft": ("modeling/llm/sft", []),
+    "modeling/llm/instruction": ("modeling/llm/instruction", []),
+    "modeling/llm/dpo": ("modeling/llm/dpo", []),
+    "modeling/llm/grpo": ("modeling/llm/grpo", [("README.md", "Reusing sampled groups (`llm_grpo`, `llm_decision_cispo`)", False), ("README.md", "A reward for `llm_grpo`", False)]),
+    "modeling/decision/overview": ("modeling/decision/overview", [("README.md", "Decision recipes", False)]),
+    "modeling/decision/sft": ("modeling/decision/sft", []),
+    "modeling/decision/cispo": ("modeling/decision/cispo", []),
+    "modeling/embedding/contrastive": ("modeling/embedding/contrastive", []),
+    "modeling/speech/overview": ("modeling/speech/overview", [("README.md", "A voice agent from these recipes", False)]),
+    "modeling/speech/tts-piper": ("modeling/speech/tts-piper", [("README.md", "Text-to-speech recipe (`tts_piper`)", False)]),
+    "modeling/speech/wakeword": ("modeling/speech/wakeword", [("README.md", "Wake word recipe (`wakeword`)", False)]),
     "modeling/extending": ("modeling/extending", [("README.md", "04. Extending", False)]),
     "evaluation/overview": ("evaluation/overview", [("evaluation/README.md", "Purpose", False), ("evaluation/README.md", "How it differs from `validate` and from `training.eval_every`", False)]),
     "evaluation/custom": ("evaluation/custom", [("evaluation/README.md", "Built: `evaluation_custom`", False)]),
@@ -46,8 +58,12 @@ PAGES: dict[str, tuple[str, list[tuple[str, str | None, bool]]]] = {
     "data/lineages": ("data/lineages", [("data/README.md", "Two lineages in detail: Nemotron and WizardLM", False)]),
     "data/design": ("data/design", [("data/README.md", "Design", False), ("data/README.md", "Plan", False), ("data/README.md", "Known starting points", False)]),
     "data/survey": ("data/survey", [("data/README.md", "Survey", False), ("data/README.md", "Sources", False)]),
-    "experiments/jarvis-agent": ("experiments/jarvis-agent", []),
-    "experiments/jarvis-router": ("experiments/jarvis-router", []),
+    "experiments/overview": ("experiments/overview", []),
+    "experiments/decoder-llm/overview": ("experiments/decoder-llm/overview", []),
+    "experiments/decoder-llm/jarvis-router": ("experiments/decoder-llm/jarvis-router", []),
+    "experiments/hybrid-llm/overview": ("experiments/hybrid-llm/overview", []),
+    "experiments/speech/overview": ("experiments/speech/overview", []),
+    "experiments/speech/jarvis-agent": ("experiments/speech/jarvis-agent", []),
     "operations/jobs": ("operations/jobs", []),
     "operations/security": ("operations/security", []),
     "contributing/development": ("contributing/development", [("README.md", "05. Tests", False)]),
@@ -103,13 +119,25 @@ def promote(body: str, level: int) -> str:
     return "\n".join(out)
 
 
+def included(text: str) -> tuple[str, set[str]]:
+    """Every include line replaced by its file in a titled code block, and the files it named."""
+    named: set[str] = set()
+
+    def block(match: re.Match[str]) -> str:
+        path = match.group(1)
+        named.add(path)
+        language = {".yml": "yaml"}.get(Path(path).suffix, Path(path).suffix.lstrip("."))
+        return f'```{language} title="{path}"\n{(ROOT / path).read_text().rstrip()}\n```'
+    return INCLUDE.sub(block, text), named
+
+
 def page(name: str) -> str:
     intro_name, sources = PAGES[name]
-    intro = (INTROS / f"{intro_name}.md").read_text().strip()
+    intro, named = included((INTROS / f"{intro_name}.md").read_text().strip())
     parts = [intro]
     for file, heading, own_only in sources:
         parts.append(section(ROOT / file, heading, own_only).strip())
-    origin = ", ".join(sorted({file for file, _, _ in sources})) or "handwritten"
+    origin = ", ".join(sorted({file for file, _, _ in sources} | named)) or "handwritten"
     return "\n\n".join(parts) + f"\n\n<p class=\"sourced\">Source: {origin}. This page is generated; edit the source and run <code>npm run sync</code>.</p>\n"
 
 

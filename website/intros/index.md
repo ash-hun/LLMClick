@@ -12,12 +12,12 @@ builds nothing the second time, and a run that crashed halfway continues where i
 
 Three channels share one runner:
 
-- **Modeling** turns a config into a trained, validated model. Recipes cover supervised fine-tuning, instruction
+- **[Modeling](modeling/overview)** turns a config into a trained, validated model. Recipes cover supervised fine-tuning, instruction
   tuning, preference tuning (DPO), reinforcement with rewards (GRPO), decision models that answer typed questions,
   and contrastive training of embedding models. Full fine-tuning or LoRA, on a GPU or on Apple silicon.
-- **Evaluation** scores what Modeling built: on your own rows, on public benchmarks, against the base model, with the
+- **[Evaluation](evaluation/overview)** scores what Modeling built: on your own rows, on public benchmarks, against the base model, with the
   overlap between the evaluation items and the training rows reported next to every score.
-- **Data** makes the rows: synthetic conversations, preferences and problems from a teacher model (an API or a local
+- **[Data](data/overview)** makes the rows: synthetic conversations, preferences and problems from a teacher model (an API or a local
   model), with the filtering and leak removal the published recipes use.
 
 The mental model is small. A **recipe** is a pipeline of **stages**; each stage's output directory is named by a
