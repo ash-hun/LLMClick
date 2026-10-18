@@ -146,3 +146,16 @@ def test_thinking_is_a_chat_template_argument(trained: dict[str, Any], tmp_path:
     assert plain.fingerprint("score:gsm8k") != pipeline.build({**body, "chat_template": True, "thinking": False}).fingerprint("score:gsm8k")
     plain.run()
     assert "enable_thinking" not in fake.calls[-1]["model_args"]
+
+
+def test_a_task_can_override_the_chat_template(trained: dict[str, Any], tmp_path: Path, fake: FakeHarness) -> None:  # noqa: F811
+    body = {**config(trained["directory"], tmp_path, tasks=[{"name": "arc_challenge", "chat_template": False}, {"name": "ifeval"}]),
+            "chat_template": True, "thinking": False}
+    pipeline.build(body).run()
+    calls = {call["tasks"][0]: call for call in fake.calls}
+    assert calls["arc_challenge"]["apply_chat_template"] is False and "enable_thinking" not in calls["arc_challenge"]["model_args"]
+    assert calls["ifeval"]["apply_chat_template"] is True and calls["ifeval"]["model_args"]["enable_thinking"] is False
+    unset = config(trained["directory"], tmp_path, tasks=[{"name": "gsm8k"}])
+    same = config(trained["directory"], tmp_path, tasks=[{"name": "gsm8k", "chat_template": None}])
+    assert pipeline.build(unset).fingerprint("score:gsm8k") == pipeline.build(same).fingerprint("score:gsm8k")
+    assert "chat_template" not in Benchmarks(tasks=[{"name": "gsm8k"}]).resolved()[0].fingerprint()  # stages built before keep their key
