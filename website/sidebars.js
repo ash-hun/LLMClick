@@ -22,7 +22,7 @@ module.exports = {
       type: 'category',
       label: 'Evaluation',
       items: [
-        'evaluation/overview', 'evaluation/benchmark', 'evaluation/custom', 'evaluation/compare', 'evaluation/decision',
+        'evaluation/overview', 'evaluation/benchmark', 'evaluation/llm-performance', 'evaluation/custom', 'evaluation/compare', 'evaluation/decision',
         'evaluation/embedding', 'evaluation/wakeword', 'evaluation/contamination', 'evaluation/design', 'evaluation/survey',
       ],
     },

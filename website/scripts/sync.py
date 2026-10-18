@@ -9,12 +9,16 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[2]
 SITE = ROOT / "website"
 INTROS = SITE / "intros"
 DOCS = SITE / "docs"
 HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 INCLUDE = re.compile(r"^<!-- include: (\S+) -->$", re.MULTILINE)
+POLYGON = re.compile(r"^<!-- polygon: (\S+) -->$", re.MULTILINE)
+SURVEY = "website/data/llm-performance.yaml"  # published scores the polygon figures are drawn from
 sys.path.insert(0, str(ROOT))
 
 # page -> (intro file, [(source file, heading, own_only)]) ; None heading = the preamble before the first "## ".
@@ -50,6 +54,7 @@ PAGES: dict[str, tuple[str, list[tuple[str, str | None, bool]]]] = {
     "evaluation/wakeword": ("evaluation/wakeword", [("evaluation/README.md", "Built: `evaluation_wakeword`", False)]),
     "evaluation/contamination": ("evaluation/contamination", [("evaluation/README.md", "Built: contamination, tracker, API", False)]),
     "evaluation/design": ("evaluation/design", [("evaluation/README.md", "Design", False), ("evaluation/README.md", "Plan", False), ("evaluation/README.md", "Known starting points", False)]),
+    "evaluation/llm-performance": ("evaluation/llm-performance", []),
     "evaluation/survey": ("evaluation/survey", [("evaluation/README.md", "Survey: what to measure for 0.6B to 2B fine-tuned models", False), ("evaluation/README.md", "Sources", False)]),
     "data/overview": ("data/overview", [("data/README.md", "Purpose", False)]),
     "data/synthetic": ("data/synthetic", [("data/README.md", "Built: `data_synthetic`", False)]),
@@ -119,26 +124,40 @@ def promote(body: str, level: int) -> str:
     return "\n".join(out)
 
 
-def included(text: str) -> tuple[str, set[str]]:
-    """Every include line replaced by its file in a titled code block, and the files it named."""
+def included(text: str) -> tuple[str, set[str], dict[str, str]]:
+    """Every include line replaced by its file in a titled code block, and every polygon line by its figure (the
+    chart beside the page, then the numbers and the source); the files they read, and the charts to write."""
     named: set[str] = set()
+    charts: dict[str, str] = {}
 
     def block(match: re.Match[str]) -> str:
         path = match.group(1)
         named.add(path)
         language = {".yml": "yaml"}.get(Path(path).suffix, Path(path).suffix.lstrip("."))
         return f'```{language} title="{path}"\n{(ROOT / path).read_text().rstrip()}\n```'
-    return INCLUDE.sub(block, text), named
+
+    def polygon(match: re.Match[str]) -> str:
+        from evaluation.compare import polygon_chart
+        figures = {entry["id"]: entry for entry in yaml.safe_load((ROOT / SURVEY).read_text())["figures"]}
+        figure = figures[match.group(1)]
+        named.add(SURVEY)
+        models, scores = figure["models"], figure["scores"]
+        axes = {axis: dict(zip(models, (value / 100 for value in values), strict=True)) for axis, values in scores.items()}
+        charts[f"{figure['id']}.svg"] = polygon_chart(axes, models)
+        rows = [[axis, *(f"{value:.1f}" for value in values)] for axis, values in scores.items()]
+        return (f"![{figure['title']}](./{figure['id']}.svg)\n\n" + table(rows, ["Benchmark", *models]) +
+                f"\n\nSource: [{figure['source']}]({figure['url']}).")
+    return POLYGON.sub(polygon, INCLUDE.sub(block, text)), named, charts
 
 
-def page(name: str) -> str:
+def page(name: str) -> tuple[str, dict[str, str]]:
     intro_name, sources = PAGES[name]
-    intro, named = included((INTROS / f"{intro_name}.md").read_text().strip())
+    intro, named, charts = included((INTROS / f"{intro_name}.md").read_text().strip())
     parts = [intro]
     for file, heading, own_only in sources:
         parts.append(section(ROOT / file, heading, own_only).strip())
     origin = ", ".join(sorted({file for file, _, _ in sources} | named)) or "handwritten"
-    return "\n\n".join(parts) + f"\n\n<p class=\"sourced\">Source: {origin}. This page is generated; edit the source and run <code>npm run sync</code>.</p>\n"
+    return "\n\n".join(parts) + f"\n\n<p class=\"sourced\">Source: {origin}. This page is generated; edit the source and run <code>npm run sync</code>.</p>\n", charts
 
 
 def table(rows: list[list[str]], header: list[str]) -> str:
@@ -266,7 +285,10 @@ def main() -> int:
     for name in PAGES:
         target = DOCS / f"{name}.md"
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(page(name))
+        text, charts = page(name)
+        target.write_text(text)
+        for file, svg in charts.items():
+            (target.parent / file).write_text(svg)
     generators = {"reference/recipes": reference_recipes, "reference/config": reference_config, "reference/api": reference_api,
                   "reference/cli": reference_cli, "reference/settings": reference_settings}
     for name, generate in generators.items():

@@ -1,7 +1,8 @@
 """`evaluation_benchmark`: public benchmarks through lm-evaluation-harness, one fingerprinted stage per benchmark."""
 
-import importlib.metadata
+import os
 import json
+import importlib.metadata
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -38,6 +39,12 @@ class Task(Section):
     name: str = Field(description="An lm-evaluation-harness task or group name")
     num_fewshot: int | None = Field(default=None, ge=0, description="null: the task's own default")
     limit: int | None = Field(default=None, ge=1, description="Items per task; null: `benchmarks.limit`, then all")
+    chat_template: bool | None = Field(default=None, description="Overrides `chat_template` for this task (multiple choice scored by "
+                                                                 "likelihood often reads better without it); null: the config's")
+
+    def fingerprint(self) -> dict[str, Any]:
+        """The task as its stage's identity; an unset override is left out, so stages built before it existed keep their key."""
+        return {key: value for key, value in self.model_dump(mode="json").items() if key != "chat_template" or value is not None}
 
 
 class Benchmarks(Section):
@@ -57,7 +64,7 @@ class Benchmarks(Section):
         """The preset's tasks and the listed ones, each with its limit filled in; a listed task replaces a preset one."""
         own = {task.name: task for task in self.tasks}
         tasks = [Task(**item) for item in PRESETS.get(self.preset or "", []) if item["name"] not in own] + self.tasks
-        return [Task(name=task.name, num_fewshot=task.num_fewshot, limit=task.limit or self.limit) for task in tasks]
+        return [task.model_copy(update={"limit": task.limit or self.limit}) for task in tasks]
 
 
 class Decoding(Section):
@@ -129,14 +136,18 @@ class BenchmarkStage(Stage[HarnessSettings]):
         return stage
 
     def identity(self) -> Any:
-        return [super().identity(), self.task.model_dump(mode="json"), harness_version(),
+        return [super().identity(), self.task.fingerprint(), harness_version(),
                 SourceExperiment(self.model).identity()]
+
+    @property
+    def chat_template(self) -> bool:
+        return self.config.chat_template if self.task.chat_template is None else self.task.chat_template
 
     def model_args(self, source: SourceExperiment) -> dict[str, Any]:
         if not source.hub and not isinstance(source.build()[0], LLMBackbone):
             raise ValueError(f"{source.model.experiment!r} is not a language model; benchmarks need one")
         origin, revision = source.origin()
-        thinking = self.config.thinking
+        thinking = self.config.thinking if self.chat_template else None
         return {"pretrained": origin, **({"revision": revision} if revision else {}), "dtype": "float32",
                 **({"enable_thinking": thinking} if thinking is not None else {}), **({"think_end_token": THINK_END} if thinking else {})}
 
@@ -147,14 +158,17 @@ class BenchmarkStage(Stage[HarnessSettings]):
         if task.name not in manager.all_tasks:
             raise ValueError(f"unknown benchmark {task.name!r}; `lm_eval --tasks list` names the available ones")
         source = SourceExperiment(self.model)
+        device = resolve_device(config.device)
+        if device == "mps":  # transformers 5 copies weights onto the device from worker threads, which segfaults on MPS
+            os.environ.setdefault("HF_DEACTIVATE_ASYNC_LOAD", "1")
         self.progress.update(0, None, f"{task.name}: loading model")
         decoding = {"max_gen_toks": config.decoding.max_new_tokens, "temperature": config.decoding.temperature,
                     "do_sample": config.decoding.temperature > 0}
         self.progress.update(0, None, f"{task.name}: {task.limit or 'all'} items, {task.num_fewshot if task.num_fewshot is not None else 'default'}-shot")
         output = lm_eval.simple_evaluate(
             model="hf", model_args=self.model_args(source), tasks=[task.name], num_fewshot=task.num_fewshot,
-            limit=task.limit, batch_size=config.evaluation.batch_size, device=resolve_device(config.device),
-            gen_kwargs=decoding, apply_chat_template=config.chat_template, log_samples=True, task_manager=manager,
+            limit=task.limit, batch_size=config.evaluation.batch_size, device=device,
+            gen_kwargs=decoding, apply_chat_template=self.chat_template, log_samples=True, task_manager=manager,
             random_seed=config.seed, numpy_random_seed=config.seed, torch_random_seed=config.seed,
             fewshot_random_seed=config.seed)
         kept = {key: output.get(key) for key in ("results", "n-samples", "n-shot", "versions", "higher_is_better")}
@@ -167,7 +181,8 @@ class BenchmarkStage(Stage[HarnessSettings]):
         return {"task": task.name, "results": str(workdir / RESULTS), "samples": str(workdir / SAMPLES),
                 "scores": scores[task.name] if task.name in scores else {}, "subtasks": {k: v for k, v in scores.items() if k != task.name},
                 "n": {name: counts.get("effective") for name, counts in (output.get("n-samples") or {}).items()},
-                "num_fewshot": (output.get("n-shot") or {}).get(task.name, task.num_fewshot), "limit": task.limit}
+                "num_fewshot": (output.get("n-shot") or {}).get(task.name, task.num_fewshot), "limit": task.limit,
+                "chat_template": self.chat_template}
 
 
 def documents(samples: Path) -> list[Any]:
