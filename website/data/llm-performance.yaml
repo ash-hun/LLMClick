@@ -62,15 +62,15 @@ figures:
       Global PIQA: [59.4, 63.1, 69.3]
 
   - id: measured-small-llms
-    title: Measured by LLMClick, the first three models of configs/evaluation/small_llms.yaml
+    title: Measured by LLMClick, the seven models of configs/evaluation/small_llms.yaml
     source: "configs/evaluation/small_llms.yaml, lm-evaluation-harness 0.4.13, Apple M4 Pro (MPS), the config's per-task limits; an axis is the mean of its benchmarks' primary metric"
     url: https://github.com/ash-hun/LLMClick/blob/main/configs/evaluation/small_llms.yaml
-    models: [Qwen3-0.6B, Qwen3.5-0.8B, Gemma-3-1B-IT]
+    models: [Qwen3-0.6B, Qwen3.5-0.8B, Gemma-3-1B-IT, Qwen2.5-1.5B-Instruct, SmolLM2-1.7B-Instruct, Qwen3-1.7B, Qwen3.5-2B]
     scores:
-      knowledge (MMLU): [50.7, 50.7, 42.5]
-      science (ARC-C): [38.0, 37.5, 39.5]
-      commonsense (HellaSwag, WinoGrande): [55.5, 55.2, 60.0]
-      truthfulness (TruthfulQA MC2): [40.8, 44.7, 42.4]
-      math (GSM8K): [43.0, 54.0, 44.0]
-      instructions (IFEval): [56.0, 58.0, 50.0]
-      korean (KMMLU): [31.8, 30.0, 28.0]
+      knowledge (MMLU): [50.7, 50.7, 42.5, 63.2, 55.3, 62.8, 60.2]
+      science (ARC-C): [38.0, 37.5, 39.5, 27.0, 46.5, 53.5, 55.5]
+      commonsense (HellaSwag, WinoGrande): [55.5, 55.2, 60.0, 65.8, 68.5, 58.8, 62.3]
+      truthfulness (TruthfulQA MC2): [40.8, 44.7, 42.4, 46.5, 40.7, 47.9, 44.4]
+      math (GSM8K): [43.0, 54.0, 44.0, 58.0, 46.0, 68.0, 69.0]
+      instructions (IFEval): [56.0, 58.0, 50.0, 41.0, 44.0, 67.0, 62.0]
+      korean (KMMLU): [31.8, 30.0, 28.0, 31.1, 20.0, 36.7, 38.4]
