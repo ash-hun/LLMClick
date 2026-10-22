@@ -20,6 +20,7 @@ and draws them as polygon charts, so a model's strengths and gaps show at a glan
 | Gemma-3-1B-IT | 1B | decoder-only transformer | no | Qwen3 report, non-thinking |
 | Qwen2.5-1.5B-Instruct | 1.5B | decoder-only transformer | no | Qwen3 report, non-thinking |
 | DeepSeek-R1-Distill-Qwen-1.5B | 1.5B | decoder-only transformer | no | Qwen3 report, thinking |
+| SmolLM2-1.7B-Instruct | 1.7B | decoder-only transformer | no | measured here only |
 | Qwen3-4B-2507 | 4B | decoder-only transformer | no | Qwen3.5 card, non-thinking (a size up, for reference) |
 
 ## How to read the charts
@@ -67,7 +68,7 @@ and long context (LongBench v2 38.7 against 26.5). Qwen3.5-0.8B gains from reaso
 42.3) but loses on IFEval (52.1 to 44.0), and its GPQA is 11.9. The card does not say which mode its Qwen3-1.7B
 column used; its MMLU-Redux and IFEval equal the Qwen3 report's thinking numbers.
 
-## Measured here: up to 1B
+## Measured here: up to 2B
 
 <!-- polygon: measured-small-llms -->
 
@@ -78,15 +79,21 @@ and TruthfulQA, 100 for GSM8K and IFEval, 10 per subject for MMLU and KMMLU), so
 on MMLU and KMMLU, 3 to 3.5 on the 200-item tasks and 5 on GSM8K and IFEval. Two models differ at 95% only when the
 gap exceeds about 2.8 standard errors (1.96 times the root of two), the rule `evaluation_compare` reports by.
 
-- Gemma-3-1B-IT is behind both Qwen models on knowledge (MMLU 42.5 against 50.7), the one gap here past that bar.
-- Qwen3.5-0.8B leads math (GSM8K 54.0 against 43.0 and 44.0) and Gemma-3-1B-IT leads HellaSwag (57.0 against 47.5
-  for Qwen3-0.6B); both gaps are just short of the bar at these item counts.
-- Korean (KMMLU) is the lowest axis for all three, 28.0 to 31.8, near the 25 a four-way guess gives.
+- Qwen3.5-2B and Qwen3-1.7B are first and second on ARC-C (55.5 and 53.5) and GSM8K (69.0 and 68.0), past the bar
+  against the three models up to 1B on both. Qwen3.5-2B is also first on KMMLU (38.4), past the bar against those
+  three. No gap between Qwen3.5-2B and Qwen3-1.7B passes it on any benchmark.
+- Qwen2.5-1.5B-Instruct is uneven: highest on MMLU (63.2, level with Qwen3-1.7B's 62.8) but last on ARC-C (27.0, near
+  the 25 a four-way guess gives, past the bar against every other model) and lowest on IFEval (41.0).
+- SmolLM2-1.7B-Instruct is highest on commonsense (HellaSwag 66.5, WinoGrande 70.5), past the bar only against some
+  models, and last on Korean: KMMLU 20.0, past the bar against every other model and below the four-way guess by more
+  than two standard errors.
+- Gemma-3-1B-IT is last on knowledge (MMLU 42.5), past the bar against every other model.
+- TruthfulQA has no gap past the bar: all seven sit between 40.7 and 47.9.
 
-The chart has three of the config's seven models. Qwen2.5-1.5B-Instruct, SmolLM2-1.7B-Instruct, Qwen3-1.7B and
-Qwen3.5-2B are still to be measured: running the same config again scores only the stages that are missing and redraws
-the chart in the experiment's report. Llama-3.2-1B-Instruct is left out because it needs its licence accepted on the
-Hub.
+The published charts above score some of the same models, under other prompts and harnesses, so their numbers do not
+compare with these. Read side by side, the Qwen3.5 card's one exception, IFEval, where Qwen3-1.7B is above Qwen3.5-2B
+(68.2 against 61.2), shows here too (67.0 against 62.0), inside the bar at 100 items. Llama-3.2-1B-Instruct is left
+out because it needs its licence accepted on the Hub.
 
 ## Your own models on the same chart
 
