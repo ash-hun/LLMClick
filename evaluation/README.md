@@ -57,10 +57,15 @@ A model without an experiment is scored by `model: {name: Qwen/Qwen3.5-0.8B, rev
 benchmark and embedding recipes (the latter with `architecture`) take it; the others need the recipe that trained the
 model. Its reports carry `name` and `revision` instead of an experiment, and no contamination.
 
-On a Mac (MPS) use `evaluation.batch_size` 1 or 2 for few-shot tasks: the harness computes the logits of the whole
-batch at once, and 5-shot prompts times a 248k-token vocabulary exceed what one Metal kernel accepts (the process
-dies without a Python error). Measured on an M4 Pro with Qwen3.5-0.8B: hellaswag, gsm8k and ifeval at 10 items
-each take 13, 42 and 30 seconds; the full preset at 100 items per task is a matter of hours there and belongs on a GPU.
+On a Mac (MPS) `evaluation.batch_size` is an upper bound for likelihood tasks: the harness computes the logits of a
+whole batch at once, a Metal matrix product with 2^32 or more output elements kills the process without a Python
+error (5-shot MMLU at batch 8 with a 248k-token vocabulary asks for about 6.2 billion), and the logits and their
+log-softmax are held together. The stage groups the requests by length and gives each group the largest batch whose
+logits stay within 2^30 elements (4 GiB), so long prompts run in smaller batches and short ones keep the configured size.
+It also empties the MPS cache before each batch: batches of ever-changing shape otherwise grow the cache until the Mac
+swaps (50 GB on 5-shot MMLU, against 12 to 14 GB with it emptied).
+Measured on an M4 Pro with Qwen3.5-0.8B: hellaswag, gsm8k and ifeval at 10 items each take 13, 42 and 30 seconds, and
+5-shot MMLU at 100 items per subject (5,700) takes 66 minutes; the full preset at 100 items per task belongs on a GPU.
 
 ## Built: contamination, tracker, API
 
