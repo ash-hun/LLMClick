@@ -22,6 +22,10 @@ HARNESS = "lm_eval"
 RESULTS = "results.json"
 SAMPLES = "samples.jsonl"
 REPORT = "report.json"
+# Logit elements per likelihood batch on MPS. A Metal matrix product with 2^32 outputs aborts the process (SIGABRT,
+# no Python error), and the harness keeps the logits and their log-softmax at once, so 2^32 float32 already runs out
+# of a 48 GB Mac's memory; 2^30 is 4 GiB per copy.
+MPS_LOGITS = 2**30
 
 # Task names of lm-evaluation-harness. A preset is a starting point; `benchmarks.tasks` adds to it or replaces it.
 PRESETS: dict[str, list[dict[str, Any]]] = {
@@ -112,6 +116,46 @@ def harness() -> Any:
     return lm_eval
 
 
+def length_groups(lengths: list[int], batch_size: int, rows: int) -> list[tuple[int, list[int]]]:
+    """Request positions grouped by the largest batch, up to `batch_size`, whose padded length times the batch stays
+    within `rows` logit rows; a request longer than `rows` still runs alone."""
+    groups: dict[int, list[int]] = {}
+    for position in sorted(range(len(lengths)), key=lambda position: -lengths[position]):
+        groups.setdefault(max(1, min(batch_size, rows // max(lengths[position], 1))), []).append(position)
+    return list(groups.items())
+
+
+def mps_model(model_args: dict[str, Any], batch_size: int) -> Any:
+    """lm-evaluation-harness's `hf` model whose likelihood batches stay within `MPS_LOGITS`: a long few-shot prompt in
+    a full batch asks for more logits than one Metal matrix product may write or the memory holds."""
+    import torch
+    from lm_eval.models.huggingface import HFLM
+
+    class CappedHFLM(HFLM):  # type: ignore[misc]
+        def _model_call(self, *args: Any, **keys: Any) -> Any:
+            # MPS keeps freed blocks cached, and batches of ever-changing shape grow that cache until the Mac swaps
+            # (50 GB on 5-shot MMLU); emptying it before each batch holds memory near one batch's logits
+            torch.mps.empty_cache()
+            return super()._model_call(*args, **keys)
+
+        def _loglikelihood_tokens(self, requests: list[Any], disable_tqdm: bool = False, override_bs: int | None = None) -> list[Any]:
+            vocab = self.model.get_output_embeddings().weight.shape[0]
+            lengths = [len(context) + len(continuation) for _, context, continuation in requests]
+            results: list[Any] = [None] * len(requests)
+            configured = int(self.batch_size)
+            try:
+                for size, positions in length_groups(lengths, configured, MPS_LOGITS // vocab):
+                    self.batch_size_per_gpu = size
+                    scored = super()._loglikelihood_tokens([requests[position] for position in positions], disable_tqdm, override_bs)
+                    for position, result in zip(positions, scored, strict=True):
+                        results[position] = result
+            finally:
+                self.batch_size_per_gpu = configured
+            return results
+
+    return CappedHFLM.create_from_arg_obj(model_args, {"batch_size": batch_size, "device": "mps"})
+
+
 def flat(scores: dict[str, Any]) -> dict[str, float]:
     """`{"acc,none": 0.5, "acc_stderr,none": 0.01, "alias": ...}` -> `{"acc": 0.5, "acc_stderr": 0.01}`: the numbers
     only, without the filter suffix; names and "N/A" (a stderr the task cannot give) are left out."""
@@ -165,8 +209,10 @@ class BenchmarkStage(Stage[HarnessSettings]):
         decoding = {"max_gen_toks": config.decoding.max_new_tokens, "temperature": config.decoding.temperature,
                     "do_sample": config.decoding.temperature > 0}
         self.progress.update(0, None, f"{task.name}: {task.limit or 'all'} items, {task.num_fewshot if task.num_fewshot is not None else 'default'}-shot")
+        model_args = self.model_args(source)
+        model = mps_model(model_args, config.evaluation.batch_size) if device == "mps" else "hf"
         output = lm_eval.simple_evaluate(
-            model="hf", model_args=self.model_args(source), tasks=[task.name], num_fewshot=task.num_fewshot,
+            model=model, model_args=model_args, tasks=[task.name], num_fewshot=task.num_fewshot,
             limit=task.limit, batch_size=config.evaluation.batch_size, device=device,
             gen_kwargs=decoding, apply_chat_template=self.chat_template, log_samples=True, task_manager=manager,
             random_seed=config.seed, numpy_random_seed=config.seed, torch_random_seed=config.seed,
