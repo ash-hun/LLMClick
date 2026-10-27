@@ -1,0 +1,14 @@
+# Qwen3-TTS on MLX (Apple silicon only). tts_qwen runs it as a separate process through QWEN_PYTHON, so its pins
+# (transformers, numpy) never meet the app's: `environment/qwen/setup.sh`.
+[project]
+name = "llmclick-qwen"
+version = "0.1.0"
+requires-python = "==3.12.*"
+dependencies = [
+  "mlx-audio==0.6.2",
+  "mlx==0.32.4",
+  "soundfile==0.14.0",
+]
+
+[tool.uv]
+package = false

@@ -1,4 +1,4 @@
-"""How clean speech sounds without a reference: UTMOS naturalness and DNSMOS P.835 signal, background and overall."""
+"""How speech sounds without a reference (UTMOS naturalness, DNSMOS P.835) and whose voice it is (speaker similarity)."""
 
 import urllib.request
 from pathlib import Path
@@ -24,6 +24,9 @@ CALIBRATION = {"dnsmos_sig": (-0.08397278, 1.22083953, 0.0052439),
                "dnsmos_bak": (-0.13166888, 1.60915514, -0.39604546),
                "dnsmos_ovrl": (-0.06766283, 1.11546468, 0.04602535)}
 METRICS = ("utmos", *CALIBRATION)
+# a speaker verification encoder none of the voices trained on, so a clone cannot score well by matching its own
+SPEAKER, SPEAKER_REVISION = "microsoft/wavlm-base-plus-sv", "feb593a6c23c1cc3d9510425c29b0a14d2b07b1e"
+SPEAKER_RECORDINGS = 50  # recordings averaged into the voice being matched
 
 
 def dnsmos_windows(samples: np.ndarray) -> np.ndarray:
@@ -72,3 +75,28 @@ class Rater:
         utmos = self.utmos.run(None, {"wave": clip[np.newaxis]})[0]
         raw = self.dnsmos.run(None, {"input_1": dnsmos_windows(clip)})[0]
         return {"utmos": float(utmos[0]), **calibrated(raw)}
+
+
+class Speaker:
+    """Cosine similarity of a clip's x-vector to the mean x-vector of `recordings`: about 0.97 for another take of the
+    same voice, 0.4 for another person."""
+
+    def __init__(self, recordings: list[Path]) -> None:
+        from transformers import AutoFeatureExtractor, WavLMForXVector
+        token = get_settings().HF_TOKEN or None
+        self.extractor = AutoFeatureExtractor.from_pretrained(SPEAKER, revision=SPEAKER_REVISION, token=token)  # type: ignore[no-untyped-call]
+        self.model = WavLMForXVector.from_pretrained(SPEAKER, revision=SPEAKER_REVISION, token=token).eval()  # type: ignore[no-untyped-call]
+        centre = np.mean([self.embedding(path) for path in recordings[:SPEAKER_RECORDINGS]], axis=0)
+        self.centre = centre / np.linalg.norm(centre)
+
+    def embedding(self, path: Path) -> np.ndarray:
+        import torch
+        samples, rate = audio.read(path)
+        inputs = self.extractor(audio.resample(samples, rate, RATE), sampling_rate=RATE, return_tensors="pt")
+        with torch.no_grad():
+            vector: np.ndarray = self.model(**inputs).embeddings[0].numpy()
+        unit: np.ndarray = vector / np.linalg.norm(vector)
+        return unit
+
+    def __call__(self, path: Path) -> float:
+        return float(self.embedding(path) @ self.centre)

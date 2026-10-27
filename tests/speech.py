@@ -92,6 +92,16 @@ class FakeRater:
         return dict.fromkeys(METRICS, 4.0 if str(path.resolve()) in self.piper.spoken else 3.0)
 
 
+class FakeSpeaker:
+    """Rates what FakePiper said 0.9 like the recordings and any other recording 1.0."""
+
+    def __init__(self, piper: FakePiper) -> None:
+        self.piper = piper
+
+    def __call__(self, path: Path) -> float:
+        return 0.9 if str(path.resolve()) in self.piper.spoken else 1.0
+
+
 class FakeEmbedder:
     """openWakeWord's front end in shape only: per 80 ms, the log spectrum of the last 0.79 s in 96 bands, so a
     tone's pitch is what tells two recordings apart."""

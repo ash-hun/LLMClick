@@ -1,4 +1,5 @@
-"""`tts_piper` with a fake Piper and a fake Whisper: recordings found, training resumed, the voice gated by listening."""
+"""`tts_piper` and `tts_qwen` with fake programs and a fake Whisper: recordings found, training resumed or a clip
+cloned, the voice gated by listening."""
 
 import json
 from pathlib import Path
@@ -9,12 +10,12 @@ import pytest
 
 from core import pipeline
 from modeling.stages import ValidationFailed
-from modeling.tts import audio, quality
+from modeling.tts import audio, quality, qwen
 from modeling.tts.asr import wer
 from modeling.tts.stages import latest
 from modeling.tuning.sources import SOURCES, delimited
 from modeling.config import Keyed, local_paths
-from tests.speech import FakeListener, FakePiper, FakeRater, tone
+from tests.speech import FakeListener, FakePiper, FakeRater, FakeSpeaker, tone
 
 TEXTS = ["Good evening, sir.", "All systems are online.", "Shall I run the diagnostics?", "The suit is ready.",
          "Accessing the alarm settings.", "You have three new messages."]
@@ -28,6 +29,7 @@ def piper(monkeypatch: pytest.MonkeyPatch) -> FakePiper:
     monkeypatch.setattr("modeling.tts.piper.version", lambda: "test")
     monkeypatch.setattr("modeling.tts.stages.Listener", FakeListener(fake, heard_as="a recording"))
     monkeypatch.setattr("modeling.tts.stages.Rater", lambda directory: FakeRater(fake))
+    monkeypatch.setattr("modeling.tts.stages.Speaker", lambda recordings: FakeSpeaker(fake))
     return fake
 
 
@@ -66,6 +68,7 @@ def test_recordings_train_export_and_pass_the_listening_test_and_a_rerun_builds_
     metrics = stages["validate"]["metrics"]
     assert metrics["wer"] == 0.0 and metrics["reference_wer"] == 1.0 and metrics["duration_ratio"] == pytest.approx(1.0)
     assert (metrics["utmos"], metrics["dnsmos_bak"], metrics["reference_utmos"], metrics["reference_dnsmos_bak"]) == (4.0, 4.0, 3.0, 3.0)
+    assert (metrics["speaker_similarity"], metrics["reference_speaker_similarity"]) == (0.9, 1.0)
 
     piper.fits, piper.calls = [], []
     assert json.dumps(pipeline.build(config(tmp_path)).run()) == json.dumps(result)
@@ -169,3 +172,57 @@ def test_a_reply_filter_is_kept_where_whisper_still_hears_the_words(tmp_path: Pa
     assert (kept["wake_up"]["filtered"], kept["wake_up"]["file"]) == (True, "wake_up-0.filtered.wav")
     assert (kept["persona_jarvis"]["filtered"], kept["persona_jarvis"]["heard"]) == (False, "Change to JARVIS.")
     assert [(take["take"], take["filtered"]) for take in kept["wake_up"]["takes"]] == [(0, False), (0, True), (1, False), (1, True)]
+
+
+class FakeQwen:
+    """`speak` reads every job through FakePiper, so FakeListener hears it, and remembers each job's seed."""
+
+    def __init__(self, piper: FakePiper) -> None:
+        self.piper = piper
+        self.seeds: dict[str, int] = {}
+        self.voices: list[dict[str, str]] = []
+
+    def speak(self, voice: dict[str, str], reference: Path, jobs: list[tuple[str, Path, int]], log: Path) -> None:
+        assert reference.is_file()
+        self.voices.append(voice)
+        for text, wav, seed in jobs:
+            if not wav.is_file():
+                self.piper.speak(Path("qwen"), text, wav, log, {})
+                self.seeds[wav.name] = seed
+
+
+def qwen_config(root: Path, **keys: Any) -> dict[str, Any]:
+    base = config(root, **keys)
+    del base["model"], base["training"]
+    return {**base, "pipeline": {**base["pipeline"], "recipe": "tts_qwen"}, **keys}
+
+
+def test_qwen_clones_the_most_natural_clip_in_bounds_and_a_rerun_speaks_nothing(tmp_path: Path, piper: FakePiper,
+                                                                                monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = FakeQwen(piper)
+    monkeypatch.setattr("modeling.tts.qwen.speak", fake.speak)
+    monkeypatch.setattr("modeling.tts.qwen.version", lambda: "test")
+    rated = FakeRater(piper)
+    # the longer a recording the more natural, so the pick is the longest one inside the bounds
+    monkeypatch.setattr("modeling.tts.stages.Rater", lambda directory: (
+        lambda path: {**rated(path), "utmos": audio.seconds(path)} if str(path.resolve()) not in piper.spoken else rated(path)))
+    replies = {"wake_up": "At your service, sir.", "persona_jarvis": "Change to JARVIS."}
+    settings = qwen_config(recordings(tmp_path), reference={"min_seconds": 0.5, "max_seconds": 0.85},
+                           validation={"phrases": replies, "phrase_takes": 2, "max": {"wer": 0.1, "phrase_wer": 0.0},
+                                       "min": {"speaker_similarity": 0.8}})
+    result = pipeline.build(settings).run()
+    checkpoint = Path(result["stages"]["validate"]["checkpoint"])
+    voice = json.loads((checkpoint / "voice.json").read_text())
+    # the first of the three 0.8 s clips: a tie keeps the rows' order
+    assert voice["reference_text"] == "All systems are online." and voice["model"].startswith("mlx-community/Qwen3-TTS")
+    assert result["stages"]["train"]["seconds"] == pytest.approx(0.8) and (checkpoint / "reference.wav").is_file()
+    metrics = result["stages"]["validate"]["metrics"]
+    assert metrics["wer"] == 0.0 and metrics["phrase_wer"] == 0.0 and metrics["speaker_similarity"] == 0.9
+    assert fake.seeds["wake_up-0.wav"] != fake.seeds["wake_up-1.wav"] and fake.seeds["wake_up-0.wav"] == qwen.seed(5, replies["wake_up"], 0)
+
+    piper.calls = []
+    assert json.dumps(pipeline.build(settings).run()) == json.dumps(result) and piper.calls == []
+    with pytest.raises(ValueError, match="No training recording lasts"):
+        pipeline.build(qwen_config(tmp_path, reference={"min_seconds": 5, "max_seconds": 9})).run()
+    with pytest.raises(ValueError, match="below reference.max_seconds"):
+        pipeline.build(qwen_config(tmp_path, reference={"min_seconds": 9, "max_seconds": 5}))

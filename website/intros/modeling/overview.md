@@ -21,6 +21,7 @@ read and check the rows, train, validate on rows training never saw. Only a mode
 | Decision model | [`llm_decision_sft`](./decision/sft), [`llm_decision_cispo`](./decision/cispo) | a state and typed questions about it | same, plus a head: `readout` or `pointer` | the checkpoint with a calibrated head |
 | Embedding model | [`embedding_contrastive`](./embedding/contrastive) | query, positive and optional negative texts | `bi_encoder` (Qwen3-Embedding-0.6B) | the checkpoint, pooling included |
 | Voice (TTS) | [`tts_piper`](./speech/tts-piper) | recordings and their texts | a Piper (VITS) checkpoint, `medium` or `high` | `voice.onnx` and fixed replies as WAV |
+| Voice (TTS) | [`tts_qwen`](./speech/tts-qwen) | recordings and their texts | a Qwen3-TTS Base model on MLX | `reference.wav`, `voice.json` and fixed replies as WAV |
 | Wake word detector | [`wakeword`](./speech/wakeword) | recordings of the name and of everything else | openWakeWord's frozen features with a small head | `<phrase>.onnx` for openWakeWord |
 
 ## Pick a recipe by the data you have

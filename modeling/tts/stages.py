@@ -1,23 +1,28 @@
-"""The stages of `tts_piper`: recordings -> Piper fine-tuning and export -> a listening test of the exported voice."""
+"""The stages of the TTS recipes: recordings -> a voice (Piper fine-tuned, or Qwen3-TTS cloning one recording) -> a
+listening test."""
 
 import shutil
 import statistics
 from pathlib import Path
+from abc import abstractmethod
 from typing import Any, ClassVar
+from collections.abc import Callable
 
 from core.utils.files import atomic_path, read_json, read_jsonl, staged_directory, write_json, write_jsonl
-from modeling.tts.config import CHECKPOINT_FILE, PiperConfig
+from modeling.tts.config import CHECKPOINT_FILE, PiperConfig, QwenConfig, VoiceConfig
 from modeling.stages import TrainStage, ValidateStage, held_out_positions
-from modeling.tts.quality import METRICS, Rater
+from modeling.tts.quality import METRICS, Rater, Speaker
 from core.utils.device import resolve_device
+from modeling.tts import audio, piper, qwen
 from modeling.tts.asr import Listener, wer
 from modeling.config import keyed_identity
-from modeling.tts import audio, piper
 from core.stage import Outputs, Stage
 
 VOICE = "voice.onnx"  # with VOICE + ".json": a Piper voice, loadable by `piper -m`
 SUMMARY = "summary.json"
 METADATA = "metadata.csv"
+REFERENCE, CLONE = "reference.wav", "voice.json"  # a cloned voice: the clip and what Qwen3-TTS needs to read it
+SCORES = (*METRICS, "speaker_similarity")
 QUALITY: dict[str, dict[str, Any]] = {
     "medium": {},
     "high": {"model.resblock": "1", "model.resblock_kernel_sizes": "(3, 7, 11)",
@@ -39,7 +44,7 @@ def lightning_device(device: str) -> dict[str, Any]:
     return {"trainer.accelerator": device, "trainer.devices": 1}
 
 
-class VoiceDataStage(Stage[PiperConfig]):
+class VoiceDataStage(Stage[VoiceConfig]):
     """Rows of `audio` and `text` from every source, each file found and checked, and the validation share held out."""
     name: ClassVar[str] = "data"
 
@@ -115,60 +120,103 @@ class FitStage(TrainStage[PiperConfig]):
         return {"checkpoint": str(checkpoint), **read_json(checkpoint / SUMMARY)}
 
 
-class ListenStage(ValidateStage[PiperConfig]):
-    """The exported voice reads the held-out texts; Whisper transcribes them and the original recordings. Metrics:
+class CloneStage(TrainStage[QwenConfig]):
+    """Nothing to train: Qwen3-TTS reads any voice from one recording and its text. The stage picks that recording,
+    the training clip UTMOS rates most natural within the configured lengths, since the clone copies the clip's
+    sound along with the voice; a filtered clip clones worse, so the clip is kept as recorded."""
+    requires: ClassVar[tuple[str, ...]] = ("data",)
+    sections: ClassVar[tuple[str, ...]] = ("seed", "model", "reference")
+
+    def train(self, workdir: Path, inputs: dict[str, Outputs]) -> Outputs:
+        checkpoint = workdir / "checkpoint"
+        if not (checkpoint / CLONE).is_file():
+            bounds = self.config.reference
+            rows = [row for row in read_jsonl(Path(inputs["data"]["train"]))
+                    if bounds.min_seconds <= audio.seconds(Path(row["audio"])) <= bounds.max_seconds]
+            if not rows:
+                raise ValueError(f"No training recording lasts {bounds.min_seconds} to {bounds.max_seconds} s; "
+                                 "change `reference` or add longer recordings")
+            rater = Rater(workdir / "models")
+            scored = []
+            for index, row in enumerate(rows):
+                self.progress.update(index, len(rows), "rating the candidate references")
+                scored.append({**row, "utmos": rater(Path(row["audio"]))["utmos"]})
+            best = max(scored, key=lambda row: row["utmos"])  # max keeps the first of a tie: the rows' own order
+            model = self.config.model
+            with staged_directory(checkpoint) as staging:
+                shutil.copyfile(best["audio"], staging / REFERENCE)
+                write_json(staging / CLONE, {"model": model.name, "revision": model.revision,
+                                             "reference_text": best["text"], "sample_rate": qwen.RATE})
+                write_json(staging / SUMMARY, {"reference": best["audio"], "utmos": best["utmos"],
+                                               "seconds": audio.seconds(Path(best["audio"])), "candidates": len(rows)})
+        return {"checkpoint": str(checkpoint), **read_json(checkpoint / SUMMARY)}
+
+
+class ListenStage(ValidateStage[VoiceConfig]):
+    """The voice reads the held-out texts; Whisper transcribes them and the original recordings. Metrics:
     `wer` (the voice), `reference_wer` (the recordings, the floor `wer` can reach), `duration_ratio` (voice length
     over recording length), and with `validation.phrases`, `phrase_wer`: the worst-heard of the agent's fixed
-    replies, which are kept in phrases/ with phrases.json for the agent to play. How clean each voice sounds, without
+    replies, which are kept in phrases/ with phrases.json for the agent to play. How each voice sounds, without
     a reference: `utmos` (naturalness) and `dnsmos_sig`, `dnsmos_bak`, `dnsmos_ovrl` (speech distortion, background
-    noise, overall; DNSMOS P.835), each from 1 to 5, with `reference_` for the recordings and `phrase_` for the
-    replies kept."""
-    version: ClassVar[int] = 2
+    noise, overall; DNSMOS P.835), each from 1 to 5; whose voice it is: `speaker_similarity` to the mean of the
+    recordings (0 to 1). `reference_` holds the recordings' own scores and `phrase_` the replies kept."""
+    version: ClassVar[int] = 3
     requires: ClassVar[tuple[str, ...]] = ("train", "data")
     sections: ClassVar[tuple[str, ...]] = ("validation", "device")
 
-    def identity(self) -> Any:
-        return [super().identity(), piper.version()]
+    @abstractmethod
+    def speak(self, checkpoint: Path, jobs: list[tuple[str, Path, int]], workdir: Path) -> None:
+        """Each (text, wav, take) read by the voice in `checkpoint` into wav; wavs that exist are kept."""
 
     def measure(self, workdir: Path, inputs: dict[str, Outputs]) -> dict[str, float]:
-        voice = Path(inputs["train"]["checkpoint"]) / VOICE
+        checkpoint = Path(inputs["train"]["checkpoint"])
         rows = read_jsonl(Path(inputs["data"]["validation"]))[: self.config.validation.rows]
+        recordings = [Path(row["audio"]) for name in ("train", "validation") for row in read_jsonl(Path(inputs["data"][name]))]
+        self.progress.update(0, len(rows), "speaking the held-out texts")
+        self.speak(checkpoint, [(row["text"], workdir / "audio" / f"{index:05d}.wav", 0) for index, row in enumerate(rows)],
+                   workdir)
         items: list[dict[str, Any]] = []
-        rater = Rater(workdir / "models")
+        rater, speaker = Rater(workdir / "models"), Speaker(recordings)
+
+        def score(path: Path) -> dict[str, float]:
+            return {**rater(path), "speaker_similarity": speaker(path)}
+
         with Listener(self.config.validation.asr, self.config.device) as listener:
             for index, row in enumerate(rows):
-                self.progress.update(index, len(rows), "speaking and listening")
+                self.progress.update(index, len(rows), "listening")
                 spoken, recorded = workdir / "audio" / f"{index:05d}.wav", Path(row["audio"])
-                if not spoken.is_file():
-                    piper.speak(voice, row["text"], spoken, workdir / "speak.log", {})
                 heard, reference = listener.transcribe(spoken), listener.transcribe(recorded)
                 items.append({"text": row["text"], "heard": heard, "wer": wer(row["text"], heard),
                               "reference_heard": reference, "reference_wer": wer(row["text"], reference),
                               "duration_ratio": audio.seconds(spoken) / max(audio.seconds(recorded), 1e-6),
-                              **rater(spoken), **{f"reference_{name}": value for name, value in rater(recorded).items()}})
-            replies = self.phrases(voice, workdir, listener, rater)
+                              **score(spoken), **{f"reference_{name}": value for name, value in score(recorded).items()}})
+            replies = self.phrases(checkpoint, workdir, listener, score)
         self.progress.update(len(rows), len(rows))
         write_jsonl(workdir / "items.jsonl", items)
-        averaged = ("wer", "reference_wer", "duration_ratio", *METRICS, *(f"reference_{name}" for name in METRICS))
+        averaged = ("wer", "reference_wer", "duration_ratio", *SCORES, *(f"reference_{name}" for name in SCORES))
         metrics = {metric: statistics.fmean(item[metric] for item in items) for metric in averaged}
         if replies:
             metrics["phrase_wer"] = max(reply["wer"] for reply in replies.values())
-            metrics |= {f"phrase_{name}": statistics.fmean(reply[name] for reply in replies.values()) for name in METRICS}
+            metrics |= {f"phrase_{name}": statistics.fmean(reply[name] for reply in replies.values()) for name in SCORES}
         return metrics
 
-    def phrases(self, voice: Path, workdir: Path, listener: Listener, rater: Rater) -> dict[str, dict[str, Any]]:
+    def phrases(self, checkpoint: Path, workdir: Path, listener: Listener,
+                score: Callable[[Path], dict[str, float]]) -> dict[str, dict[str, Any]]:
         """Each fixed reply spoken `phrase_takes` times, and each take also put through `phrase_filter` when there is
         one; the take Whisper hears best (then a filtered one, then the first) becomes phrases/<name>.wav. A rerun
         keeps the takes it already has, so the agent plays the file that passed."""
         settings = self.config.validation
+        takes_dir = workdir / "phrases" / "takes"
+        self.progress.update(0, None, "speaking the replies")
+        self.speak(checkpoint, [(text, takes_dir / f"{name}-{take}.wav", take)
+                                for name, text in sorted(settings.phrases.items()) for take in range(settings.phrase_takes)],
+                   workdir)
         replies: dict[str, dict[str, Any]] = {}
         for name, text in sorted(settings.phrases.items()):
-            self.progress.update(0, None, f"speaking the reply {name!r}")
+            self.progress.update(0, None, f"listening to the reply {name!r}")
             takes: list[dict[str, Any]] = []
             for take in range(settings.phrase_takes):
-                wav = workdir / "phrases" / "takes" / f"{name}-{take}.wav"
-                if not wav.is_file():
-                    piper.speak(voice, text, wav, workdir / "speak.log", {})
+                wav = takes_dir / f"{name}-{take}.wav"
                 versions = [wav]
                 if settings.phrase_filter:
                     # the raw take stays a candidate: a filter that removes hiss can blur the consonants of a name
@@ -179,11 +227,30 @@ class ListenStage(ValidateStage[PiperConfig]):
                 for version in versions:
                     heard = listener.transcribe(version)
                     takes.append({"take": take, "filtered": version != wav, "file": version.name, "heard": heard,
-                                  "wer": wer(text, heard), **rater(version)})
+                                  "wer": wer(text, heard), **score(version)})
             best = min(takes, key=lambda entry: (entry["wer"], not entry["filtered"], entry["take"]))
             with atomic_path(workdir / "phrases" / f"{name}.wav") as temporary:
-                shutil.copyfile(workdir / "phrases" / "takes" / best["file"], temporary)
+                shutil.copyfile(takes_dir / best["file"], temporary)
             replies[name] = {"text": text, "audio": f"phrases/{name}.wav", **best, "takes": takes}
         if replies:
             write_json(workdir / "phrases.json", replies)
         return replies
+
+
+class PiperListenStage(ListenStage):
+    def identity(self) -> Any:
+        return [super().identity(), piper.version()]
+
+    def speak(self, checkpoint: Path, jobs: list[tuple[str, Path, int]], workdir: Path) -> None:
+        for text, wav, _ in jobs:
+            if not wav.is_file():
+                piper.speak(checkpoint / VOICE, text, wav, workdir / "speak.log", {})
+
+
+class QwenListenStage(ListenStage):
+    def identity(self) -> Any:
+        return [super().identity(), self.config.seed, qwen.version()]
+
+    def speak(self, checkpoint: Path, jobs: list[tuple[str, Path, int]], workdir: Path) -> None:
+        qwen.speak(read_json(checkpoint / CLONE), checkpoint / REFERENCE,
+                   [(text, wav, qwen.seed(self.config.seed, text, take)) for text, wav, take in jobs], workdir / "speak.log")

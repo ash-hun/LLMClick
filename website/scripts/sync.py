@@ -18,7 +18,7 @@ DOCS = SITE / "docs"
 HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 INCLUDE = re.compile(r"^<!-- include: (\S+) -->$", re.MULTILINE)
 POLYGON = re.compile(r"^<!-- polygon: (\S+) -->$", re.MULTILINE)
-SURVEY = "website/data/llm-performance.yaml"  # published scores the polygon figures are drawn from
+FIGURES = "website/data"  # every *.yaml here holds polygon figures: published or measured scores, by id
 sys.path.insert(0, str(ROOT))
 
 # page -> (intro file, [(source file, heading, own_only)]) ; None heading = the preamble before the first "## ".
@@ -43,6 +43,7 @@ PAGES: dict[str, tuple[str, list[tuple[str, str | None, bool]]]] = {
     "modeling/embedding/contrastive": ("modeling/embedding/contrastive", []),
     "modeling/speech/overview": ("modeling/speech/overview", [("README.md", "A voice agent from these recipes", False)]),
     "modeling/speech/tts-piper": ("modeling/speech/tts-piper", [("README.md", "Text-to-speech recipe (`tts_piper`)", False)]),
+    "modeling/speech/tts-qwen": ("modeling/speech/tts-qwen", [("README.md", "Voice cloning recipe (`tts_qwen`)", False)]),
     "modeling/speech/wakeword": ("modeling/speech/wakeword", [("README.md", "Wake word recipe (`wakeword`)", False)]),
     "modeling/extending": ("modeling/extending", [("README.md", "04. Extending", False)]),
     "evaluation/overview": ("evaluation/overview", [("evaluation/README.md", "Purpose", False), ("evaluation/README.md", "How it differs from `validate` and from `training.eval_every`", False)]),
@@ -138,15 +139,20 @@ def included(text: str) -> tuple[str, set[str], dict[str, str]]:
 
     def polygon(match: re.Match[str]) -> str:
         from evaluation.compare import polygon_chart
-        figures = {entry["id"]: entry for entry in yaml.safe_load((ROOT / SURVEY).read_text())["figures"]}
-        figure = figures[match.group(1)]
-        named.add(SURVEY)
+        files = {path: yaml.safe_load(path.read_text())["figures"] for path in sorted((ROOT / FIGURES).glob("*.yaml"))}
+        found = {entry["id"]: (path, entry) for path, entries in files.items() for entry in entries}
+        path, figure = found[match.group(1)]
+        named.add(str(path.relative_to(ROOT)))
         models, scores = figure["models"], figure["scores"]
-        axes = {axis: dict(zip(models, (value / 100 for value in values), strict=True)) for axis, values in scores.items()}
+        # `ranges` (axis -> [low, high]) draws raw scores between their own bounds; without it scores are 0 to 100
+        ranges = figure.get("ranges") or dict.fromkeys(scores, [0, 100])
+        axes = {axis: dict(zip(models, ((value - ranges[axis][0]) / (ranges[axis][1] - ranges[axis][0]) for value in values), strict=True))
+                for axis, values in scores.items()}
         charts[f"{figure['id']}.svg"] = polygon_chart(axes, models)
-        rows = [[axis, *(f"{value:.1f}" for value in values)] for axis, values in scores.items()]
-        return (f"![{figure['title']}](./{figure['id']}.svg)\n\n" + table(rows, ["Benchmark", *models]) +
-                f"\n\nSource: [{figure['source']}]({figure['url']}).")
+        rows = [[axis, *(f"{value:g}" if "ranges" in figure else f"{value:.1f}" for value in values)] for axis, values in scores.items()]
+        source = f"[{figure['source']}]({figure['url']})" if figure.get("url") else figure["source"]
+        return (f"![{figure['title']}](./{figure['id']}.svg)\n\n" + table(rows, [figure.get("axis", "Benchmark"), *models]) +
+                f"\n\nSource: {source}.")
     return POLYGON.sub(polygon, INCLUDE.sub(block, text)), named, charts
 
 
