@@ -9,12 +9,12 @@ import pytest
 
 from core import pipeline
 from modeling.stages import ValidationFailed
-from modeling.tts import audio
+from modeling.tts import audio, quality
 from modeling.tts.asr import wer
 from modeling.tts.stages import latest
 from modeling.tuning.sources import SOURCES, delimited
 from modeling.config import Keyed, local_paths
-from tests.speech import FakeListener, FakePiper, tone
+from tests.speech import FakeListener, FakePiper, FakeRater, tone
 
 TEXTS = ["Good evening, sir.", "All systems are online.", "Shall I run the diagnostics?", "The suit is ready.",
          "Accessing the alarm settings.", "You have three new messages."]
@@ -27,6 +27,7 @@ def piper(monkeypatch: pytest.MonkeyPatch) -> FakePiper:
         monkeypatch.setattr(f"modeling.tts.piper.{name}", getattr(fake, name))
     monkeypatch.setattr("modeling.tts.piper.version", lambda: "test")
     monkeypatch.setattr("modeling.tts.stages.Listener", FakeListener(fake, heard_as="a recording"))
+    monkeypatch.setattr("modeling.tts.stages.Rater", lambda directory: FakeRater(fake))
     return fake
 
 
@@ -64,6 +65,7 @@ def test_recordings_train_export_and_pass_the_listening_test_and_a_rerun_builds_
     assert (checkpoint / "voice.onnx").read_text() == "onnx of epochs=3" and (checkpoint / "voice.onnx.json").is_file()
     metrics = stages["validate"]["metrics"]
     assert metrics["wer"] == 0.0 and metrics["reference_wer"] == 1.0 and metrics["duration_ratio"] == pytest.approx(1.0)
+    assert (metrics["utmos"], metrics["dnsmos_bak"], metrics["reference_utmos"], metrics["reference_dnsmos_bak"]) == (4.0, 4.0, 3.0, 3.0)
 
     piper.fits, piper.calls = [], []
     assert json.dumps(pipeline.build(config(tmp_path)).run()) == json.dumps(result)
@@ -98,7 +100,8 @@ def test_the_agents_fixed_replies_keep_their_best_take_and_must_be_understood(tm
     report = Path(result["stages"]["validate"]["report"]).parent
     kept = json.loads((report / "phrases.json").read_text())
     assert {name: entry["text"] for name, entry in kept.items()} == replies and (report / "phrases" / "web_search.wav").is_file()
-    assert result["stages"]["validate"]["metrics"]["phrase_wer"] == 0.0
+    assert result["stages"]["validate"]["metrics"]["phrase_wer"] == 0.0 and result["stages"]["validate"]["metrics"]["phrase_dnsmos_sig"] == 4.0
+    assert kept["wake_up"]["utmos"] == 4.0 and all("dnsmos_ovrl" in take for take in kept["wake_up"]["takes"])
     with pytest.raises(ValidationFailed, match="phrase_wer"):
         pipeline.build(config(tmp_path, validation={"phrases": {"web_search": "Searching mumble."}, "max": {"phrase_wer": 0.0}})).run()
     first_take_garbled = FakeListener(piper, heard_as="a recording")
@@ -140,3 +143,12 @@ def test_config_errors_and_units(tmp_path: Path) -> None:
     assert len(audio.resample(samples, rate, 16000)) == round(len(samples) * 16000 / rate)
     measured = audio.measure(np.zeros(rate, dtype=np.float32), rate)
     assert measured == {"seconds": 1.0, "clipped": 0.0, "silent": 1.0}
+
+
+def test_dnsmos_cuts_windows_as_microsofts_script_and_calibrates_its_outputs() -> None:
+    second = np.arange(quality.RATE, dtype=np.float32)
+    windows = quality.dnsmos_windows(second)  # doubled to 16 s, then 9.01 s windows one second apart
+    assert windows.shape == (7, quality.DNSMOS_WINDOW) and windows[1][0] == 0 and windows[1][-1] == second[quality.DNSMOS_WINDOW % quality.RATE - 1]
+    assert len(quality.dnsmos_windows(np.zeros(30 * quality.RATE, dtype=np.float32))) == 7  # later windows end a sample short
+    raw = np.array([[3.0, 3.0, 3.0], [4.0, 4.0, 4.0]])
+    assert quality.calibrated(raw)["dnsmos_bak"] == pytest.approx(np.mean([-0.13166888 * x * x + 1.60915514 * x - 0.39604546 for x in (3, 4)]))

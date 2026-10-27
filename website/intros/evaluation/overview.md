@@ -22,7 +22,7 @@ next to every score.
 | Decision model | [`evaluation_decision`](./decision) | Jev rows or the JevBench tiers, without and with reasoning | accuracy, NLL, ECE, latency |
 | Embedding model | [`evaluation_embedding`](./embedding) | MTEB tasks | each task's main score |
 | Wake word detector | [`evaluation_wakeword`](./wakeword) | voices and hours of audio it never heard, clean and in noise | miss rate, false accepts per hour, the threshold sweep |
-| TTS voice | `tts_piper`'s own `validate` | held-out texts read by the voice, transcribed by Whisper | `wer` against the recordings' `reference_wer` |
+| TTS voice | `tts_piper`'s own `validate` | held-out texts read by the voice, transcribed by Whisper | `wer` against the recordings' `reference_wer`; `utmos`, `dnsmos_sig`, `dnsmos_bak`, `dnsmos_ovrl` |
 
 ## Which one to run
 

@@ -191,7 +191,7 @@ pipeline:
 | `llm_decision_sft` | `state`, `questions` (Jev records) or `state`, `question`, `label` (one question per row) | `accuracy`, `nll`, `ece` |
 | `llm_decision_cispo` | same | `accuracy`, `nll`, `ece`, `think_accuracy` (after reasoning) |
 | `embedding_contrastive` | `query`, `positive`, `negative`? | `accuracy` (positive ranked first), `mrr` |
-| `tts_piper` | `audio` (a WAV file), `text` | `wer` (Whisper on the voice), `reference_wer` (Whisper on the recordings), `duration_ratio`, `phrase_wer` (the worst-heard fixed reply) |
+| `tts_piper` | `audio` (a WAV file), `text` | `wer` (Whisper on the voice), `reference_wer` (Whisper on the recordings), `duration_ratio`, `phrase_wer` (the worst-heard fixed reply), `utmos` and `dnsmos_sig`, `dnsmos_bak`, `dnsmos_ovrl` (how clean the voice sounds; `reference_` and `phrase_` for the recordings and the replies) |
 | `wakeword` | `audio`, `text`? (a positive's must be the phrase) | `recall`, `false_accepts`, `scenario` (phrase then command: one firing, on the phrase) |
 
 By default every weight is trained, in FP32. `training.adapter` switches any of these recipes to LoRA:
@@ -286,6 +286,14 @@ validation: {asr: {language: en}, max: {wer: 0.15}}
 - **Validation.** The voice reads up to `validation.rows` held-out texts; Whisper (`validation.asr`, pinned) transcribes
   them and the original recordings. `reference_wer` is the floor `wer` can reach with that recognizer; numbers written
   as digits in one text and as words in the other count as errors.
+- **Sound quality.** Whisper only says whether a voice is understood, not whether it sounds clean, so every clip is
+  also scored by two predictors that need no reference recording, each from 1 to 5: `utmos` (naturalness, UTMOS22
+  strong, MIT, as ONNX from `TigreGotico/utmos-onnx`) and DNSMOS P.835 (Microsoft DNS Challenge, CC BY 4.0):
+  `dnsmos_sig` (distortion of the speech itself), `dnsmos_bak` (background noise) and `dnsmos_ovrl` (overall). The
+  same metrics with `reference_` score the recordings, and with `phrase_` the kept replies; each take in `phrases.json`
+  carries its own. Both models run on onnxruntime, the UTMOS one (411 MB) from the Hub cache and DNSMOS downloaded
+  into `validate/models/` and checked against its pinned hash. Bound them like any metric, e.g.
+  `min: {dnsmos_bak: 3.0}`.
 - **Fixed replies.** `validation.phrases` (`name: text`) are the lines the agent plays as they are, such as the
   read-back before a task (`web_search: Searching Reference.`). Piper's noise makes every take of a text different,
   so each is spoken `validation.phrase_takes` times (default 3) and the take Whisper hears best becomes
