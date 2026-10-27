@@ -300,6 +300,11 @@ validation: {asr: {language: en}, max: {wer: 0.15}}
   `<experiment>/validate/phrases/<name>.wav`; `phrases.json` lists every take and what was heard, and `phrase_wer` is
   the worst kept take, so a voice that garbles one reply fails validation. Changing a reply reruns only `validate`;
   a rerun keeps the takes it has, so the agent plays the file that passed.
+- **Reply filter.** `validation.phrase_filter` is an ffmpeg audio filter chain tried on every take (needs `ffmpeg`
+  on PATH): `highpass=f=80,afftdn=nf=-20` takes out the hiss a Piper voice carries. Each take is then heard and scored
+  raw and filtered, and the kept file is the best-heard of both, a filtered one when they tie: denoising can blur a
+  name ("JARVIS" heard as "jobless"), and then that reply stays raw. `phrases.json` says per take which file it was
+  (`filtered`, `file`). Filtering the training recordings instead made a worse voice: it learns the filter's artefacts.
 
 Before training on a voice, read its terms. `jgkawell/jarvis` is MIT on its weights per its model card, but it imitates
 a film character played by a real actor; MIT does not cover the voice, so treat it as personal and non-commercial.

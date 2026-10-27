@@ -1,6 +1,7 @@
 """WAV files: where a source's recordings are, their samples, resampling, and the measurements the speech checks use."""
 
 import wave
+import subprocess
 from pathlib import Path
 from typing import Any
 from collections.abc import Iterator
@@ -74,6 +75,17 @@ def resample(samples: np.ndarray, rate: int, target: int) -> np.ndarray:
     count = round(len(samples) * target / rate)
     spectrum = np.fft.rfft(samples)[: count // 2 + 1]
     return (np.fft.irfft(spectrum, count) * (count / len(samples))).astype(np.float32)
+
+
+def filtered(source: Path, target: Path, chain: str) -> None:
+    """`source` through an ffmpeg audio filter chain into `target`, a 16-bit PCM WAV at the source's rate."""
+    try:
+        done = subprocess.run(["ffmpeg", "-loglevel", "error", "-nostdin", "-y", "-i", str(source), "-af", chain,
+                               "-c:a", "pcm_s16le", "-f", "wav", str(target)], capture_output=True, text=True, check=False)
+    except FileNotFoundError as missing:
+        raise FileNotFoundError("ffmpeg is not installed; an audio filter needs it on PATH") from missing
+    if done.returncode:
+        raise ValueError(f"ffmpeg filter {chain!r} on {source} failed: {done.stderr.strip()}")
 
 
 def measure(samples: np.ndarray, rate: int) -> dict[str, float]:

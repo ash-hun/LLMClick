@@ -22,7 +22,7 @@ All listening checks use Whisper `openai/whisper-base` (revision `e37978b9`, Eng
 | Model | Experiment | Validation |
 |---|---|---|
 | KWS: "Jarvis" (`jarvis.onnx`, 204 KB, plus openWakeWord's 2.4 MB front end) | jarvis-wake-b7 | passed at threshold 0.5: recall 1.000, false_accepts 0.037, scenario 0.981 |
-| TTS: Jarvis voice (`voice.onnx`, 64 MB) with nine read-backs | jarvis-medium-ft (best of 5 takes) | passed: wer 0.072 (source recordings 0.072), phrase_wer 0.000 |
+| TTS: Jarvis voice (`voice.onnx`, 64 MB) with nine read-backs | jarvis-medium-ft (best of 5 takes, 8 of 9 read-backs denoised) | passed: wer 0.072 (source recordings 0.072), phrase_wer 0.000; read-backs DNSMOS background 3.67 (unfiltered 3.29) |
 
 ### Wake word: every iteration
 
@@ -53,7 +53,9 @@ comparison of B3 and B6 uses only the recordings neither trained on:
 |---|---|---|---|---|---|
 | A4 (trial) | jgkawell/jarvis medium, unmodified | 1 take | 1.25 ("At your service, sir.") | 1 of 2 tried | (no gate) |
 | B5 | fine-tuned, 100 epochs | 1 take | 0.667 | 6 of 9 | failed |
-| **B5b** | same voice | best of 5, "Target. Analysis." | **0.000** | **9 of 9** | **passed** |
+| B5b | same voice | best of 5, "Target. Analysis." | 0.000 | 9 of 9 | passed |
+| B8 | fine-tuned on denoised recordings | best of 5, denoised | 0.500 | 6 of 9 | failed |
+| **B8b** | B5b's voice | best of 5 raw and 5 denoised takes | **0.000** | **9 of 9** (8 denoised) | **passed** |
 
 | Read-back | Text | B5: one take heard as | B5b: exact takes of 5 |
 |---|---|---|---|
@@ -201,6 +203,44 @@ a threshold away. Both lose most of the name under noise. What this points to: p
 Piper model (other Piper voices, real recordings), real noise and room reverberation in training, and ambient
 speech as negatives.
 
+### B8: the hiss is in the source voice
+
+The voice sounded noisy and machine-like, and Whisper cannot hear that: it says whether words come through, not how
+clean they sound. The validate stage now scores every clip with two predictors that need no reference recording,
+UTMOS (naturalness) and DNSMOS P.835 (speech distortion `sig`, background noise `bak`, overall `ovrl`), each from 1
+to 5. The 48 jarvis-lines texts, read twice by each voice (96 clips each), against 48 LibriSpeech test-clean
+recordings of people:
+
+| Speech | wer | utmos | dnsmos_sig | dnsmos_bak | dnsmos_ovrl |
+|---|---|---|---|---|---|
+| People (LibriSpeech test-clean) | - | 4.11 | 3.59 | 3.98 | 3.27 |
+| jgkawell/jarvis medium, unmodified | 0.057 | 2.70 | 3.43 | 3.41 | 2.85 |
+| B5b, fine-tuned on its output | 0.101 | 2.58 | 3.41 | 3.31 | 2.78 |
+| B5b, noise_scale 0.333, noise_w 0.5 | 0.120 | 2.68 | 3.44 | 3.49 | 2.89 |
+
+The hiss is in the source voice, and the fine-tune added a little of its own; Piper's noise settings move UTMOS by
+0.1 at most and cost words. On the recordings, ffmpeg's `highpass=f=80,afftdn=nf=-20` (the strongest noise floor
+`afftdn` takes) raised `dnsmos_bak` from 3.38 to 3.86 and kept UTMOS (2.67 to 2.74); stronger settings, a second
+pass or `nr=20` cost naturalness.
+
+B8 trained on those denoised recordings to learn a clean voice. It learned a worse one: on the held-out lines
+`dnsmos_sig` 3.19 against B5b's 3.38 and UTMOS 2.39 against 2.43, and the read-backs lost words (phrase_wer 0.500).
+A VITS voice copies the filter's artefacts along with the quiet.
+
+B8b filters the files instead of the training data: `validation.phrase_filter` puts every take through the same
+filter, and the kept read-back is the best-heard of the raw and the denoised takes, a denoised one when they tie.
+On the same 45 takes the filter costs words, mostly in names: "Change to JARVIS." came out as "job is", "jobless"
+or "JavaScript" from every denoised take, so the raw take of that read-back stays. The other eight are denoised:
+
+| Read-backs kept | phrase_wer | utmos | dnsmos_sig | dnsmos_bak | dnsmos_ovrl |
+|---|---|---|---|---|---|
+| B5b, raw takes | 0.000 | 3.08 | 3.33 | 3.29 | 2.70 |
+| B8b, raw or denoised | 0.000 | 3.12 | 3.34 | 3.67 | 2.88 |
+
+Each run draws new takes, so the two rows are different recordings of the same texts. The background noise drops
+and naturalness holds; the machine-like timbre (UTMOS about 3 against people's 4.1) is the source voice's own, and
+a filter does not reach it.
+
 ## What the runs taught
 
 1. A test stream must be at least as long as the detector's window, or a test bug looks like a model that hears
@@ -215,6 +255,8 @@ speech as negatives.
 7. One passing run is not a passing recipe. Run the gate over a few seeds before trusting a margin of a point.
 8. A held-out split of the training voice measures memory of that voice. Score on voices it never heard before
    calling a detector done.
+9. A recognizer measures words, not sound. Score quality on its own, and filter what is played rather than what is
+   learned: a voice trained on denoised audio copies the denoiser.
 
 ## Limits
 
@@ -223,6 +265,8 @@ speech as negatives.
 - Noise is Gaussian at 20 dB SNR; there is no room reverberation and no real background audio.
 - false_accepts is a share of chosen hard negatives, not a rate per hour of everyday audio.
 - The voice's held-out set is 2 lines; its `wer` says only that the voice did not break.
+- UTMOS and DNSMOS are predictions of listener ratings, not ratings; no one listened for the B8 comparison, and
+  the UTMOS ONNX export was not compared with the original torch model here.
 - VAD, ASR and command recognition are not part of this experiment.
 
 ## Reproducing

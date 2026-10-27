@@ -152,3 +152,20 @@ def test_dnsmos_cuts_windows_as_microsofts_script_and_calibrates_its_outputs() -
     assert len(quality.dnsmos_windows(np.zeros(30 * quality.RATE, dtype=np.float32))) == 7  # later windows end a sample short
     raw = np.array([[3.0, 3.0, 3.0], [4.0, 4.0, 4.0]])
     assert quality.calibrated(raw)["dnsmos_bak"] == pytest.approx(np.mean([-0.13166888 * x * x + 1.60915514 * x - 0.39604546 for x in (3, 4)]))
+
+
+def test_a_reply_filter_is_kept_where_whisper_still_hears_the_words(tmp_path: Path, piper: FakePiper,
+                                                                     monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_filter(source: Path, target: Path, chain: str) -> None:
+        target.write_bytes(source.read_bytes())
+        text = piper.spoken[str(source.resolve())]  # a filter that blurs names: Whisper hears the rest as said
+        piper.spoken[str(source.with_suffix(".filtered.wav").resolve())] = "Change to job is." if "JARVIS" in text else text
+
+    monkeypatch.setattr("modeling.tts.audio.filtered", fake_filter)
+    replies = {"wake_up": "At your service, sir.", "persona_jarvis": "Change to JARVIS."}
+    result = pipeline.build(config(recordings(tmp_path), validation={"phrases": replies, "phrase_takes": 2,
+                                                                      "phrase_filter": "afftdn=nf=-20", "max": {"phrase_wer": 0.0}})).run()
+    kept = json.loads((Path(result["stages"]["validate"]["report"]).parent / "phrases.json").read_text())
+    assert (kept["wake_up"]["filtered"], kept["wake_up"]["file"]) == (True, "wake_up-0.filtered.wav")
+    assert (kept["persona_jarvis"]["filtered"], kept["persona_jarvis"]["heard"]) == (False, "Change to JARVIS.")
+    assert [(take["take"], take["filtered"]) for take in kept["wake_up"]["takes"]] == [(0, False), (0, True), (1, False), (1, True)]
