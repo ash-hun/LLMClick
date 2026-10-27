@@ -417,7 +417,7 @@ curl -X POST localhost:8000/api/jobs -H 'content-type: application/json' \
 | `evaluation/embedding.yaml` | the `embedding/contrastive.yaml` checkpoint on three MTEB tasks (needs `uv sync --extra eval`) |
 | `data/synthetic.yaml` | Korean conversation rows for `llm_sft` from four topic seeds through a local Ollama model, evolved, judged, deduplicated |
 | `data/speech.yaml` | a Piper training set: assistant lines written by a local Ollama model, read by the `jgkawell/jarvis` voice, checked by Whisper (needs `environment/piper/setup.sh`) |
-| `tts/piper_jarvis.yaml` | fine-tuning from the `jgkawell/jarvis` medium checkpoint on that set, with the agent's nine read-backs; replace `<hash>` with the `data/speech.yaml` experiment's |
+| `tts/piper_jarvis.yaml` | fine-tuning from the `jgkawell/jarvis` high checkpoint on that set, with the agent's nine read-backs; replace `<hash>` with the `data/speech.yaml` experiment's |
 | `data/wake_phrase.yaml` | "Jarvis." (statement, question, call) read by 300 speakers of the `libritts_r` Piper voice, kept if Whisper hears it exactly |
 | `data/wake_negatives.yaml` | near misses of the name, the commands said alone, and ordinary lines, read by 40 speakers of the same voice |
 | `data/wake_nearmiss.yaml` | 20 near misses of the name ("Travis", "Jars", "Jarrett", ...) by 120 more speakers, kept without a listening check |

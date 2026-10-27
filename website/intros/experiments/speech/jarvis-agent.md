@@ -22,7 +22,7 @@ All listening checks use Whisper `openai/whisper-base` (revision `e37978b9`, Eng
 | Model | Experiment | Validation |
 |---|---|---|
 | KWS: "Jarvis" (`jarvis.onnx`, 204 KB, plus openWakeWord's 2.4 MB front end) | jarvis-wake-b7 | passed at threshold 0.5: recall 1.000, false_accepts 0.037, scenario 0.981 |
-| TTS: Jarvis voice (`voice.onnx`, 64 MB) with nine read-backs | jarvis-medium-ft (best of 5 takes, 8 of 9 read-backs denoised) | passed: wer 0.072 (source recordings 0.072), phrase_wer 0.000; read-backs DNSMOS background 3.67 (unfiltered 3.29) |
+| TTS: Jarvis voice (`voice.onnx`, 114 MB) with nine read-backs | jarvis-high-ft (best of 15 takes, every read-back denoised) | passed: wer 0.114 (source recordings 0.072), phrase_wer 0.000; read-backs UTMOS 3.17, DNSMOS background 3.81 |
 
 ### Wake word: every iteration
 
@@ -55,7 +55,9 @@ comparison of B3 and B6 uses only the recordings neither trained on:
 | B5 | fine-tuned, 100 epochs | 1 take | 0.667 | 6 of 9 | failed |
 | B5b | same voice | best of 5, "Target. Analysis." | 0.000 | 9 of 9 | passed |
 | B8 | fine-tuned on denoised recordings | best of 5, denoised | 0.500 | 6 of 9 | failed |
-| **B8b** | B5b's voice | best of 5 raw and 5 denoised takes | **0.000** | **9 of 9** (8 denoised) | **passed** |
+| B8b | B5b's voice | best of 5 raw and 5 denoised takes | 0.000 | 9 of 9 (8 denoised) | passed |
+| B9 | fine-tuned from jgkawell/jarvis high | best of 5 raw and 5 denoised takes | 0.500 | 8 of 9 | failed |
+| **B9b** | same voice | best of 15 raw and 15 denoised takes | **0.000** | **9 of 9** (9 denoised) | **passed** |
 
 | Read-back | Text | B5: one take heard as | B5b: exact takes of 5 |
 |---|---|---|---|
@@ -240,6 +242,31 @@ or "JavaScript" from every denoised take, so the raw take of that read-back stay
 Each run draws new takes, so the two rows are different recordings of the same texts. The background noise drops
 and naturalness holds; the machine-like timbre (UTMOS about 3 against people's 4.1) is the source voice's own, and
 a filter does not reach it.
+
+### B9: a larger checkpoint of the same voice
+
+jgkawell/jarvis also ships a `high` voice, Piper's larger decoder trained on the same source. On the same 48 texts,
+twice each:
+
+| Voice | wer | utmos | dnsmos_sig | dnsmos_bak | dnsmos_ovrl |
+|---|---|---|---|---|---|
+| jgkawell/jarvis medium, unmodified | 0.057 | 2.70 | 3.43 | 3.41 | 2.85 |
+| jgkawell/jarvis high, unmodified | 0.112 | 3.02 | 3.50 | 3.54 | 2.97 |
+| B5b, fine-tuned from medium | 0.101 | 2.58 | 3.41 | 3.31 | 2.78 |
+| B9, fine-tuned from high (same recipe) | 0.121 | 2.92 | 3.48 | 3.61 | 2.99 |
+
+The larger decoder is the first change to move UTMOS by 0.3, and it keeps that lead through the fine-tune; it
+reads words a little worse. B9 passed `wer` but missed "Target" in all five takes ("Taubeat", "Talbid"), so B9b
+raised `phrase_takes` to 15 over the same checkpoint, and all nine read-backs came out denoised:
+
+| Read-backs kept | phrase_wer | utmos | dnsmos_sig | dnsmos_bak | dnsmos_ovrl |
+|---|---|---|---|---|---|
+| B8b (medium) | 0.000 | 3.12 | 3.34 | 3.67 | 2.88 |
+| B9b (high) | 0.000 | 3.17 | 3.33 | 3.81 | 2.96 |
+
+The held-out split is two or three lines, and its UTMOS moved from 2.82 to 2.49 between the two validations of one
+checkpoint, so the 48-text table is the comparison to trust. Even the high voice sits a point of UTMOS below people;
+the rest of the gap needs a different model family, not a larger Piper.
 
 ## What the runs taught
 

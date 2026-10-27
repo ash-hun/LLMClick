@@ -1,20 +1,20 @@
-# Fine-tune a Piper voice from the jgkawell/jarvis medium checkpoint on the set configs/data/speech.yaml writes.
+# Fine-tune a Piper voice from the jgkawell/jarvis high checkpoint on the set configs/data/speech.yaml writes.
 # Needs the Piper environment (environment/piper/setup.sh) and, for a real run, a GPU: on a CPU an epoch over a few
 # hundred clips takes minutes. Replace <hash> with the data experiment's (`llmclick validate configs/data/speech.yaml`).
 pipeline:
   recipe: tts_piper
-  name: jarvis-medium-ft
+  name: jarvis-high-ft
   seed: 20260920
   output_dir: ./output
 
 model:
-  quality: medium                   # the starting checkpoint's size
+  quality: high                     # the starting checkpoint's size; high scores 0.3 UTMOS above medium
   espeak_voice: en-gb-x-rp          # the reference voice's phonemizer (its .onnx.json)
   sample_rate: 22050
   init:
     name: jgkawell/jarvis
     revision: 37f8763122312665f091d1fc760abaf1f79b02cc
-    file: en/en_GB/jarvis/medium/checkpoints/epoch=8338-step=2012650.ckpt
+    file: en/en_GB/jarvis/high/checkpoints/epoch=3217-step=1070550.ckpt
 
 data:
   sources:
@@ -44,6 +44,6 @@ validation:
     focus_mode_quit: Deactivate Focus mode.
     persona_karen: Change to KAREN.
     persona_jarvis: Change to JARVIS.
-  phrase_takes: 5                   # takes per read-back; the one Whisper hears best is kept
+  phrase_takes: 15                  # takes per read-back; the one Whisper hears best is kept (high's "Target" needed more than 5)
   phrase_filter: highpass=f=80,afftdn=nf=-20   # denoised takes compete with the raw ones; a tie keeps the denoised
   max: {wer: 0.15, phrase_wer: 0.0}  # compare wer with reference_wer: Whisper's error on the recordings themselves

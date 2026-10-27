@@ -32,7 +32,7 @@ uv run llmclick run configs/data/speech.yaml      # the training set
 uv run llmclick run configs/tts/piper_jarvis.yaml # replace <hash> first
 ```
 
-The voice is `output/jarvis-medium-ft-<hash>/validate/checkpoint/voice.onnx` (`piper -m voice.onnx`), and each fixed
+The voice is `output/jarvis-high-ft-<hash>/validate/checkpoint/voice.onnx` (`piper -m voice.onnx`), and each fixed
 reply is `validate/phrases/<name>.wav`.
 
 ## How it works
