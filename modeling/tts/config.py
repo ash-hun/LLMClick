@@ -101,6 +101,9 @@ class PiperValidationConfig(ValidationConfig):
                                                 "Reference.; the best-heard take is kept as phrases/<name>.wav and must be understood")
     phrase_takes: int = Field(default=3, ge=1, description="Takes of each phrase; Piper's unseeded noise makes each one "
                                                            "different, and Whisper picks the best")
+    phrase_filter: str | None = Field(default=None, description="ffmpeg audio filter tried on every take, e.g. "
+                                                                "highpass=f=80,afftdn=nf=-20 against hiss; a filtered take "
+                                                                "is kept when Whisper hears it as well as the best raw one")
 
     @model_validator(mode="after")
     def _named(self) -> "PiperValidationConfig":

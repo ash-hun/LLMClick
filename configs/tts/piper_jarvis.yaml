@@ -45,4 +45,5 @@ validation:
     persona_karen: Change to KAREN.
     persona_jarvis: Change to JARVIS.
   phrase_takes: 5                   # takes per read-back; the one Whisper hears best is kept
+  phrase_filter: highpass=f=80,afftdn=nf=-20   # denoised takes compete with the raw ones; a tie keeps the denoised
   max: {wer: 0.15, phrase_wer: 0.0}  # compare wer with reference_wer: Whisper's error on the recordings themselves

@@ -157,8 +157,9 @@ class ListenStage(ValidateStage[PiperConfig]):
         return metrics
 
     def phrases(self, voice: Path, workdir: Path, listener: Listener, rater: Rater) -> dict[str, dict[str, Any]]:
-        """Each fixed reply spoken `phrase_takes` times; the take Whisper hears best (then the first) becomes
-        phrases/<name>.wav. A rerun keeps the takes it already has, so the agent plays the file that passed."""
+        """Each fixed reply spoken `phrase_takes` times, and each take also put through `phrase_filter` when there is
+        one; the take Whisper hears best (then a filtered one, then the first) becomes phrases/<name>.wav. A rerun
+        keeps the takes it already has, so the agent plays the file that passed."""
         settings = self.config.validation
         replies: dict[str, dict[str, Any]] = {}
         for name, text in sorted(settings.phrases.items()):
@@ -168,11 +169,20 @@ class ListenStage(ValidateStage[PiperConfig]):
                 wav = workdir / "phrases" / "takes" / f"{name}-{take}.wav"
                 if not wav.is_file():
                     piper.speak(voice, text, wav, workdir / "speak.log", {})
-                heard = listener.transcribe(wav)
-                takes.append({"take": take, "heard": heard, "wer": wer(text, heard), **rater(wav)})
-            best = min(takes, key=lambda entry: (entry["wer"], entry["take"]))
+                versions = [wav]
+                if settings.phrase_filter:
+                    # the raw take stays a candidate: a filter that removes hiss can blur the consonants of a name
+                    versions.append(wav.with_suffix(".filtered.wav"))
+                    if not versions[1].is_file():
+                        with atomic_path(versions[1]) as temporary:
+                            audio.filtered(wav, temporary, settings.phrase_filter)
+                for version in versions:
+                    heard = listener.transcribe(version)
+                    takes.append({"take": take, "filtered": version != wav, "file": version.name, "heard": heard,
+                                  "wer": wer(text, heard), **rater(version)})
+            best = min(takes, key=lambda entry: (entry["wer"], not entry["filtered"], entry["take"]))
             with atomic_path(workdir / "phrases" / f"{name}.wav") as temporary:
-                shutil.copyfile(workdir / "phrases" / "takes" / f"{name}-{best['take']}.wav", temporary)
+                shutil.copyfile(workdir / "phrases" / "takes" / best["file"], temporary)
             replies[name] = {"text": text, "audio": f"phrases/{name}.wav", **best, "takes": takes}
         if replies:
             write_json(workdir / "phrases.json", replies)
