@@ -1,6 +1,6 @@
 ---
 title: Jarvis voice agent
-description: A wake word detector for "Jarvis" and a fine-tuned Jarvis voice with nine read-backs, built and checked with wakeword, tts_piper and data_speech; every iteration and failure.
+description: A wake word detector for "Jarvis" and a Jarvis voice with nine read-backs, fine-tuned with tts_piper and then cloned with tts_qwen, built and checked with wakeword and data_speech; every iteration and failure.
 ---
 
 # Experiment: a Jarvis voice agent
@@ -12,7 +12,7 @@ came from.
 
 ```
 mic -> [KWS: always on, tiny] -> "Jarvis" -> [VAD + ASR: the command] -> LLM / agent -> [TTS: the reply]
-          wakeword                                (not built here)        (not built here)    tts_piper
+          wakeword                                (not built here)        (not built here)    tts_qwen (tts_piper before)
 ```
 
 All listening checks use Whisper `openai/whisper-base` (revision `e37978b9`, English).
@@ -22,7 +22,8 @@ All listening checks use Whisper `openai/whisper-base` (revision `e37978b9`, Eng
 | Model | Experiment | Validation |
 |---|---|---|
 | KWS: "Jarvis" (`jarvis.onnx`, 204 KB, plus openWakeWord's 2.4 MB front end) | jarvis-wake-b7 | passed at threshold 0.5: recall 1.000, false_accepts 0.037, scenario 0.981 |
-| TTS: Jarvis voice (`voice.onnx`, 64 MB) with nine read-backs | jarvis-medium-ft (best of 5 takes, 8 of 9 read-backs denoised) | passed: wer 0.072 (source recordings 0.072), phrase_wer 0.000; read-backs DNSMOS background 3.67 (unfiltered 3.29) |
+| TTS: Jarvis voice cloned by Qwen3-TTS 1.7B (`reference.wav` + `voice.json`; the model is 4.2 GB) with nine read-backs | jarvis-qwen (best of 5 seeded takes) | passed: wer 0.028 (source recordings 0.028), phrase_wer 0.000; UTMOS 4.29, speaker similarity 0.982; read-backs UTMOS 3.94 |
+| TTS before it: Piper voice (`voice.onnx`, 114 MB) | jarvis-high-ft (best of 15 takes, every read-back denoised) | passed: wer 0.114 (source recordings 0.072), phrase_wer 0.000; read-backs UTMOS 3.17, DNSMOS background 3.81 |
 
 ### Wake word: every iteration
 
@@ -55,7 +56,10 @@ comparison of B3 and B6 uses only the recordings neither trained on:
 | B5 | fine-tuned, 100 epochs | 1 take | 0.667 | 6 of 9 | failed |
 | B5b | same voice | best of 5, "Target. Analysis." | 0.000 | 9 of 9 | passed |
 | B8 | fine-tuned on denoised recordings | best of 5, denoised | 0.500 | 6 of 9 | failed |
-| **B8b** | B5b's voice | best of 5 raw and 5 denoised takes | **0.000** | **9 of 9** (8 denoised) | **passed** |
+| B8b | B5b's voice | best of 5 raw and 5 denoised takes | 0.000 | 9 of 9 (8 denoised) | passed |
+| B9 | fine-tuned from jgkawell/jarvis high | best of 5 raw and 5 denoised takes | 0.500 | 8 of 9 | failed |
+| B9b | same voice | best of 15 raw and 15 denoised takes | 0.000 | 9 of 9 (9 denoised) | passed |
+| **B10** | Qwen3-TTS 1.7B cloning one high-voice recording, nothing trained | best of 5 seeded takes | **0.000** | **9 of 9** | **passed** |
 
 | Read-back | Text | B5: one take heard as | B5b: exact takes of 5 |
 |---|---|---|---|
@@ -241,6 +245,65 @@ Each run draws new takes, so the two rows are different recordings of the same t
 and naturalness holds; the machine-like timbre (UTMOS about 3 against people's 4.1) is the source voice's own, and
 a filter does not reach it.
 
+### B9: a larger checkpoint of the same voice
+
+jgkawell/jarvis also ships a `high` voice, Piper's larger decoder trained on the same source. On the same 48 texts,
+twice each:
+
+| Voice | wer | utmos | dnsmos_sig | dnsmos_bak | dnsmos_ovrl |
+|---|---|---|---|---|---|
+| jgkawell/jarvis medium, unmodified | 0.057 | 2.70 | 3.43 | 3.41 | 2.85 |
+| jgkawell/jarvis high, unmodified | 0.112 | 3.02 | 3.50 | 3.54 | 2.97 |
+| B5b, fine-tuned from medium | 0.101 | 2.58 | 3.41 | 3.31 | 2.78 |
+| B9, fine-tuned from high (same recipe) | 0.121 | 2.92 | 3.48 | 3.61 | 2.99 |
+
+The larger decoder is the first change to move UTMOS by 0.3, and it keeps that lead through the fine-tune; it
+reads words a little worse. B9 passed `wer` but missed "Target" in all five takes ("Taubeat", "Talbid"), so B9b
+raised `phrase_takes` to 15 over the same checkpoint, and all nine read-backs came out denoised:
+
+| Read-backs kept | phrase_wer | utmos | dnsmos_sig | dnsmos_bak | dnsmos_ovrl |
+|---|---|---|---|---|---|
+| B8b (medium) | 0.000 | 3.12 | 3.34 | 3.67 | 2.88 |
+| B9b (high) | 0.000 | 3.17 | 3.33 | 3.81 | 2.96 |
+
+The held-out split is two or three lines, and its UTMOS moved from 2.82 to 2.49 between the two validations of one
+checkpoint, so the 48-text table is the comparison to trust. Even the high voice sits a point of UTMOS below people;
+the rest of the gap needs a different model family, not a larger Piper.
+
+### B10: a cloned voice
+
+Qwen3-TTS (Apache-2.0, run on MLX) reads any text in a voice it hears once, from a few seconds of recording and their
+text. Cloning Jarvis from one 5.5 s take of the high voice, on the same 48 texts as before, and with speaker
+similarity added: the cosine of each clip's x-vector to the mean of the 48 recordings, from a speaker verification
+model none of these voices trained on (`microsoft/wavlm-base-plus-sv`). Recordings of other people (the
+`libritts_r` speakers of the wake word data) score 0.44 on it.
+
+<!-- polygon: jarvis-voices -->
+
+The clone sounds about as natural as recorded people (UTMOS 4.07 against 4.11), with as little background noise
+(DNSMOS bak 4.01 against 3.98), is heard better than any Piper voice (wer 0.017), and is still the voice: speaker
+similarity 0.965, within the spread of Piper's own voices (0.965 to 0.973). The 0.6B model scored the same; 1.7B was
+preferred by ear. A clone copies its clip: the same clip denoised cloned worse (UTMOS 3.90, speaker similarity
+0.943), and a clip of the medium voice gave 3.91.
+
+`tts_qwen` makes this a recipe: the data stage is `tts_piper`'s, the train stage picks the training recording UTMOS
+rates most natural between 4 and 12 s (30 candidates in the 46 high-voice recordings `data/speech.yaml` now reads),
+and validation is the same listening test with `speaker_similarity` added and bounded (`min: {utmos: 3.5,
+speaker_similarity: 0.9}`). Takes are seeded and MLX is bit-identical under a seed, so a rerun speaks the same files,
+which Piper's unseeded noise never allowed. On its own split (2 held-out lines, the mean of the high recordings as the
+voice):
+
+| jarvis-qwen | wer | utmos | dnsmos_sig | dnsmos_bak | dnsmos_ovrl | speaker_similarity |
+|---|---|---|---|---|---|---|
+| clone | 0.028 | 4.29 | 3.66 | 4.16 | 3.45 | 0.982 |
+| the recordings | 0.028 | 3.10 | 3.55 | 3.85 | 3.20 | 0.983 |
+| read-backs kept (9) | 0.000 | 3.94 | 3.35 | 3.78 | 2.95 | 0.925 |
+
+The read-backs score lower than full sentences on every predictor, as the Piper ones did: two or three words give
+UTMOS and the speaker encoder little to go on. Every read-back's first take was heard right except "Change to
+JARVIS.", right in 2 of 5. What it costs: a 4.2 GB model against Piper's 114 MB, Apple silicon only, and speech at about twice
+real time where Piper is near instant.
+
 ## What the runs taught
 
 1. A test stream must be at least as long as the detector's window, or a test bug looks like a model that hears
@@ -257,6 +320,8 @@ a filter does not reach it.
    calling a detector done.
 9. A recognizer measures words, not sound. Score quality on its own, and filter what is played rather than what is
    learned: a voice trained on denoised audio copies the denoiser.
+10. A voice's sound is bounded by its model family. Filters, settings and a larger Piper moved UTMOS by 0.3 at most;
+    a cloning model moved it by 1.2 while keeping the voice, and speaker similarity is what shows it kept it.
 
 ## Limits
 
@@ -267,11 +332,13 @@ a filter does not reach it.
 - The voice's held-out set is 2 lines; its `wer` says only that the voice did not break.
 - UTMOS and DNSMOS are predictions of listener ratings, not ratings; no one listened for the B8 comparison, and
   the UTMOS ONNX export was not compared with the original torch model here.
+- Speaker similarity says the clone is near the recordings for one encoder; it is not a listener's judgement that it
+  is the same character, and the recordings are themselves a Piper imitation of the film voice.
 - VAD, ASR and command recognition are not part of this experiment.
 
 ## Reproducing
 
 Configs: `data/wake_phrase.yaml`, `data/wake_negatives.yaml`, `data/wake_nearmiss.yaml`, `wakeword/jarvis.yaml`,
-`data/speech.yaml`, `tts/piper_jarvis.yaml`, run in that order with each `<hash>` replaced by the data experiment's
+`data/speech.yaml`, `tts/qwen_jarvis.yaml` (or `tts/piper_jarvis.yaml`), run in that order with each `<hash>` replaced by the data experiment's
 key (`llmclick validate <config>`). Piper's noise is unseeded, so recordings differ between runs: the counts above
 will move a little, the conclusions should not.

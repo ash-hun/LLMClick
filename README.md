@@ -16,6 +16,7 @@ what is already built, shows progress, and never hands on a trained model that h
 | LLM | `llm_decision_cispo` | the same questions with reasoning before the decision, by reinforcement (Jeeves stage 2) | same |
 | Embedding | `embedding_contrastive` | query/positive/negative triples (InfoNCE) | `bi_encoder` (Qwen3-Embedding-0.6B) |
 | TTS | `tts_piper` | recordings and their texts: a Piper (VITS) voice fine-tuned from a Piper checkpoint, exported to ONNX | `model.quality`: `medium`, `high` (Piper's sizes) |
+| TTS | `tts_qwen` | the same recordings: a Qwen3-TTS voice cloned from the most natural one, nothing trained (Apple silicon) | `model`: a Qwen3-TTS Base model on MLX |
 | Wake word | `wakeword` | recordings of the agent's name ("Jarvis") and of everything else: an openWakeWord detector, exported to ONNX | openWakeWord's `dnn` head on its frozen speech features |
 | Evaluation | `evaluation_custom` | nothing: scores a checkpoint of any experiment above on any rows, with that recipe's metrics | the experiment's |
 | Evaluation | `evaluation_benchmark` | nothing: scores a checkpoint on public benchmarks (lm-evaluation-harness), one cached stage per benchmark | the experiment's (LLM) |
@@ -70,7 +71,7 @@ LLMClick/
 │   │   ├── models/               #     Model Catalog: base.py (EmbeddingBackbone), bi_encoder.py
 │   │   ├── methods/              #     Training Method: contrastive.py
 │   │   └── config.py pipeline.py
-│   ├── tts/                      #   family: text-to-speech (tts_piper)
+│   ├── tts/                      #   family: text-to-speech (tts_piper, tts_qwen)
 │   │   ├── piper.py              #     the Piper program (GPL) as a separate process: speak, fit, export
 │   │   ├── audio.py asr.py       #     WAV measurements; Whisper transcripts and word error rate
 │   │   └── config.py stages.py pipeline.py
@@ -180,6 +181,7 @@ pipeline:
 | `score:<task>`..., `report` | `evaluation_embedding`: one mteb run per task (fingerprint: checkpoint content, task, max_length, mteb version) |
 | `clips`, `traces`, `report` | `evaluation_wakeword`: recordings and ambient WAVs found; the detector's score every 80 ms on all of them under each condition; the threshold sweep and the operating point |
 | `data`, `train`, `validate` | `tts_piper`: recordings found and split; `piper.train fit` from the starting checkpoint, exported to `voice.onnx`; the voice reads the held-out texts and the fixed replies, Whisper transcribes them |
+| `data`, `train`, `validate` | `tts_qwen`: the same split; the training clip UTMOS rates most natural becomes the voice (`reference.wav`, `voice.json`); the same listening test |
 | `data`, `features`, `train`, `validate` | `wakeword`: recordings of both classes found and split; noisy windows as embeddings; the detector trained and exported; held-out streams scored every 80 ms |
 
 | Recipe | Row keys | Metrics for `validation.min`/`max` |
@@ -191,7 +193,8 @@ pipeline:
 | `llm_decision_sft` | `state`, `questions` (Jev records) or `state`, `question`, `label` (one question per row) | `accuracy`, `nll`, `ece` |
 | `llm_decision_cispo` | same | `accuracy`, `nll`, `ece`, `think_accuracy` (after reasoning) |
 | `embedding_contrastive` | `query`, `positive`, `negative`? | `accuracy` (positive ranked first), `mrr` |
-| `tts_piper` | `audio` (a WAV file), `text` | `wer` (Whisper on the voice), `reference_wer` (Whisper on the recordings), `duration_ratio`, `phrase_wer` (the worst-heard fixed reply), `utmos` and `dnsmos_sig`, `dnsmos_bak`, `dnsmos_ovrl` (how clean the voice sounds; `reference_` and `phrase_` for the recordings and the replies) |
+| `tts_piper` | `audio` (a WAV file), `text` | `wer` (Whisper on the voice), `reference_wer` (Whisper on the recordings), `duration_ratio`, `phrase_wer` (the worst-heard fixed reply), `utmos` and `dnsmos_sig`, `dnsmos_bak`, `dnsmos_ovrl` (how clean the voice sounds), `speaker_similarity` (whose voice it is); `reference_` and `phrase_` for the recordings and the replies |
+| `tts_qwen` | the same | the same |
 | `wakeword` | `audio`, `text`? (a positive's must be the phrase) | `recall`, `false_accepts`, `scenario` (phrase then command: one firing, on the phrase) |
 
 By default every weight is trained, in FP32. `training.adapter` switches any of these recipes to LoRA:
@@ -294,6 +297,10 @@ validation: {asr: {language: en}, max: {wer: 0.15}}
   carries its own. Both models run on onnxruntime, the UTMOS one (411 MB) from the Hub cache and DNSMOS downloaded
   into `validate/models/` and checked against its pinned hash. Bound them like any metric, e.g.
   `min: {dnsmos_bak: 3.0}`.
+- **Speaker similarity.** `speaker_similarity` is the cosine of a clip's x-vector to the mean x-vector of up to 50 of
+  the recordings, from a speaker verification model none of the voices trained on (`microsoft/wavlm-base-plus-sv`,
+  pinned). Another take of the same voice scores about 0.97 and another person about 0.4; it is what tells a clone
+  that sounds clean but no longer like the voice.
 - **Fixed replies.** `validation.phrases` (`name: text`) are the lines the agent plays as they are, such as the
   read-back before a task (`web_search: Searching Reference.`). Piper's noise makes every take of a text different,
   so each is spoken `validation.phrase_takes` times (default 3) and the take Whisper hears best becomes
@@ -308,6 +315,39 @@ validation: {asr: {language: en}, max: {wer: 0.15}}
 
 Before training on a voice, read its terms. `jgkawell/jarvis` is MIT on its weights per its model card, but it imitates
 a film character played by a real actor; MIT does not cover the voice, so treat it as personal and non-commercial.
+
+### Voice cloning recipe (`tts_qwen`)
+
+`tts_qwen` trains nothing: [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) (Apache-2.0) reads any text in a voice it
+hears once, from one recording and its exact text. The recipe picks that recording and puts the clone through the
+same listening test as `tts_piper`. It runs Qwen3-TTS on MLX, so it needs Apple silicon; the program lives in
+`environment/qwen/` (its own `pyproject.toml` and `uv.lock`) and runs as a separate process through `QWEN_PYTHON`.
+
+```bash
+environment/qwen/setup.sh        # uv sync of the locked environment
+```
+
+```yaml
+model:                             # a Qwen3-TTS Base model on MLX; only Base models clone
+  name: mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16
+  revision: a6eb4f68e4b056f1215157bb696209bc82a6db48
+reference: {min_seconds: 4, max_seconds: 12}
+data:
+  sources:
+    - {name: local_jsonl, path: output/jarvis-lines-<hash>/select/rows.jsonl}
+validation: {asr: {language: en}, max: {wer: 0.1}, min: {utmos: 3.5, speaker_similarity: 0.9}}
+```
+
+- **Reference.** Of the training recordings between `reference.min_seconds` and `max_seconds`, the one UTMOS rates
+  most natural (the first of a tie) is the voice. A clone copies the clip's sound along with its voice, so the clip
+  is used as recorded: a denoised clip cloned worse (UTMOS 3.90 against 4.07, speaker similarity 0.943 against 0.965).
+- **Checkpoint.** `<experiment>/validate/checkpoint/` holds `reference.wav` and `voice.json` (`model`, `revision`,
+  `reference_text`, `sample_rate`): everything a player needs to load the model and speak in the voice.
+- **Takes.** Every take draws from a seed made of `pipeline.seed`, the text and the take number, and MLX is
+  bit-identical under a seed, so a rerun speaks the same files. Generation is batched: one model load per stage run.
+  Validation, fixed replies and the reply filter work as in `tts_piper`.
+- **Size and speed.** The 1.7B model is 4.2 GB in bf16 and speaks about twice as fast as real time on an M-series
+  Mac; the 0.6B model (2.4 GB) scored the same on these metrics.
 
 ### Wake word recipe (`wakeword`)
 
@@ -371,11 +411,11 @@ The four configs below build what a voice agent says and hears; what it decides 
 |---|---|---|
 | User: "Jarvis, wake up" | the wake word detector fires as "Jarvis" ends, once | `wakeword` (`wakeword/jarvis.yaml`) |
 | | speech to text hears the command after it ("wake up"), and the agent's model picks the command `wake_up` | the agent (an LLM recipe can tune it) |
-| Agent: ready | plays the read-back of `wake_up`, `phrases/wake_up.wav` | `tts_piper` `validation.phrases` |
+| Agent: ready | plays the read-back of `wake_up`, `phrases/wake_up.wav` | `tts_qwen` `validation.phrases` |
 | User: "Please search to the paper reference on the web" | speech to text, then the agent's model picks `web_search` | the agent |
-| Agent: "Searching Reference.", then works | plays `phrases/web_search.wav`, then runs the search | `tts_piper` `validation.phrases` |
+| Agent: "Searching Reference.", then works | plays `phrases/web_search.wav`, then runs the search | `tts_qwen` `validation.phrases` |
 
-`tts/piper_jarvis.yaml` holds nine read-backs: `wake_up` (At your service, sir.), `web_search` (Searching Reference.),
+`tts/qwen_jarvis.yaml` holds nine read-backs: `wake_up` (At your service, sir.), `web_search` (Searching Reference.),
 `horizontal_task` (Processing Long Task.), `remember_pattern` (Checking the Pattern.), `analysis` (Target.
 Analysis.: a full stop so the voice pauses), `focus_mode_enter` (Activate Focus mode.), `focus_mode_quit` (Deactivate Focus mode.), `persona_karen`
 (Change to KAREN.) and `persona_jarvis` (Change to JARVIS.). The voice's training set (`data/speech.yaml`) reads them
@@ -416,8 +456,9 @@ curl -X POST localhost:8000/api/jobs -H 'content-type: application/json' \
 | `evaluation/decision.yaml` | the `llm/decision_pointer.yaml` checkpoint on the JevBench tiers, without and with reasoning |
 | `evaluation/embedding.yaml` | the `embedding/contrastive.yaml` checkpoint on three MTEB tasks (needs `uv sync --extra eval`) |
 | `data/synthetic.yaml` | Korean conversation rows for `llm_sft` from four topic seeds through a local Ollama model, evolved, judged, deduplicated |
-| `data/speech.yaml` | a Piper training set: assistant lines written by a local Ollama model, read by the `jgkawell/jarvis` voice, checked by Whisper (needs `environment/piper/setup.sh`) |
-| `tts/piper_jarvis.yaml` | fine-tuning from the `jgkawell/jarvis` medium checkpoint on that set, with the agent's nine read-backs; replace `<hash>` with the `data/speech.yaml` experiment's |
+| `data/speech.yaml` | a Piper training set: assistant lines written by a local Ollama model, read by the `jgkawell/jarvis` high voice, checked by Whisper (needs `environment/piper/setup.sh`) |
+| `tts/piper_jarvis.yaml` | fine-tuning from the `jgkawell/jarvis` high checkpoint on that set, with the agent's nine read-backs; replace `<hash>` with the `data/speech.yaml` experiment's |
+| `tts/qwen_jarvis.yaml` | the Jarvis voice cloned by Qwen3-TTS 1.7B from the most natural clip of that set, with the same read-backs (needs Apple silicon and `environment/qwen/setup.sh`) |
 | `data/wake_phrase.yaml` | "Jarvis." (statement, question, call) read by 300 speakers of the `libritts_r` Piper voice, kept if Whisper hears it exactly |
 | `data/wake_negatives.yaml` | near misses of the name, the commands said alone, and ordinary lines, read by 40 speakers of the same voice |
 | `data/wake_nearmiss.yaml` | 20 near misses of the name ("Travis", "Jars", "Jarrett", ...) by 120 more speakers, kept without a listening check |

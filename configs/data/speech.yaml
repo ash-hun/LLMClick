@@ -34,7 +34,7 @@ voice:
   model:
     name: jgkawell/jarvis
     revision: 37f8763122312665f091d1fc760abaf1f79b02cc
-    file: en/en_GB/jarvis/medium/jarvis-medium.onnx
+    file: en/en_GB/jarvis/high/jarvis-high.onnx       # the high voice clones best (UTMOS 0.3 above medium)
   samples: 1
 
 verify: {min_seconds: 0.5, max_seconds: 15, max_wer: 0.2, asr: {language: en}}

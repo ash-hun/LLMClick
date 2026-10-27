@@ -1,0 +1,23 @@
+# Jarvis voices measured here on one test, drawn as a polygon chart on the Jarvis agent experiment page
+# (intros/experiments/speech/jarvis-agent.md, `<!-- polygon: <id> -->`). Scores are raw; `ranges` gives each axis's
+# low and high end, the low end at the chart's centre.
+figures:
+  - id: jarvis-voices
+    title: "Jarvis voices on the same 48 lines, two takes each; centre to edge: MOS 1 to 5, heard 0.8 to 1, speaker sim 0.4 to 1"
+    axis: Metric
+    source: "measured here: the 48 jarvis-lines texts (medium recordings) read twice by each voice; Whisper base for wer, UTMOS22 strong and DNSMOS P.835 for sound, WavLM x-vectors against the recordings' mean for speaker similarity"
+    models: [Piper medium, Piper high, B5b (medium fine-tuned), B9 (high fine-tuned), Qwen3-TTS 0.6B, Qwen3-TTS 1.7B]
+    ranges:
+      UTMOS: [1, 5]
+      DNSMOS sig: [1, 5]
+      DNSMOS bak: [1, 5]
+      DNSMOS ovrl: [1, 5]
+      heard (1-wer): [0.8, 1]
+      speaker sim: [0.4, 1]
+    scores:
+      UTMOS: [2.70, 3.02, 2.58, 2.92, 4.09, 4.07]
+      DNSMOS sig: [3.43, 3.50, 3.41, 3.48, 3.58, 3.58]
+      DNSMOS bak: [3.41, 3.54, 3.31, 3.61, 4.03, 4.01]
+      DNSMOS ovrl: [2.85, 2.97, 2.78, 2.99, 3.30, 3.28]
+      heard (1-wer): [0.943, 0.888, 0.899, 0.879, 0.976, 0.983]
+      speaker sim: [0.973, 0.968, 0.971, 0.970, 0.968, 0.965]

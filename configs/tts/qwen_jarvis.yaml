@@ -1,0 +1,37 @@
+# Clone the Jarvis voice with Qwen3-TTS from one recording of the set configs/data/speech.yaml writes; nothing is
+# trained. Needs Apple silicon and the Qwen environment (environment/qwen/setup.sh). Replace <hash> with the data
+# experiment's (`llmclick validate configs/data/speech.yaml`).
+pipeline:
+  recipe: tts_qwen
+  name: jarvis-qwen
+  seed: 20260920
+  output_dir: ./output
+
+model:
+  name: mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16   # 0.6B scores the same on these metrics; 1.7B was preferred by ear
+  revision: a6eb4f68e4b056f1215157bb696209bc82a6db48
+
+reference: {min_seconds: 4, max_seconds: 12}   # the most natural clip of these lengths is the voice
+
+data:
+  sources:
+    - name: local_jsonl
+      path: output/jarvis-lines-<hash>/select/rows.jsonl   # audio paths are relative to this file
+  validation: 0.05
+
+validation:
+  asr: {language: en}
+  rows: 50
+  phrases:                          # the agent's read-backs, kept in <experiment>/validate/phrases/<name>.wav
+    wake_up: At your service, sir.
+    web_search: Searching Reference.
+    horizontal_task: Processing Long Task.
+    remember_pattern: Checking the Pattern.
+    analysis: Target. Analysis.
+    focus_mode_enter: Activate Focus mode.
+    focus_mode_quit: Deactivate Focus mode.
+    persona_karen: Change to KAREN.
+    persona_jarvis: Change to JARVIS.
+  phrase_takes: 5                   # seeded takes; the one Whisper hears best is kept
+  max: {wer: 0.1, phrase_wer: 0.0}
+  min: {utmos: 3.5, speaker_similarity: 0.9}   # a clone must sound natural and still be the voice

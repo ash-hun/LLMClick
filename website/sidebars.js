@@ -14,7 +14,7 @@ module.exports = {
         family('LLM recipes', 'modeling/llm/overview', ['modeling/llm/sft', 'modeling/llm/instruction', 'modeling/llm/dpo', 'modeling/llm/grpo']),
         family('Decision recipes', 'modeling/decision/overview', ['modeling/decision/sft', 'modeling/decision/cispo']),
         'modeling/embedding/contrastive',
-        family('Speech recipes', 'modeling/speech/overview', ['modeling/speech/tts-piper', 'modeling/speech/wakeword']),
+        family('Speech recipes', 'modeling/speech/overview', ['modeling/speech/tts-piper', 'modeling/speech/tts-qwen', 'modeling/speech/wakeword']),
         'modeling/extending',
       ],
     },

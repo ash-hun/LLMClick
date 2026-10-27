@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     API_TOKEN: str = ""                      # when set, every /api route needs `Authorization: Bearer <token>`
     API_PATHS: str = "."                     # directories (colon-separated) the API may read configs and data from and write output to
     PIPER_PYTHON: str = "environment/piper/.venv/bin/python"  # the Piper program's environment (environment/piper/setup.sh)
+    QWEN_PYTHON: str = "environment/qwen/.venv/bin/python"    # Qwen3-TTS on MLX, Apple silicon (environment/qwen/setup.sh)
 
     @property
     def api_roots(self) -> list[Path]:

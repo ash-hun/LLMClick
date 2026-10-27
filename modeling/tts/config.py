@@ -1,4 +1,4 @@
-"""Config of `tts_piper`: the voice to start from, the recordings, Piper's training settings and the listening test."""
+"""Configs of `tts_piper` (a Piper voice fine-tuned on recordings) and `tts_qwen` (Qwen3-TTS cloning one of them)."""
 
 import re
 from pathlib import Path
@@ -15,6 +15,7 @@ from core.settings import get_settings
 CHECKPOINT_FILE = "model.ckpt"  # inside a checkpoint directory this recipe writes, next to the voice
 WHISPER = "openai/whisper-base"
 WHISPER_REVISION = "e37978b90ca9030d5170a5c07aadb050351a65bb"
+QWEN, QWEN_REVISION = "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16", "a6eb4f68e4b056f1215157bb696209bc82a6db48"
 # Options this recipe sets itself; `training.args` may not override them.
 MANAGED = frozenset({"data.voice_name", "data.csv_path", "data.audio_dir", "data.espeak_voice", "data.cache_dir",
                      "data.config_path", "data.batch_size", "data.validation_split", "data.num_test_examples",
@@ -93,39 +94,73 @@ class PiperTrainingConfig(Section):
         return self
 
 
-class PiperValidationConfig(ValidationConfig):
+class ListenConfig(ValidationConfig):
     asr: AsrConfig = Field(default_factory=AsrConfig)
     rows: int | None = Field(default=50, ge=1, description="Held-out rows to synthesize and transcribe; null: all of them")
     phrases: dict[str, str] = Field(default_factory=dict,
                                     description="Fixed replies the agent plays (name -> text), e.g. web_search: Searching "
                                                 "Reference.; the best-heard take is kept as phrases/<name>.wav and must be understood")
-    phrase_takes: int = Field(default=3, ge=1, description="Takes of each phrase; Piper's unseeded noise makes each one "
-                                                           "different, and Whisper picks the best")
+    phrase_takes: int = Field(default=3, ge=1, description="Takes of each phrase; each one is drawn differently, and "
+                                                           "Whisper picks the best")
     phrase_filter: str | None = Field(default=None, description="ffmpeg audio filter tried on every take, e.g. "
                                                                 "highpass=f=80,afftdn=nf=-20 against hiss; a filtered take "
                                                                 "is kept when Whisper hears it as well as the best raw one")
 
     @model_validator(mode="after")
-    def _named(self) -> "PiperValidationConfig":
+    def _named(self) -> "ListenConfig":
         bad = sorted(name for name in self.phrases if not re.fullmatch(r"[A-Za-z0-9_-]+", name))
         if bad:
             raise ValueError(f"validation.phrases names become file names: {bad} may only use letters, digits, _ and -")
         return self
 
 
-class PiperConfig(ModelingConfig):
-    model: VoiceModelConfig
+class VoiceConfig(ModelingConfig):
+    """What both TTS recipes share: the recordings of the voice and the listening test."""
     data: DataConfig
-    training: PiperTrainingConfig = Field(default_factory=PiperTrainingConfig)
-    validation: PiperValidationConfig = Field(default_factory=PiperValidationConfig)
+    validation: ListenConfig = Field(default_factory=ListenConfig)
 
     @model_validator(mode="after")
-    def _registered(self) -> "PiperConfig":
+    def _registered(self) -> "VoiceConfig":
         from modeling.tuning.sources import SOURCES
         SOURCES.check(*(source.name for source in self.data.sources))
         return self
 
     def paths(self) -> list[str]:
         from modeling.tts.audio import AUDIO_KEYS
-        return [*super().paths(), *([] if self.model.init.hub else [self.model.init.name]),
-                *local_paths(self.data.sources, AUDIO_KEYS)]
+        return [*super().paths(), *local_paths(self.data.sources, AUDIO_KEYS)]
+
+
+class PiperConfig(VoiceConfig):
+    model: VoiceModelConfig
+    training: PiperTrainingConfig = Field(default_factory=PiperTrainingConfig)
+
+    def paths(self) -> list[str]:
+        return [*super().paths(), *([] if self.model.init.hub else [self.model.init.name])]
+
+
+class QwenModelConfig(Section):
+    name: str = Field(default=QWEN, description="Qwen3-TTS Base model (MLX) on the Hub; only Base models clone a voice")
+    revision: str = Field(default=QWEN_REVISION, description="40-character commit")
+
+    @model_validator(mode="after")
+    def _pinned(self) -> "QwenModelConfig":
+        if not is_commit(self.revision):
+            raise ValueError("model.revision must be a 40-character commit (a branch is not reproducible)")
+        return self
+
+
+class ReferenceConfig(Section):
+    """Which training recording the voice is cloned from: the one UTMOS rates most natural within these lengths."""
+    min_seconds: float = Field(default=4.0, gt=0, description="Shorter clips carry too little of the voice")
+    max_seconds: float = Field(default=12.0, gt=0, description="Longer clips slow every generation, which reads the clip first")
+
+    @model_validator(mode="after")
+    def _ordered(self) -> "ReferenceConfig":
+        if self.min_seconds >= self.max_seconds:
+            raise ValueError("reference.min_seconds must be below reference.max_seconds")
+        return self
+
+
+class QwenConfig(VoiceConfig):
+    model: QwenModelConfig = Field(default_factory=QwenModelConfig)
+    reference: ReferenceConfig = Field(default_factory=ReferenceConfig)
