@@ -8,6 +8,7 @@ from typing import Any, ClassVar
 from core.utils.files import atomic_path, read_json, read_jsonl, staged_directory, write_json, write_jsonl
 from modeling.tts.config import CHECKPOINT_FILE, PiperConfig
 from modeling.stages import TrainStage, ValidateStage, held_out_positions
+from modeling.tts.quality import METRICS, Rater
 from core.utils.device import resolve_device
 from modeling.tts.asr import Listener, wer
 from modeling.config import keyed_identity
@@ -118,7 +119,11 @@ class ListenStage(ValidateStage[PiperConfig]):
     """The exported voice reads the held-out texts; Whisper transcribes them and the original recordings. Metrics:
     `wer` (the voice), `reference_wer` (the recordings, the floor `wer` can reach), `duration_ratio` (voice length
     over recording length), and with `validation.phrases`, `phrase_wer`: the worst-heard of the agent's fixed
-    replies, which are kept in phrases/ with phrases.json for the agent to play."""
+    replies, which are kept in phrases/ with phrases.json for the agent to play. How clean each voice sounds, without
+    a reference: `utmos` (naturalness) and `dnsmos_sig`, `dnsmos_bak`, `dnsmos_ovrl` (speech distortion, background
+    noise, overall; DNSMOS P.835), each from 1 to 5, with `reference_` for the recordings and `phrase_` for the
+    replies kept."""
+    version: ClassVar[int] = 2
     requires: ClassVar[tuple[str, ...]] = ("train", "data")
     sections: ClassVar[tuple[str, ...]] = ("validation", "device")
 
@@ -129,6 +134,7 @@ class ListenStage(ValidateStage[PiperConfig]):
         voice = Path(inputs["train"]["checkpoint"]) / VOICE
         rows = read_jsonl(Path(inputs["data"]["validation"]))[: self.config.validation.rows]
         items: list[dict[str, Any]] = []
+        rater = Rater(workdir / "models")
         with Listener(self.config.validation.asr, self.config.device) as listener:
             for index, row in enumerate(rows):
                 self.progress.update(index, len(rows), "speaking and listening")
@@ -138,14 +144,19 @@ class ListenStage(ValidateStage[PiperConfig]):
                 heard, reference = listener.transcribe(spoken), listener.transcribe(recorded)
                 items.append({"text": row["text"], "heard": heard, "wer": wer(row["text"], heard),
                               "reference_heard": reference, "reference_wer": wer(row["text"], reference),
-                              "duration_ratio": audio.seconds(spoken) / max(audio.seconds(recorded), 1e-6)})
-            replies = self.phrases(voice, workdir, listener)
+                              "duration_ratio": audio.seconds(spoken) / max(audio.seconds(recorded), 1e-6),
+                              **rater(spoken), **{f"reference_{name}": value for name, value in rater(recorded).items()}})
+            replies = self.phrases(voice, workdir, listener, rater)
         self.progress.update(len(rows), len(rows))
         write_jsonl(workdir / "items.jsonl", items)
-        metrics = {metric: statistics.fmean(item[metric] for item in items) for metric in ("wer", "reference_wer", "duration_ratio")}
-        return {**metrics, **({"phrase_wer": max(reply["wer"] for reply in replies.values())} if replies else {})}
+        averaged = ("wer", "reference_wer", "duration_ratio", *METRICS, *(f"reference_{name}" for name in METRICS))
+        metrics = {metric: statistics.fmean(item[metric] for item in items) for metric in averaged}
+        if replies:
+            metrics["phrase_wer"] = max(reply["wer"] for reply in replies.values())
+            metrics |= {f"phrase_{name}": statistics.fmean(reply[name] for reply in replies.values()) for name in METRICS}
+        return metrics
 
-    def phrases(self, voice: Path, workdir: Path, listener: Listener) -> dict[str, dict[str, Any]]:
+    def phrases(self, voice: Path, workdir: Path, listener: Listener, rater: Rater) -> dict[str, dict[str, Any]]:
         """Each fixed reply spoken `phrase_takes` times; the take Whisper hears best (then the first) becomes
         phrases/<name>.wav. A rerun keeps the takes it already has, so the agent plays the file that passed."""
         settings = self.config.validation
@@ -158,7 +169,7 @@ class ListenStage(ValidateStage[PiperConfig]):
                 if not wav.is_file():
                     piper.speak(voice, text, wav, workdir / "speak.log", {})
                 heard = listener.transcribe(wav)
-                takes.append({"take": take, "heard": heard, "wer": wer(text, heard)})
+                takes.append({"take": take, "heard": heard, "wer": wer(text, heard), **rater(wav)})
             best = min(takes, key=lambda entry: (entry["wer"], entry["take"]))
             with atomic_path(workdir / "phrases" / f"{name}.wav") as temporary:
                 shutil.copyfile(workdir / "phrases" / "takes" / f"{name}-{best['take']}.wav", temporary)
