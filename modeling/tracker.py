@@ -1,13 +1,13 @@
 """Send a training run's metrics to wandb: live while it trains, or replayed once if tracking is switched on later."""
 
-import logging
 from pathlib import Path
 from typing import Any
 
 from core.utils.files import read_json, write_json
 from modeling.config import TrackerConfig
+from core.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 History = list[tuple[int, dict[str, float]]]  # (step, metrics) in step order
 MARKER = "tracker.json"
 
@@ -52,7 +52,7 @@ class Tracker:
         try:
             import wandb
         except ImportError:
-            logger.warning("wandb is not installed (uv sync --extra tracker); training is not tracked")
+            logger.warning("tracker_disabled", reason="wandb is not installed (uv sync --extra tracker)")
             return False
         self.wandb = wandb
         self.session = wandb.init(project=self.config.project, entity=self.config.entity, name=name, id=run.name,

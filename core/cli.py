@@ -27,7 +27,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "serve":
         import uvicorn
-        uvicorn.run("core.api.app:app", host=args.host, port=args.port)
+        uvicorn.run("core.api.app:app", host=args.host, port=args.port, log_config=None)  # uvicorn logs through the root handler
         return 0
     if args.command == "recipes":
         print(json.dumps(catalogue(), indent=2))

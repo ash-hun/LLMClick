@@ -1,6 +1,5 @@
 """Training Method base: what a row must contain, how a batch becomes a loss, and how the result is measured."""
 
-import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, ClassVar, Generic, TypeVar
@@ -12,8 +11,9 @@ from modeling.tuning.config import TrainingConfig
 from core.config.schema import Section
 from core.progress import Progress
 
+from core.logger import get_logger
 Row = dict[str, Any]
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 BackboneT = TypeVar("BackboneT", bound=Backbone)
 
 
@@ -89,5 +89,6 @@ def fitting(backbone: Backbone, method: TrainingMethod[Any], rows: list[Row], tr
         raise ValueError(f"{len(over)} of {len(rows)} {name} rows need more than training.max_length={training.max_length} "
                          f"tokens ({worst}). Raise max_length, shorten the rows, or set training.overflow: skip")
     if over:
-        logger.warning("%d of %d %s rows exceed max_length=%d and are left out", len(over), len(rows), name, training.max_length)
+        logger.warning("rows_dropped", split=name, dropped=len(over), rows=len(rows), max_length=training.max_length,
+                       reason="longer than max_length")
     return [row for _, _, row in kept]

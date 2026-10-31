@@ -1,3 +1,5 @@
+"""The API's routers, one per channel: config, job, evaluation, system."""
+
 from core.api.routers.config_channel import config_channel_router
 from core.api.routers.evaluation_channel import evaluation_channel_router
 from core.api.routers.job_channel import job_channel_router

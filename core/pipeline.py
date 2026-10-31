@@ -1,6 +1,5 @@
 """The one pipeline runner: a recipe declares its stages, this runs them in order and skips what is already built."""
 
-import logging
 from abc import ABC
 from pathlib import Path
 from typing import Any, ClassVar, Generic
@@ -13,8 +12,9 @@ from core.stage import ConfigT, Outputs, Stage
 from core.utils.files import locked, sha256_json
 from core.config.schema import BaseConfig
 from core.progress import Progress
+from core.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class Pipeline(ABC, Generic[ConfigT]):
@@ -95,7 +95,7 @@ class Pipeline(ABC, Generic[ConfigT]):
         self.progress.stage_started(name)
 
         def waiting() -> None:  # another run (CLI or job) holds this stage; its result is reused when it is done
-            logger.info("[%s] %s: waiting for another run that is building it", self.experiment.key, name)
+            logger.info("stage_blocked", experiment=self.experiment.key, stage=name, reason="another run is building it")
             self.progress.update(0, None, "waiting for another run that is building this stage")
 
         try:
@@ -104,7 +104,7 @@ class Pipeline(ABC, Generic[ConfigT]):
                 outputs = self.experiment.stage_outputs(workdir, key)
                 status = "cached"
                 if outputs is None:
-                    logger.info("[%s] %s: running", self.experiment.key, name)
+                    logger.info("stage_started", experiment=self.experiment.key, stage=name)
                     workdir.mkdir(parents=True, exist_ok=True)
                     outputs = stage.run(workdir, {dependency: done[dependency] for dependency in stage.dependencies()})
                     outputs = self.experiment.mark_done(workdir, key, outputs)
@@ -112,7 +112,7 @@ class Pipeline(ABC, Generic[ConfigT]):
         except BaseException:
             self.progress.stage_finished(name, "failed")
             raise
-        logger.info("[%s] %s: %s", self.experiment.key, name, status)
+        logger.info("stage_finished", experiment=self.experiment.key, stage=name, status=status)
         self.experiment.link(name, key, workdir, outputs)
         self.progress.stage_finished(name, status)
         return outputs

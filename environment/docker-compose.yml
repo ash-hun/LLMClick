@@ -8,6 +8,8 @@ services:
     container_name: llmclick
     env_file:
       - .env
+    environment:
+      LOG_FORMAT: json   # collectors read it; a value's newline cannot forge a log line
     volumes:
       - ../configs:/app/configs
       - ../output:/app/output

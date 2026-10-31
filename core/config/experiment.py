@@ -11,7 +11,7 @@ from contextlib import contextmanager
 import yaml
 
 from core.utils.files import read_json, sha256_json, write_json
-from core.settings import LOG_FORMAT
+from core.logger import file_handler
 from core.config.schema import BaseConfig
 
 HASH_LENGTH = 8
@@ -88,8 +88,7 @@ class Experiment:
         """Copy this run's log records to `<experiment>/pipeline.log` for the duration of one run only. Only records
         from the thread that runs the pipeline are copied: the API runs several jobs at once in one process, each
         on its own worker thread, and the root logger is shared by all of them."""
-        handler = logging.FileHandler(self.root / "pipeline.log")
-        handler.setFormatter(logging.Formatter(LOG_FORMAT))
+        handler = file_handler(self.root / "pipeline.log")
         thread = threading.get_ident()
         handler.addFilter(lambda record: record.thread == thread)
         logging.getLogger().addHandler(handler)

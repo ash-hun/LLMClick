@@ -3,7 +3,6 @@
 import json
 import math
 import random
-import logging
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -13,11 +12,12 @@ import torch
 from modeling.tuning.method import Row, TrainingMethod
 from modeling.tuning.config import TrainingConfig
 from modeling.tuning.backbone import Backbone
+from core.logger import get_logger
 from core.utils import device
 from core.utils.files import atomic_path, write_json
 from core.progress import Progress
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 LOG = "training.jsonl"
 RESUME = "resume.pt"
 SUMMARY = "summary.json"
@@ -89,7 +89,7 @@ def fit(backbone: Backbone, method: TrainingMethod[Any], rows: list[Row], traini
         optimizer.load_state_dict(state["optimizer"])
         start = int(state["step"])
         events = [event for event in history(workdir) if event["step"] <= start]
-        logger.info("resuming from step %d of %d", start, len(steps))
+        logger.info("training_resumed", step=start, steps=len(steps))
     (workdir / LOG).write_text("".join(json.dumps(event) + "\n" for event in events))
     autocast = torch.autocast("cuda", dtype=torch.bfloat16, enabled=backbone.device.startswith("cuda"))
     backbone.model.train()

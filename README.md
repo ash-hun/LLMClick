@@ -92,8 +92,8 @@ LLMClick/
 │   ├── embedding.py              #   mteb encoder wrapper, one stage per MTEB task (evaluation_embedding)
 │   ├── wakeword.py               #   clips, score traces, miss rate and false accepts per hour over thresholds (evaluation_wakeword)
 │   └── config.py pipeline.py     #   (README: design and milestones)
-├── tests/core/  tests/modeling/
-├── docs/                         # api-spec.md, screen-spec.md
+├── tests/                        # unit/test_{feature}_{module}.py, integ/test_{feature}.py; shared fakes beside conftest.py
+├── docs/                         # features.md, api_spec.md, view_spec.md
 ├── environment/                  # Dockerfile, docker-compose.yml, .env.sample
 │   └── piper/                    #   the Piper program's own locked environment (GPL), built by setup.sh
 └── output/
@@ -628,8 +628,8 @@ writing the step again, so the guarantee holds in one place:
 ## 05. Tests
 
 ```bash
-uv run pytest tests/core tests/modeling  # runner, progress, validation gate, API, every recipe on a tiny random model (wakeword: a fake front end)
-uv run pytest tests/data                # data recipes with fake teachers, a fake Piper and a fake Whisper
+uv run pytest tests/unit                # one module of a feature at a time: pure functions, a method on the tiny model
+uv run pytest tests/integ               # each feature end to end: runner, API, every recipe on a tiny random model, fakes for teachers, Piper, Whisper
 uv run ruff check . && uv run mypy      # what CI runs on every pull request, besides the tests
 ```
 

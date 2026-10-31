@@ -3,7 +3,6 @@
 import os
 import math
 import hashlib
-import logging
 from abc import abstractmethod
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -12,11 +11,12 @@ from typing import Any, ClassVar, TypeVar
 
 from core.stage import Outputs, Stage
 from core.utils.files import write_json
+from core.logger import get_logger
 from modeling.config import ModelingConfig, ValidationConfig
 from modeling.tracker import History, Tracker
 
 ModelingConfigT = TypeVar("ModelingConfigT", bound=ModelingConfig)
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def held_out_positions(count: int, seed: int, share: float) -> set[int]:
@@ -101,6 +101,6 @@ class ValidateStage(Stage[ModelingConfigT]):
         if failures:
             raise ValidationFailed(f"Validation failed for {checkpoint}: " + "; ".join(failures))
         if not (self.config.validation.min or self.config.validation.max):
-            logger.warning("validation has no bounds (validation.min / validation.max): metrics are recorded, nothing is checked")
+            logger.warning("validation_unchecked", reason="no validation.min / validation.max: metrics are recorded, nothing is checked")
         link.symlink_to(os.path.relpath(checkpoint, workdir))
         return {"report": str(workdir / self.REPORT), "passed": True, "metrics": metrics, "checkpoint": str(link)}
