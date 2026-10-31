@@ -20,7 +20,7 @@ method:
   group_size: 4                     # completions sampled per prompt
   max_new_tokens: 8
   temperature: 1.0
-  reward: {name: exact_match}     # or contains; add your own in modeling/llm/methods/grpo.py
+  reward: {name: exact_match}     # or contains; add your own in modeling/llm/methods/grpo_method.py
 
 training: {epochs: 1, lr: 2.0e-6, batch_size: 2, accumulation: 2, max_length: 256, max_steps: 4}
 

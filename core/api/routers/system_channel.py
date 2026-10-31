@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter
 
-from core.registry import catalogue
+from core.recipe_registry import catalogue
 
 system_channel_router = APIRouter(prefix="/api/system", tags=["System Channel"])
 

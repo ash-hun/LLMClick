@@ -1,1 +1,1 @@
-"""LLM training methods; each recipe in modeling/llm/pipeline.py binds one of them."""
+"""LLM training methods; each recipe in modeling/llm/llm_pipeline.py binds one of them."""

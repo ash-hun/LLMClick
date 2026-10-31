@@ -5,9 +5,9 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Path as Segment, Query
 
-from core.api.guard import confined
-from core.api.schema import EvaluationSummary
-from core.utils.files import read_json
+from core.api.access_guard import confined
+from core.api.api_schema import EvaluationSummary
+from core.file_store import read_json
 
 evaluation_channel_router = APIRouter(prefix="/api/evaluations", tags=["Evaluation Channel"])
 REPORT = "report"

@@ -1,11 +1,35 @@
-"""Fixtures that need no download or GPU: a tiny random LM and tokenizer the recipes can train on a CPU."""
+"""Fixtures that need no download or GPU: no network, a tiny random LM, and the fakes and runs several files share."""
 
+import sys
+import socket
+from typing import Any
 from pathlib import Path
 
 import pytest
 
+from tests.speech_fakes import FakeEmbedder, FakeListener, FakePiper, FakeRater, FakeSpeaker, fake_feature_models
+from modeling.llm.models.transformer_backbone import TransformerBackbone
+from modeling.llm.models.backbone_config import LLMBackboneConfig
+from tests.recipe_fakes import FakeHarness, FakeWandb
+from tests.recipe_inputs import raw
+from core import pipeline_runner
+
 CHATML = ("{% for m in messages %}<|im_start|>{{ m['role'] }}\n{{ m['content'] }}<|im_end|>\n{% endfor %}"
           "{% if add_generation_prompt %}<|im_start|>assistant\n{% endif %}")
+LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost"}
+
+
+@pytest.fixture(autouse=True)
+def no_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A test that reaches a real API is slow, costs money and follows the other side's state: external calls fail."""
+    connect = socket.socket.connect
+
+    def guarded(self: socket.socket, address: Any) -> None:
+        if self.family in (socket.AF_INET, socket.AF_INET6) and address[0] not in LOCAL_HOSTS:
+            raise RuntimeError(f"a test tried to reach {address[0]}: mock the client instead")
+        connect(self, address)
+
+    monkeypatch.setattr(socket.socket, "connect", guarded)
 
 
 @pytest.fixture(scope="session")
@@ -33,3 +57,57 @@ def tiny_model(tmp_path_factory: pytest.TempPathFactory) -> Path:
     model.save_pretrained(path)
     fast.save_pretrained(path)
     return path
+
+
+@pytest.fixture(scope="module")
+def trained(tiny_model: Path, tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
+    """A tiny `llm_sft` experiment the evaluation recipes score, trained once per test file."""
+    out = tmp_path_factory.mktemp("trained")
+    result = pipeline_runner.build(raw("llm_sft", tiny_model, out)).run()
+    return result
+
+
+@pytest.fixture
+def backbone(tiny_model: Path) -> TransformerBackbone:
+    """The tiny model loaded as a transformer backbone on the CPU."""
+    loaded = TransformerBackbone(LLMBackboneConfig(architecture="transformer", name=str(tiny_model)))
+    loaded.load("cpu")
+    return loaded
+
+
+@pytest.fixture
+def wandb(monkeypatch: pytest.MonkeyPatch) -> FakeWandb:
+    fake = FakeWandb()
+    monkeypatch.setitem(sys.modules, "wandb", fake)
+    return fake
+
+
+@pytest.fixture
+def fake(monkeypatch: pytest.MonkeyPatch) -> FakeHarness:
+    """lm_eval's `simple_evaluate` replaced by a FakeHarness."""
+    import lm_eval
+
+    harness = FakeHarness()
+    monkeypatch.setattr(lm_eval, "simple_evaluate", harness.simple_evaluate)
+    return harness
+
+
+@pytest.fixture
+def piper(monkeypatch: pytest.MonkeyPatch) -> FakePiper:
+    """The Piper program, Whisper and the quality and speaker raters of the tts recipes replaced by fakes;
+    `data_speech` patches other places and keeps its own `piper` fixture."""
+    fake = FakePiper()
+    for name in ("speak", "fit", "export"):
+        monkeypatch.setattr(f"modeling.tts.piper_process.{name}", getattr(fake, name))
+    monkeypatch.setattr("modeling.tts.piper_process.version", lambda: "test")
+    monkeypatch.setattr("modeling.tts.tts_stages.Listener", FakeListener(fake, heard_as="a recording"))
+    monkeypatch.setattr("modeling.tts.tts_stages.Rater", lambda directory: FakeRater(fake))
+    monkeypatch.setattr("modeling.tts.tts_stages.Speaker", lambda recordings: FakeSpeaker(fake))
+    return fake
+
+
+@pytest.fixture
+def wakeword_front_end(monkeypatch: pytest.MonkeyPatch) -> None:
+    """openWakeWord's feature models replaced by FakeEmbedder; the wakeword files use it on every test."""
+    monkeypatch.setattr("modeling.wakeword.feature_embedder.ensure", fake_feature_models)
+    monkeypatch.setattr("modeling.wakeword.feature_embedder.Embedder", FakeEmbedder)
