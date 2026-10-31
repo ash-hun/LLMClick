@@ -10,7 +10,7 @@
 
 ## 서비스 개요
 
-YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. config 의 `pipeline.recipe` 가 레시피를 고르고, 레시피는 스테이지를 순서대로 실행하며 입력이 같은 스테이지는 다시 만들지 않는다(`core/pipeline.py`). 레시피는 세 채널로 나뉜다: 학습 데이터를 만드는 `data`, 모델을 학습하고 검증하는 `modeling`, 학습된 모델을 채점하는 `evaluation`. 같은 실행을 CLI(`llmclick run`)와 HTTP Job API(`POST /api/jobs`) 두 입구로 쓴다.
+YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. config 의 `pipeline.recipe` 가 레시피를 고르고, 레시피는 스테이지를 순서대로 실행하며 입력이 같은 스테이지는 다시 만들지 않는다(`core/pipeline_runner.py`). 레시피는 세 채널로 나뉜다: 학습 데이터를 만드는 `data`, 모델을 학습하고 검증하는 `modeling`, 학습된 모델을 채점하는 `evaluation`. 같은 실행을 CLI(`llmclick run`)와 HTTP Job API(`POST /api/jobs`) 두 입구로 쓴다.
 
 범위 밖: 학습된 모델을 서빙하는 추론 엔드포인트는 없다. 화면(프론트엔드)도 이 저장소의 코드에 없다.
 
@@ -20,7 +20,7 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 
 ## 기능 목록
 
-기능 ID 알파벳순. 레시피의 기능 ID 는 `core.registry.RECIPES` 에 등록된 이름이다. 모든 레시피는 `POST /api/jobs` 로도 실행된다.
+기능 ID 알파벳순. 레시피의 기능 ID 는 `core.recipe_registry.RECIPES` 에 등록된 이름이다. 모든 레시피는 `POST /api/jobs` 로도 실행된다.
 
 | 기능 ID | 기능 | 진입점 | 상태 |
 |---|---|---|---|
@@ -67,10 +67,10 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | 파일 | 층 | 역할 |
 |---|---|---|
 | `data/speech/__init__.py` | package | 음성 데이터셋 패키지 |
-| `data/speech/config.py` | config | `SpeechConfig`: 텍스트 레시피의 seeds, prompts 에 음성과 음성 검사 설정을 더함 |
-| `data/speech/synthesize.py` | stage | `synthesize`: 프롬프트마다 Piper 로 읽어 자연 키로 보관 |
-| `data/speech/verify.py` | stage | `verify`: 길이, 클리핑, 무음 검사 후 Whisper 받아쓰기와 텍스트 비교 |
-| `data/speech/select.py` | stage | `select`: 텍스트당 녹음 하나를 Piper 학습셋으로 기록 |
+| `data/speech/speech_config.py` | config | `SpeechConfig`: 텍스트 레시피의 seeds, prompts 에 음성과 음성 검사 설정을 더함 |
+| `data/speech/synthesize_stage.py` | stage | `synthesize`: 프롬프트마다 Piper 로 읽어 자연 키로 보관 |
+| `data/speech/speech_verify_stage.py` | stage | `verify`: 길이, 클리핑, 무음 검사 후 Whisper 받아쓰기와 텍스트 비교 |
+| `data/speech/speech_select_stage.py` | stage | `select`: 텍스트당 녹음 하나를 Piper 학습셋으로 기록 |
 
 **테스트**
 
@@ -80,10 +80,10 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | 통합 | `tests/integ/test_data_speech.py` |
 
 **제약과 미구현**:
-- `voice.speakers` 가 화자를 하나도 지정하지 않으면 config 검증에서 거부한다(`data/speech/config.py`).
-- `# idempotent:` Piper 는 노이즈를 시드 없이 뽑아 같은 텍스트도 매번 다른 파일이 된다. 첫 파일을 자연 키로 보관하고 다시 읽히지 않는다(`modeling/tts/piper.py`).
-- `# ponytail:` WER 계산에 숫자, 약어 정규화가 없다(`modeling/tts/asr.py`).
-- `# ponytail:` Whisper 는 앞 30초만 듣는다(`modeling/tts/asr.py`).
+- `voice.speakers` 가 화자를 하나도 지정하지 않으면 config 검증에서 거부한다(`data/speech/speech_config.py`).
+- `# idempotent:` Piper 는 노이즈를 시드 없이 뽑아 같은 텍스트도 매번 다른 파일이 된다. 첫 파일을 자연 키로 보관하고 다시 읽히지 않는다(`modeling/tts/piper_process.py`).
+- `# ponytail:` WER 계산에 숫자, 약어 정규화가 없다(`modeling/tts/asr_listener.py`).
+- `# ponytail:` Whisper 는 앞 30초만 듣는다(`modeling/tts/asr_listener.py`).
 
 ---
 
@@ -105,21 +105,21 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 
 | 파일 | 층 | 역할 |
 |---|---|---|
-| `data/evolve.py` | stage | `evolve`: Evol-Instruct 연산자(`EVOLVERS`)로 프롬프트를 어렵게 바꾸고 실패를 제거 |
-| `data/respond.py` | stage | `respond`: 교사가 프롬프트마다 N번 답변, 예산 초과 시 `BudgetExceeded` |
-| `data/verify.py` | stage | `verify`: 스키마, sorry 규칙, 보상, 다수결 검사 후 판정자, 거절 사유 기록 |
-| `data/select.py` | stage | `select`: 중복과 유출 제거, 목표 레시피 형식으로 조립, manifest 기록 |
+| `data/evolve_stage.py` | stage | `evolve`: Evol-Instruct 연산자(`EVOLVERS`)로 프롬프트를 어렵게 바꾸고 실패를 제거 |
+| `data/respond_stage.py` | stage | `respond`: 교사가 프롬프트마다 N번 답변, 예산 초과 시 `BudgetExceeded` |
+| `data/verify_stage.py` | stage | `verify`: 스키마, sorry 규칙, 보상, 다수결 검사 후 판정자, 거절 사유 기록 |
+| `data/select_stage.py` | stage | `select`: 중복과 유출 제거, 목표 레시피 형식으로 조립, manifest 기록 |
 
 **테스트**
 
 | 종류 | 파일 |
 |---|---|
-| 단위 | `tests/unit/test_data_synthetic_teachers.py` |
+| 단위 | `tests/unit/test_data_synthetic_teacher_client.py` |
 | 통합 | `tests/integ/test_data_synthetic.py` |
 
 **제약과 미구현**:
-- 시드는 `values` 와 `source` 중 하나만, `source` 에는 `field` 가 필요하다. 등록되지 않은 evolve 연산자, 보상, 판정 교사는 config 검증에서 거부한다. `assemble: decision` 이나 `verify.schema_recipe: llm_decision_sft` 에는 `select.decision` 이 필요하다(`data/config.py`).
-- `# ponytail:` 근사 중복 검사가 남긴 행 전부와 비교해 O(n^2) 이다. 약 5만 행을 넘으면 MinHash 와 LSH 로 바꾼다(`data/select.py`).
+- 시드는 `values` 와 `source` 중 하나만, `source` 에는 `field` 가 필요하다. 등록되지 않은 evolve 연산자, 보상, 판정 교사는 config 검증에서 거부한다. `assemble: decision` 이나 `verify.schema_recipe: llm_decision_sft` 에는 `select.decision` 이 필요하다(`data/data_config.py`).
+- `# ponytail:` 근사 중복 검사가 남긴 행 전부와 비교해 O(n^2) 이다. 약 5만 행을 넘으면 MinHash 와 LSH 로 바꾼다(`data/select_stage.py`).
 
 ---
 
@@ -142,22 +142,22 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | 파일 | 층 | 역할 |
 |---|---|---|
 | `modeling/embedding/__init__.py` | package | 임베딩 패밀리 |
-| `modeling/embedding/pipeline.py` | pipeline | `ContrastivePipeline` 등록 |
-| `modeling/embedding/config.py` | config | `ContrastiveConfig`: 임베딩 카탈로그와 방법 |
+| `modeling/embedding/embedding_pipeline.py` | pipeline | `ContrastivePipeline` 등록 |
+| `modeling/embedding/embedding_config.py` | config | `ContrastiveConfig`: 임베딩 카탈로그와 방법 |
 | `modeling/embedding/methods/__init__.py` | package | 임베딩 학습 방법 |
-| `modeling/embedding/methods/contrastive.py` | method | InfoNCE 손실과 accuracy, mrr 평가 |
+| `modeling/embedding/methods/contrastive_method.py` | method | InfoNCE 손실과 accuracy, mrr 평가 |
 | `modeling/embedding/models/__init__.py` | model | `EMBEDDING_BACKBONES` 카탈로그 |
-| `modeling/embedding/models/base.py` | model | 텍스트를 단위 벡터로 바꾸는 임베딩 백본 기반(`evaluation_embedding` 도 읽음) |
-| `modeling/embedding/models/bi_encoder.py` | model | 마지막 토큰 풀링 bi-encoder |
+| `modeling/embedding/models/embedding_backbone.py` | model | 텍스트를 단위 벡터로 바꾸는 임베딩 백본 기반(`evaluation_embedding` 도 읽음) |
+| `modeling/embedding/models/bi_encoder_backbone.py` | model | 마지막 토큰 풀링 bi-encoder |
 
 **테스트**
 
 | 종류 | 파일 |
 |---|---|
-| 단위 | `tests/unit/test_embedding_contrastive_bi_encoder.py` |
+| 단위 | `tests/unit/test_embedding_contrastive_bi_encoder_backbone.py` |
 | 통합 | `tests/integ/test_tuning.py` |
 
-**제약과 미구현**: 행의 `query`, `positive`, `negative` 는 빈 문자열이 아니어야 한다(`modeling/embedding/methods/contrastive.py`). `model.revision` 은 40자 커밋 해시여야 한다(로컬 디렉터리 제외, `modeling/tuning/config.py`).
+**제약과 미구현**: 행의 `query`, `positive`, `negative` 는 빈 문자열이 아니어야 한다(`modeling/embedding/methods/contrastive_method.py`). `model.revision` 은 40자 커밋 해시여야 한다(로컬 디렉터리 제외, `modeling/tuning/tuning_config.py`).
 
 ---
 
@@ -179,16 +179,16 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 
 | 파일 | 층 | 역할 |
 |---|---|---|
-| `evaluation/benchmark.py` | stage | `BenchmarkConfig`, 프리셋, 벤치마크별 `BenchmarkStage`, `BenchmarkReport`(`evaluation_compare` 도 재사용) |
+| `evaluation/benchmark_evaluation.py` | stage | `BenchmarkConfig`, 프리셋, 벤치마크별 `BenchmarkStage`, `BenchmarkReport`(`evaluation_compare` 도 재사용) |
 
 **테스트**
 
 | 종류 | 파일 |
 |---|---|
-| 단위 | `tests/unit/test_evaluation_benchmark_benchmark.py` |
+| 단위 | `tests/unit/test_evaluation_benchmark_benchmark_evaluation.py` |
 | 통합 | `tests/integ/test_evaluation_benchmark.py` |
 
-**제약과 미구현**: `benchmarks.preset` 은 등록된 프리셋이어야 하고 프리셋이나 태스크가 하나 이상 있어야 한다. `thinking` 은 `chat_template: true` 가 필요하다. 언어 모델이 아닌 실험과 lm-eval 에 없는 태스크는 거부한다(`evaluation/benchmark.py`).
+**제약과 미구현**: `benchmarks.preset` 은 등록된 프리셋이어야 하고 프리셋이나 태스크가 하나 이상 있어야 한다. `thinking` 은 `chat_template: true` 가 필요하다. 언어 모델이 아닌 실험과 lm-eval 에 없는 태스크는 거부한다(`evaluation/benchmark_evaluation.py`).
 
 ---
 
@@ -210,16 +210,16 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 
 | 파일 | 층 | 역할 |
 |---|---|---|
-| `evaluation/compare.py` | stage | `CompareConfig`, 기준 대비 차이 판정, 차트, `CompareReport` |
+| `evaluation/compare_evaluation.py` | stage | `CompareConfig`, 기준 대비 차이 판정, 차트, `CompareReport` |
 
 **테스트**
 
 | 종류 | 파일 |
 |---|---|
-| 단위 | `tests/unit/test_evaluation_compare_compare.py` |
+| 단위 | `tests/unit/test_evaluation_compare_compare_evaluation.py` |
 | 통합 | `tests/integ/test_evaluation_compare.py` |
 
-**제약과 미구현**: run 라벨은 서로 달라야 하고, 하나는 시작 가중치(`checkpoint: base` 또는 Hub `name`)여야 한다. `benchmarks`, `rows`, `decision`, `embedding` 중 하나는 있어야 하고, 축은 그 섹션들이 내는 항목만 이름할 수 있다(`evaluation/compare.py`).
+**제약과 미구현**: run 라벨은 서로 달라야 하고, 하나는 시작 가중치(`checkpoint: base` 또는 Hub `name`)여야 한다. `benchmarks`, `rows`, `decision`, `embedding` 중 하나는 있어야 하고, 축은 그 섹션들이 내는 항목만 이름할 수 있다(`evaluation/compare_evaluation.py`).
 
 ---
 
@@ -241,16 +241,16 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 
 | 파일 | 층 | 역할 |
 |---|---|---|
-| `evaluation/stages.py` | stage | `RowsStage`, `ScoreStage`, `ReportStage`(모델과 행 묶음별로 `for_` 로 만들어 `evaluation_compare`, `evaluation_decision` 도 재사용) |
+| `evaluation/custom_stages.py` | stage | `RowsStage`, `ScoreStage`, `ReportStage`(모델과 행 묶음별로 `for_` 로 만들어 `evaluation_compare`, `evaluation_decision` 도 재사용) |
 
 **테스트**
 
 | 종류 | 파일 |
 |---|---|
-| 단위 | `tests/unit/test_evaluation_custom_contamination.py` |
+| 단위 | `tests/unit/test_evaluation_custom_contamination_check.py` |
 | 통합 | `tests/integ/test_evaluation_custom.py` |
 
-**제약과 미구현**: 실험 없는 Hub 모델(`model.name`)은 채점할 수 없다. 벤치마크와 임베딩 레시피만 Hub 모델을 받는다(`evaluation/source.py`). 실험 레시피 형식에 맞지 않는 행이나 빈 행 집합은 거부한다(`evaluation/stages.py`).
+**제약과 미구현**: 실험 없는 Hub 모델(`model.name`)은 채점할 수 없다. 벤치마크와 임베딩 레시피만 Hub 모델을 받는다(`evaluation/source_model.py`). 실험 레시피 형식에 맞지 않는 행이나 빈 행 집합은 거부한다(`evaluation/custom_stages.py`).
 
 ---
 
@@ -272,16 +272,16 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 
 | 파일 | 층 | 역할 |
 |---|---|---|
-| `evaluation/decision.py` | stage | `DecisionConfig`, `jevbench` 소스, `DecisionScoreStage`, `DecisionReport`(`evaluation_compare` 도 재사용) |
+| `evaluation/decision_evaluation.py` | stage | `DecisionConfig`, `jevbench` 소스, `DecisionScoreStage`, `DecisionReport`(`evaluation_compare` 도 재사용) |
 
 **테스트**
 
 | 종류 | 파일 |
 |---|---|
-| 단위 | `tests/unit/test_evaluation_decision_decision.py` |
+| 단위 | `tests/unit/test_evaluation_decision_decision_evaluation.py` |
 | 통합 | `tests/integ/test_evaluation_decision.py` |
 
-**제약과 미구현**: decision 레시피가 아닌 실험은 거부한다. JevBench 티어는 `easy`, `standard`, `hard` 만 받는다(`evaluation/decision.py`).
+**제약과 미구현**: decision 레시피가 아닌 실험은 거부한다. JevBench 티어는 `easy`, `standard`, `hard` 만 받는다(`evaluation/decision_evaluation.py`).
 
 ---
 
@@ -303,7 +303,7 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 
 | 파일 | 층 | 역할 |
 |---|---|---|
-| `evaluation/embedding.py` | stage | `EmbeddingConfig`, mteb 인코더 어댑터, `EmbeddingStage`, `EmbeddingReport`(`evaluation_compare` 도 재사용) |
+| `evaluation/embedding_evaluation.py` | stage | `EmbeddingConfig`, mteb 인코더 어댑터, `EmbeddingStage`, `EmbeddingReport`(`evaluation_compare` 도 재사용) |
 
 **테스트**
 
@@ -312,7 +312,7 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | 단위 | 없음: 이 기능의 모듈 검사는 통합 테스트 파일이 함께 한다 |
 | 통합 | `tests/integ/test_evaluation_embedding.py` |
 
-**제약과 미구현**: 임베딩 모델이 아닌 레시피나 아키텍처, 알 수 없는 MTEB 태스크는 거부한다(`evaluation/embedding.py`).
+**제약과 미구현**: 임베딩 모델이 아닌 레시피나 아키텍처, 알 수 없는 MTEB 태스크는 거부한다(`evaluation/embedding_evaluation.py`).
 
 ---
 
@@ -334,18 +334,18 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 
 | 파일 | 층 | 역할 |
 |---|---|---|
-| `evaluation/wakeword.py` | stage | `WakewordEvaluationConfig`, `ClipsStage`, `TraceStage`, `WakewordReport` |
+| `evaluation/wakeword_evaluation.py` | stage | `WakewordEvaluationConfig`, `ClipsStage`, `TraceStage`, `WakewordReport` |
 
 **테스트**
 
 | 종류 | 파일 |
 |---|---|
-| 단위 | `tests/unit/test_evaluation_wakeword_wakeword.py` |
+| 단위 | `tests/unit/test_evaluation_wakeword_wakeword_evaluation.py` |
 | 통합 | `tests/integ/test_evaluation_wakeword.py` |
 
 **제약과 미구현**:
-- `checkpoint` 가 `validate` 나 `train` 이면 `model.experiment` 가 필요하다. 오디오 파일이 없는 행, `.wav` 가 없는 디렉터리는 거부한다(`evaluation/wakeword.py`).
-- `# ponytail:` 목표 오수락에서의 임계값은 스윕한 값 중 가장 민감한 것이고 사이를 보간하지 않는다. 0.01 간격이 거칠면 보간한다(`evaluation/wakeword.py`).
+- `checkpoint` 가 `validate` 나 `train` 이면 `model.experiment` 가 필요하다. 오디오 파일이 없는 행, `.wav` 가 없는 디렉터리는 거부한다(`evaluation/wakeword_evaluation.py`).
+- `# ponytail:` 목표 오수락에서의 임계값은 스윕한 값 중 가장 민감한 것이고 사이를 보간하지 않는다. 0.01 간격이 거칠면 보간한다(`evaluation/wakeword_evaluation.py`).
 
 ---
 
@@ -353,7 +353,7 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 
 **설명**: 레시피 실행을 HTTP 로 연다. config 를 검증만 하거나, 백그라운드 워커에서 실행하고 상태와 진행률을 조회, 취소한다. 평가 레시피가 쓴 리포트를 목록과 전문으로 읽고, 서버가 아는 레시피 목록을 돌려준다. Job 은 SQLite 테이블에 남아 재시작 후에도 조회되고, 같은 config 를 실행 중에 다시 제출하면 같은 Job 을 돌려준다.
 
-**진입점**: `llmclick serve` 또는 `uvicorn core.api.app:app`(`uvicorn main:app`), 그리고 아래 엔드포인트. 세부는 [api_spec.md](api_spec.md).
+**진입점**: `llmclick serve` 또는 `uvicorn core.api.api_app:app`(`uvicorn main:app`), 그리고 아래 엔드포인트. 세부는 [api_spec.md](api_spec.md).
 
 | 엔드포인트 | 라우터 |
 |---|---|
@@ -363,7 +363,7 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | `GET /api/jobs` | `job_channel.py` |
 | `GET /api/jobs/{job_id}` | `job_channel.py` |
 | `GET /api/system/recipes` | `system_channel.py` |
-| `GET /health` | `app.py` |
+| `GET /health` | `api_app.py` |
 | `POST /api/config/load` | `config_channel.py` |
 | `POST /api/config/validate` | `config_channel.py` |
 | `POST /api/jobs` | `job_channel.py` |
@@ -378,17 +378,17 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | `output_dir`, `recipe`, `experiment` | 평가 리포트 목록(`EvaluationSummary`) 또는 리포트 전문 |
 | 없음 | 레시피별 스테이지와 레지스트리 키(`catalogue()`) |
 
-**처리 흐름**: `core/api/app.py` 에서 `authorized`(토큰 검사)를 거쳐 라우터로. Job 은 `job_channel.create` 에서 `config_channel.parse`(경로 제한 `confined`, `pipeline.load` 또는 `pipeline.build`), `store().submit`, 워커가 `Pipeline.run` 순.
+**처리 흐름**: `core/api/api_app.py` 에서 `authorized`(토큰 검사)를 거쳐 라우터로. Job 은 `job_channel.create` 에서 `config_channel.parse`(경로 제한 `confined`, `pipeline.load` 또는 `pipeline.build`), `store().submit`, 워커가 `Pipeline.run` 순.
 
 **구현 파일**
 
 | 파일 | 층 | 역할 |
 |---|---|---|
 | `core/api/__init__.py` | package | API 패키지 |
-| `core/api/app.py` | api | FastAPI 앱, `/health`, 라우터에 토큰 의존성 부착 |
-| `core/api/guard.py` | api | `API_TOKEN` Bearer 검사, `API_PATHS` 밖 경로 403 |
-| `core/api/schema.py` | api | 요청, 응답 본문(`JobRequest`, `JobResponse`, `ConfigSummary`, `EvaluationSummary`) |
-| `core/api/store.py` | service | SQLite Job 테이블과 장치별 워커 풀, 취소, 재시작 시 `interrupted` 표시 |
+| `core/api/api_app.py` | api | FastAPI 앱, `/health`, 라우터에 토큰 의존성 부착 |
+| `core/api/access_guard.py` | api | `API_TOKEN` Bearer 검사, `API_PATHS` 밖 경로 403 |
+| `core/api/api_schema.py` | api | 요청, 응답 본문(`JobRequest`, `JobResponse`, `ConfigSummary`, `EvaluationSummary`) |
+| `core/api/job_store.py` | service | SQLite Job 테이블과 장치별 워커 풀, 취소, 재시작 시 `interrupted` 표시 |
 | `core/api/routers/__init__.py` | api | 라우터 묶음 |
 | `core/api/routers/config_channel.py` | api | `/api/config/load`, `/api/config/validate` |
 | `core/api/routers/job_channel.py` | api | `/api/jobs` 제출, 목록, 조회, 취소 |
@@ -407,10 +407,10 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 `/api/evaluations` 조회는 학습된 실험을 공유하려고 `test_evaluation_custom.py` 에 있다.
 
 **제약과 미구현**:
-- `API_TOKEN` 이 비어 있으면 `/api/*` 가 열려 있다. `/health` 는 항상 토큰 없이 열린다(`core/api/guard.py`, `core/api/app.py`).
+- `API_TOKEN` 이 비어 있으면 `/api/*` 가 열려 있다. `/health` 는 항상 토큰 없이 열린다(`core/api/access_guard.py`, `core/api/api_app.py`).
 - 끝난 Job 은 취소할 수 없다(409). 취소는 다음 진행률 보고 시점에 멈춘다(`core/api/routers/job_channel.py`).
-- `# ponytail:` `tts_piper` 의 fit 중에는 Piper 가 진행률을 보내지 않아 취소된 Job 이 fit 이 끝나야 멈춘다(`modeling/tts/stages.py`).
-- 서버가 Job 이 끝나기 전에 멈추면 그 Job 은 `interrupted` 로 표시되고 다시 제출해야 한다(`core/api/store.py`).
+- `# ponytail:` `tts_piper` 의 fit 중에는 Piper 가 진행률을 보내지 않아 취소된 Job 이 fit 이 끝나야 멈춘다(`modeling/tts/tts_stages.py`).
+- 서버가 Job 이 끝나기 전에 멈추면 그 Job 은 `interrupted` 로 표시되고 다시 제출해야 한다(`core/api/job_store.py`).
 
 ---
 
@@ -432,18 +432,18 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 
 | 파일 | 층 | 역할 |
 |---|---|---|
-| `modeling/llm/methods/decision/cispo.py` | method | 추론 그룹 샘플링과 CISPO 손실 |
+| `modeling/llm/methods/decision/cispo_method.py` | method | 추론 그룹 샘플링과 CISPO 손실 |
 
 **테스트**
 
 | 종류 | 파일 |
 |---|---|
-| 단위 | `tests/unit/test_llm_decision_sft_base.py` |
+| 단위 | `tests/unit/test_llm_decision_sft_decision_method.py` |
 | 통합 | `tests/integ/test_llm_decision_cispo.py` |
 
-단위 테스트는 llm_decision_sft 와 공유하는 `decision/base.py` 대상.
+단위 테스트는 llm_decision_sft 와 공유하는 `decision/decision_method.py` 대상.
 
-**제약과 미구현**: `model.head` 가 필수이고 `pointer`, `readout` 중 하나여야 한다(`modeling/llm/config.py`). 학습 행이 2개 미만이면 학습과 보정 행으로 나눌 수 없어 거부하고, `training.max_length` 를 넘는 질문도 거부한다(`modeling/llm/methods/decision/base.py`).
+**제약과 미구현**: `model.head` 가 필수이고 `pointer`, `readout` 중 하나여야 한다(`modeling/llm/llm_config.py`). 학습 행이 2개 미만이면 학습과 보정 행으로 나눌 수 없어 거부하고, `training.max_length` 를 넘는 질문도 거부한다(`modeling/llm/methods/decision/decision_method.py`).
 
 ---
 
@@ -465,16 +465,16 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 
 | 파일 | 층 | 역할 |
 |---|---|---|
-| `modeling/llm/methods/decision/sft.py` | method | 헤드 교차 엔트로피, 기준 모델 추론 캐시 |
+| `modeling/llm/methods/decision/decision_sft_method.py` | method | 헤드 교차 엔트로피, 기준 모델 추론 캐시 |
 
 **테스트**
 
 | 종류 | 파일 |
 |---|---|
-| 단위 | `tests/unit/test_llm_decision_sft_base.py` |
+| 단위 | `tests/unit/test_llm_decision_sft_decision_method.py` |
 | 통합 | `tests/integ/test_llm_decision_sft.py` |
 
-**제약과 미구현**: `model.head` 가 필수이고 `pointer`, `readout` 중 하나여야 한다(`modeling/llm/config.py`). 질문 type 은 `choice`, `noul`, `score` 만 받는다. 학습 행이 2개 미만이면 거부한다(`modeling/llm/methods/decision/base.py`).
+**제약과 미구현**: `model.head` 가 필수이고 `pointer`, `readout` 중 하나여야 한다(`modeling/llm/llm_config.py`). 질문 type 은 `choice`, `noul`, `score` 만 받는다. 학습 행이 2개 미만이면 거부한다(`modeling/llm/methods/decision/decision_method.py`).
 
 ---
 
@@ -496,16 +496,16 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 
 | 파일 | 층 | 역할 |
 |---|---|---|
-| `modeling/llm/methods/dpo.py` | method | DPO 손실, 기준 로그 확률 캐시 |
+| `modeling/llm/methods/dpo_method.py` | method | DPO 손실, 기준 로그 확률 캐시 |
 
 **테스트**
 
 | 종류 | 파일 |
 |---|---|
-| 단위 | `tests/unit/test_llm_dpo_dpo.py` |
+| 단위 | `tests/unit/test_llm_dpo_dpo_method.py` |
 | 통합 | `tests/integ/test_tuning.py` |
 
-**제약과 미구현**: `chosen`, `rejected` 는 빈 문자열이 아니고 서로 달라야 하며, `prompt` 는 문자열이나 메시지 목록이어야 한다(`modeling/llm/methods/dpo.py`).
+**제약과 미구현**: `chosen`, `rejected` 는 빈 문자열이 아니고 서로 달라야 하며, `prompt` 는 문자열이나 메시지 목록이어야 한다(`modeling/llm/methods/dpo_method.py`).
 
 ---
 
@@ -527,17 +527,17 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 
 | 파일 | 층 | 역할 |
 |---|---|---|
-| `modeling/llm/methods/grpo.py` | method | GRPO 손실, 보상 레지스트리 `REWARDS`(`data_synthetic` 의 verify 도 읽음) |
+| `modeling/llm/methods/grpo_method.py` | method | GRPO 손실, 보상 레지스트리 `REWARDS`(`data_synthetic` 의 verify 도 읽음) |
 
 **테스트**
 
 | 종류 | 파일 |
 |---|---|
-| 단위 | `tests/unit/test_llm_grpo_grpo.py` |
+| 단위 | `tests/unit/test_llm_grpo_grpo_method.py` |
 | 통합 | `tests/integ/test_llm_grpo.py` |
 | 통합 | `tests/integ/test_tuning.py` |
 
-**제약과 미구현**: 등록되지 않은 보상은 거부한다. `method.beta > 0` 이면 `training.adapter` 가 필요하다: KL 기준이 어댑터 아래의 기준 모델이다(`modeling/llm/config.py`).
+**제약과 미구현**: 등록되지 않은 보상은 거부한다. `method.beta > 0` 이면 `training.adapter` 가 필요하다: KL 기준이 어댑터 아래의 기준 모델이다(`modeling/llm/llm_config.py`).
 
 ---
 
@@ -559,7 +559,7 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 
 | 파일 | 층 | 역할 |
 |---|---|---|
-| `modeling/llm/methods/instruction.py` | method | 레코드를 대화로 바꾸는 SFT 확장(`modeling/llm/methods/sft.py` 의 `SFT` 상속) |
+| `modeling/llm/methods/instruction_method.py` | method | 레코드를 대화로 바꾸는 SFT 확장(`modeling/llm/methods/sft_method.py` 의 `SFT` 상속) |
 
 **테스트**
 
@@ -570,7 +570,7 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 
 단위 테스트 없음: 방법 코드가 `llm_sft` 의 SFT 를 그대로 쓴다.
 
-**제약과 미구현**: `instruction`, `output` 은 문자열이어야 한다(`modeling/llm/methods/instruction.py`).
+**제약과 미구현**: `instruction`, `output` 은 문자열이어야 한다(`modeling/llm/methods/instruction_method.py`).
 
 ---
 
@@ -592,20 +592,20 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 
 | 파일 | 층 | 역할 |
 |---|---|---|
-| `modeling/llm/methods/sft.py` | method | assistant 턴 교차 엔트로피, loss, perplexity 평가(`llm_instruction` 이 상속) |
+| `modeling/llm/methods/sft_method.py` | method | assistant 턴 교차 엔트로피, loss, perplexity 평가(`llm_instruction` 이 상속) |
 
 **테스트**
 
 | 종류 | 파일 |
 |---|---|
-| 단위 | `tests/unit/test_llm_sft_sft.py` |
-| 단위 | `tests/unit/test_llm_sft_loop.py` |
-| 단위 | `tests/unit/test_llm_sft_method.py` |
-| 단위 | `tests/unit/test_llm_sft_backbone.py` |
+| 단위 | `tests/unit/test_llm_sft_sft_method.py` |
+| 단위 | `tests/unit/test_llm_sft_training_loop.py` |
+| 단위 | `tests/unit/test_llm_sft_training_method.py` |
+| 단위 | `tests/unit/test_llm_sft_tuning_backbone.py` |
 | 통합 | `tests/integ/test_llm_sft.py` |
 | 통합 | `tests/integ/test_tuning.py` |
 
-**제약과 미구현**: 대화는 assistant 턴으로 끝나야 하고 모든 메시지는 허용된 role 과 문자열 content 를 가져야 한다(`modeling/llm/methods/sft.py`). decision 이 아닌 레시피에 `model.head` 를 주면 거부한다(`modeling/llm/config.py`).
+**제약과 미구현**: 대화는 assistant 턴으로 끝나야 하고 모든 메시지는 허용된 role 과 문자열 content 를 가져야 한다(`modeling/llm/methods/sft_method.py`). decision 이 아닌 레시피에 `model.head` 를 주면 거부한다(`modeling/llm/llm_config.py`).
 
 ---
 
@@ -627,23 +627,23 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 
 | 파일 | 층 | 역할 |
 |---|---|---|
-| `modeling/tts/piper.py` | program | `PIPER_PYTHON` 프로세스로 Piper speak, fit, export 실행(`data_speech` 도 speak 사용) |
+| `modeling/tts/piper_process.py` | program | `PIPER_PYTHON` 프로세스로 Piper speak, fit, export 실행(`data_speech` 도 speak 사용) |
 
 **테스트**
 
 | 종류 | 파일 |
 |---|---|
-| 단위 | `tests/unit/test_tts_piper_audio.py` |
-| 단위 | `tests/unit/test_tts_piper_quality.py` |
+| 단위 | `tests/unit/test_tts_piper_audio_file.py` |
+| 단위 | `tests/unit/test_tts_piper_quality_rater.py` |
 | 통합 | `tests/integ/test_tts_piper.py` |
 
 **제약과 미구현**:
-- Hub 파일은 `file` 과 40자 커밋 `revision` 이 필요하다. `training.args` 로 레시피가 정하는 키를 덮어쓸 수 없다. `validation.phrases` 이름은 영문자, 숫자, `_`, `-` 만 쓴다(`modeling/tts/config.py`).
-- `# idempotent:` Piper 가 cudnn.deterministic 을 꺼 GPU 실행은 비트 단위로 같지 않다. 중단된 실행은 마지막 epoch 스냅샷에서 이어간다(`modeling/tts/stages.py`).
-- `# idempotent:` Piper speak 는 시드 없는 노이즈라 같은 텍스트도 매번 다른 파일이 된다(`modeling/tts/piper.py`).
-- `# ponytail:` 취소된 API Job 은 fit 이 끝나야 멈춘다(`modeling/tts/stages.py`).
-- `# ponytail:` 오디오 지문을 매 실행 디렉터리에서 다시 계산한다. 느려지면 해시 manifest 로 바꾼다(`modeling/tts/stages.py`).
-- `# ponytail:` WER 에 숫자, 약어 정규화가 없고 Whisper 는 앞 30초만 듣는다(`modeling/tts/asr.py`).
+- Hub 파일은 `file` 과 40자 커밋 `revision` 이 필요하다. `training.args` 로 레시피가 정하는 키를 덮어쓸 수 없다. `validation.phrases` 이름은 영문자, 숫자, `_`, `-` 만 쓴다(`modeling/tts/tts_config.py`).
+- `# idempotent:` Piper 가 cudnn.deterministic 을 꺼 GPU 실행은 비트 단위로 같지 않다. 중단된 실행은 마지막 epoch 스냅샷에서 이어간다(`modeling/tts/tts_stages.py`).
+- `# idempotent:` Piper speak 는 시드 없는 노이즈라 같은 텍스트도 매번 다른 파일이 된다(`modeling/tts/piper_process.py`).
+- `# ponytail:` 취소된 API Job 은 fit 이 끝나야 멈춘다(`modeling/tts/tts_stages.py`).
+- `# ponytail:` 오디오 지문을 매 실행 디렉터리에서 다시 계산한다. 느려지면 해시 manifest 로 바꾼다(`modeling/tts/tts_stages.py`).
+- `# ponytail:` WER 에 숫자, 약어 정규화가 없고 Whisper 는 앞 30초만 듣는다(`modeling/tts/asr_listener.py`).
 
 ---
 
@@ -665,7 +665,7 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 
 | 파일 | 층 | 역할 |
 |---|---|---|
-| `modeling/tts/qwen.py` | program | `QWEN_PYTHON` 프로세스로 `environment/qwen/speak.py` 실행, 배치당 모델 1회 로드 |
+| `modeling/tts/qwen_process.py` | program | `QWEN_PYTHON` 프로세스로 `environment/qwen/speak.py` 실행, 배치당 모델 1회 로드 |
 | `environment/qwen/speak.py` | program | stdin JSON 요청으로 복제 음성 wav 생성 |
 | `environment/qwen/pyproject.toml` | env | Qwen3-TTS 실행 환경 의존성 |
 | `environment/qwen/uv.lock` | env | 위 환경 잠금 파일 |
@@ -679,9 +679,9 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | 통합 | `tests/integ/test_tts_qwen.py` |
 
 **제약과 미구현**:
-- `model.revision` 은 40자 커밋이어야 하고 `reference.min_seconds` 는 `max_seconds` 보다 작아야 한다(`modeling/tts/config.py`).
+- `model.revision` 은 40자 커밋이어야 하고 `reference.min_seconds` 는 `max_seconds` 보다 작아야 한다(`modeling/tts/tts_config.py`).
 - `QWEN_PYTHON` 기본 환경은 MLX 기반 Qwen3-TTS 로 Apple silicon 용이다(`core/settings.py`).
-- `# ponytail:` 오디오 지문을 매 실행 다시 계산한다(`modeling/tts/stages.py`). WER 정규화 없음, Whisper 30초 제한(`modeling/tts/asr.py`).
+- `# ponytail:` 오디오 지문을 매 실행 다시 계산한다(`modeling/tts/tts_stages.py`). WER 정규화 없음, Whisper 30초 제한(`modeling/tts/asr_listener.py`).
 
 ---
 
@@ -704,23 +704,23 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | 파일 | 층 | 역할 |
 |---|---|---|
 | `modeling/wakeword/__init__.py` | package | 웨이크워드 패밀리 |
-| `modeling/wakeword/pipeline.py` | pipeline | `WakewordPipeline` 등록 |
-| `modeling/wakeword/config.py` | config | `WakewordConfig`: 문구, 녹음, 증강, 검출기, 스트리밍 테스트 |
-| `modeling/wakeword/stages.py` | stage | `data`, `features`, `train`, `validate` 스테이지와 스트림 판정(`evaluation_wakeword` 도 재사용) |
-| `modeling/wakeword/features.py` | model | openWakeWord 고정 전처리: 16kHz 오디오를 80ms 마다 96차원 임베딩으로 |
-| `modeling/wakeword/detector.py` | model | DNN 검출기 학습과 ONNX 내보내기 |
+| `modeling/wakeword/wakeword_pipeline.py` | pipeline | `WakewordPipeline` 등록 |
+| `modeling/wakeword/wakeword_config.py` | config | `WakewordConfig`: 문구, 녹음, 증강, 검출기, 스트리밍 테스트 |
+| `modeling/wakeword/wakeword_stages.py` | stage | `data`, `features`, `train`, `validate` 스테이지와 스트림 판정(`evaluation_wakeword` 도 재사용) |
+| `modeling/wakeword/feature_embedder.py` | model | openWakeWord 고정 전처리: 16kHz 오디오를 80ms 마다 96차원 임베딩으로 |
+| `modeling/wakeword/wakeword_detector.py` | model | DNN 검출기 학습과 ONNX 내보내기 |
 
 **테스트**
 
 | 종류 | 파일 |
 |---|---|
-| 단위 | `tests/unit/test_wakeword_detector.py` |
+| 단위 | `tests/unit/test_wakeword_wakeword_detector.py` |
 | 통합 | `tests/integ/test_wakeword.py` |
 
 **제약과 미구현**:
-- `augment.snr`, `augment.gain` 은 `[low, high]` 범위여야 한다(`modeling/wakeword/config.py`).
-- `# ponytail:` ONNX 내보내기에 torch 2.9 부터 deprecated 인 TorchScript exporter 를 쓴다. torch 가 지우면 `dynamo=True` 로 옮긴다(`modeling/wakeword/detector.py`).
-- `# ponytail:` 배경 파일 전부를 16kHz 로 메모리에 올린다. 잡음셋이 GB 단위가 되면 디스크에서 스트리밍한다(`modeling/wakeword/stages.py`).
+- `augment.snr`, `augment.gain` 은 `[low, high]` 범위여야 한다(`modeling/wakeword/wakeword_config.py`).
+- `# ponytail:` ONNX 내보내기에 torch 2.9 부터 deprecated 인 TorchScript exporter 를 쓴다. torch 가 지우면 `dynamo=True` 로 옮긴다(`modeling/wakeword/wakeword_detector.py`).
+- `# ponytail:` 배경 파일 전부를 16kHz 로 메모리에 올린다. 잡음셋이 GB 단위가 되면 디스크에서 스트리밍한다(`modeling/wakeword/wakeword_stages.py`).
 
 ---
 
@@ -731,70 +731,70 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | 파일 | 역할 | 쓰는 기능 |
 |---|---|---|
 | `core/__init__.py` | 프레임워크 패키지 | 전체 |
-| `core/cli.py` | `llmclick run`, `validate`, `recipes`, `serve` | 전체 |
-| `core/config/experiment.py` | 지문으로 이름 붙인 공유 스테이지 디렉터리와 실험 디렉터리 | 전체 |
-| `core/config/schema.py` | 모든 레시피가 공유하는 config 키(`BaseConfig`) | 전체 |
+| `core/cli_app.py` | `llmclick run`, `validate`, `recipes`, `serve` | 전체 |
+| `core/config/experiment_store.py` | 지문으로 이름 붙인 공유 스테이지 디렉터리와 실험 디렉터리 | 전체 |
+| `core/config/config_schema.py` | 모든 레시피가 공유하는 config 키(`BaseConfig`) | 전체 |
 | `core/logger.py` | structlog 로깅, `LOG_FORMAT` 에 따라 콘솔 또는 JSON | 전체 |
-| `core/pipeline.py` | 스테이지를 순서대로 실행하고 이미 만든 것은 건너뛰는 러너, `@recipe` 등록 | 전체 |
-| `core/progress.py` | 진행률 보고(터미널 바, Job 상태), 취소 | 전체 |
-| `core/registry.py` | 이름 레지스트리, `RECIPES`, `catalogue()` | 전체 |
+| `core/pipeline_runner.py` | 스테이지를 순서대로 실행하고 이미 만든 것은 건너뛰는 러너, `@recipe` 등록 | 전체 |
+| `core/progress_reporter.py` | 진행률 보고(터미널 바, Job 상태), 취소 | 전체 |
+| `core/recipe_registry.py` | 이름 레지스트리, `RECIPES`, `catalogue()` | 전체 |
 | `core/settings.py` | 환경 변수와 `LLMCLICK_ENV` 파일 설정 | 전체 |
-| `core/stage.py` | 입력으로 지문을 매기고 두 번 실행해도 안전한 스테이지 단위 | 전체 |
-| `core/utils/device.py` | cuda, mps, cpu 순 장치 선택 | 전체 |
-| `core/utils/files.py` | 내용 해시, 원자적 쓰기, JSON, 잠금 | 전체 |
+| `core/stage_base.py` | 입력으로 지문을 매기고 두 번 실행해도 안전한 스테이지 단위 | 전체 |
+| `core/device_selector.py` | cuda, mps, cpu 순 장치 선택 | 전체 |
+| `core/file_store.py` | 내용 해시, 원자적 쓰기, JSON, 잠금 | 전체 |
 | `data/__init__.py` | data 채널 패키지, import 시 레시피 등록 | `data_speech`, `data_synthetic` |
-| `data/pipeline.py` | `SyntheticData`, `SpeechData` 레시피 | `data_speech`, `data_synthetic` |
-| `data/config.py` | 교사, 시드, 스테이지별 config(`SyntheticConfig`, `SeedConfig`) | `data_speech`, `data_synthetic` |
-| `data/seeds.py` | `seeds` 스테이지: 시드마다 안정적인 id 를 가진 행 | `data_speech`, `data_synthetic` |
-| `data/prompts.py` | `prompts` 스테이지와 생성기 레지스트리 `GENERATORS` | `data_speech`, `data_synthetic` |
-| `data/teachers.py` | 교사 모델 4종(`TEACHERS`), 토큰과 비용 보고 | `data_speech`, `data_synthetic` |
-| `data/rows.py` | 자연 키와 원자적 행 파일 | `data_speech`, `data_synthetic` |
+| `data/data_pipeline.py` | `SyntheticData`, `SpeechData` 레시피 | `data_speech`, `data_synthetic` |
+| `data/data_config.py` | 교사, 시드, 스테이지별 config(`SyntheticConfig`, `SeedConfig`) | `data_speech`, `data_synthetic` |
+| `data/seeds_stage.py` | `seeds` 스테이지: 시드마다 안정적인 id 를 가진 행 | `data_speech`, `data_synthetic` |
+| `data/prompts_stage.py` | `prompts` 스테이지와 생성기 레지스트리 `GENERATORS` | `data_speech`, `data_synthetic` |
+| `data/teacher_client.py` | 교사 모델 4종(`TEACHERS`), 토큰과 비용 보고 | `data_speech`, `data_synthetic` |
+| `data/row_store.py` | 자연 키와 원자적 행 파일 | `data_speech`, `data_synthetic` |
 | `evaluation/__init__.py` | evaluation 채널 패키지, import 시 레시피 등록 | `evaluation_*` 전체 |
-| `evaluation/pipeline.py` | 평가 레시피 6종과 리포트 트래커 전송 | `evaluation_*` 전체 |
-| `evaluation/config.py` | 평가 대상 모델(`SourceModel`), 행, 측정 설정 | `evaluation_*` 전체 |
-| `evaluation/source.py` | 실험 config 재구성과 체크포인트 위치, 또는 Hub 모델 로드 | `evaluation_benchmark`, `evaluation_compare`, `evaluation_custom`, `evaluation_decision`, `evaluation_embedding` |
-| `evaluation/contamination.py` | 학습 행과 평가 항목의 정확 일치, n-gram 근사 중복 측정 | `data_synthetic`, `evaluation_benchmark`, `evaluation_compare`, `evaluation_custom`, `evaluation_decision` |
+| `evaluation/evaluation_pipeline.py` | 평가 레시피 6종과 리포트 트래커 전송 | `evaluation_*` 전체 |
+| `evaluation/evaluation_config.py` | 평가 대상 모델(`SourceModel`), 행, 측정 설정 | `evaluation_*` 전체 |
+| `evaluation/source_model.py` | 실험 config 재구성과 체크포인트 위치, 또는 Hub 모델 로드 | `evaluation_benchmark`, `evaluation_compare`, `evaluation_custom`, `evaluation_decision`, `evaluation_embedding` |
+| `evaluation/contamination_check.py` | 학습 행과 평가 항목의 정확 일치, n-gram 근사 중복 측정 | `data_synthetic`, `evaluation_benchmark`, `evaluation_compare`, `evaluation_custom`, `evaluation_decision` |
 | `modeling/__init__.py` | modeling 채널 패키지, import 시 레시피 등록 | `llm_*`, `embedding_contrastive`, `tts_*`, `wakeword` |
-| `modeling/pipeline.py` | 학습하면 반드시 검증하는 `ModelingPipeline` | `llm_*`, `embedding_contrastive`, `tts_*`, `wakeword` |
-| `modeling/stages.py` | `TrainStage`, 통과해야 체크포인트 링크를 남기는 `ValidateStage` | `llm_*`, `embedding_contrastive`, `tts_*`, `wakeword` |
-| `modeling/config.py` | 트래커와 검증 범위 config, 소스 키 | `llm_*`, `embedding_contrastive`, `tts_*`, `wakeword`, `data_*`, `evaluation_*` |
-| `modeling/tracker.py` | wandb 로 학습 지표와 평가 리포트 전송 | `llm_*`, `embedding_contrastive`, `tts_*`, `wakeword`, `evaluation_*` |
+| `modeling/modeling_pipeline.py` | 학습하면 반드시 검증하는 `ModelingPipeline` | `llm_*`, `embedding_contrastive`, `tts_*`, `wakeword` |
+| `modeling/modeling_stages.py` | `TrainStage`, 통과해야 체크포인트 링크를 남기는 `ValidateStage` | `llm_*`, `embedding_contrastive`, `tts_*`, `wakeword` |
+| `modeling/modeling_config.py` | 트래커와 검증 범위 config, 소스 키 | `llm_*`, `embedding_contrastive`, `tts_*`, `wakeword`, `data_*`, `evaluation_*` |
+| `modeling/metric_tracker.py` | wandb 로 학습 지표와 평가 리포트 전송 | `llm_*`, `embedding_contrastive`, `tts_*`, `wakeword`, `evaluation_*` |
 | `modeling/tuning/__init__.py` | 프로세스 내 미세조정 패키지 | `llm_*`, `embedding_contrastive` |
-| `modeling/tuning/pipeline.py` | `TuningPipeline`: `data`, `train`, `validate` | `llm_*`, `embedding_contrastive` |
-| `modeling/tuning/stages.py` | `DataStage`, `TuneStage`, `MeasureStage` | `llm_*`, `embedding_contrastive` |
-| `modeling/tuning/loop.py` | 결정적 배치, 누적, 워밍업 후 선형 감쇠, 재개 스냅샷 | `llm_*`, `embedding_contrastive` |
-| `modeling/tuning/method.py` | 학습 방법 기반: 행 검사, 손실, 평가 | `llm_*`, `embedding_contrastive`, `evaluation_custom`, `evaluation_decision` |
-| `modeling/tuning/backbone.py` | 모델 카탈로그 기반: 로드, 저장, 학습 가중치 | `llm_*`, `embedding_contrastive`, `evaluation_*`(wakeword 제외) |
-| `modeling/tuning/config.py` | 백본, 행, 최적화 설정, LoRA 어댑터 | `llm_*`, `embedding_contrastive`, `tts_*` |
-| `modeling/tuning/sources.py` | 행 소스 레지스트리(`delimited`, `huggingface`, `jevbench`, `local_jsonl`) | 전체 레시피 |
+| `modeling/tuning/tuning_pipeline.py` | `TuningPipeline`: `data`, `train`, `validate` | `llm_*`, `embedding_contrastive` |
+| `modeling/tuning/tuning_stages.py` | `DataStage`, `TuneStage`, `MeasureStage` | `llm_*`, `embedding_contrastive` |
+| `modeling/tuning/training_loop.py` | 결정적 배치, 누적, 워밍업 후 선형 감쇠, 재개 스냅샷 | `llm_*`, `embedding_contrastive` |
+| `modeling/tuning/training_method.py` | 학습 방법 기반: 행 검사, 손실, 평가 | `llm_*`, `embedding_contrastive`, `evaluation_custom`, `evaluation_decision` |
+| `modeling/tuning/tuning_backbone.py` | 모델 카탈로그 기반: 로드, 저장, 학습 가중치 | `llm_*`, `embedding_contrastive`, `evaluation_*`(wakeword 제외) |
+| `modeling/tuning/tuning_config.py` | 백본, 행, 최적화 설정, LoRA 어댑터 | `llm_*`, `embedding_contrastive`, `tts_*` |
+| `modeling/tuning/row_sources.py` | 행 소스 레지스트리(`delimited`, `huggingface`, `jevbench`, `local_jsonl`) | 전체 레시피 |
 | `modeling/llm/__init__.py` | LLM 패밀리 패키지 | `llm_*` |
-| `modeling/llm/pipeline.py` | LLM 레시피 6종 등록 | `llm_*` |
-| `modeling/llm/config.py` | 레시피별 config 와 head 검사 | `llm_*` |
+| `modeling/llm/llm_pipeline.py` | LLM 레시피 6종 등록 | `llm_*` |
+| `modeling/llm/llm_config.py` | 레시피별 config 와 head 검사 | `llm_*` |
 | `modeling/llm/methods/__init__.py` | LLM 학습 방법 패키지 | `llm_*` |
-| `modeling/llm/methods/base.py` | 대화를 토큰 id 와 채점 위치로 | `llm_sft`, `llm_instruction`, `llm_dpo`, `llm_grpo`, `llm_decision_*` |
+| `modeling/llm/methods/llm_method.py` | 대화를 토큰 id 와 채점 위치로 | `llm_sft`, `llm_instruction`, `llm_dpo`, `llm_grpo`, `llm_decision_*` |
 | `modeling/llm/models/__init__.py` | `LLM_BACKBONES` 카탈로그 | `llm_*`, `evaluation_*` |
-| `modeling/llm/models/base.py` | LLM 백본 기반: 채팅 렌더링, 로짓, 생성 | `llm_*`, `data_synthetic`, `evaluation_benchmark`, `evaluation_decision` |
-| `modeling/llm/models/config.py` | LLM `model:` 섹션 | `llm_*`, `evaluation_*` |
-| `modeling/llm/models/hybrid.py` | 하이브리드 디코더(Qwen3.5-0.8B, 2B) | `llm_*` |
-| `modeling/llm/models/transformer.py` | 일반 디코더 트랜스포머(Qwen3-0.6B, 1.7B) | `llm_*` |
+| `modeling/llm/models/llm_backbone.py` | LLM 백본 기반: 채팅 렌더링, 로짓, 생성 | `llm_*`, `data_synthetic`, `evaluation_benchmark`, `evaluation_decision` |
+| `modeling/llm/models/backbone_config.py` | LLM `model:` 섹션 | `llm_*`, `evaluation_*` |
+| `modeling/llm/models/hybrid_backbone.py` | 하이브리드 디코더(Qwen3.5-0.8B, 2B) | `llm_*` |
+| `modeling/llm/models/transformer_backbone.py` | 일반 디코더 트랜스포머(Qwen3-0.6B, 1.7B) | `llm_*` |
 | `modeling/llm/methods/decision/__init__.py` | decision 방법 패키지 | `llm_decision_sft`, `llm_decision_cispo` |
-| `modeling/llm/methods/decision/base.py` | Jev 행 형식, 헤드 손실, 보정 지표(ECE), 온도 맞춤 | `llm_decision_sft`, `llm_decision_cispo`, `evaluation_decision` |
+| `modeling/llm/methods/decision/decision_method.py` | Jev 행 형식, 헤드 손실, 보정 지표(ECE), 온도 맞춤 | `llm_decision_sft`, `llm_decision_cispo`, `evaluation_decision` |
 | `modeling/llm/models/heads/__init__.py` | `HEADS` 레지스트리 | `llm_decision_sft`, `llm_decision_cispo` |
-| `modeling/llm/models/heads/base.py` | 선택지마다 점수를 내는 decision 헤드 기반 | `llm_decision_sft`, `llm_decision_cispo` |
-| `modeling/llm/models/heads/pointer.py` | pointer 헤드(Jeeves) | `llm_decision_sft`, `llm_decision_cispo` |
-| `modeling/llm/models/heads/readout.py` | readout 헤드(Jev, jeff) | `llm_decision_sft`, `llm_decision_cispo` |
+| `modeling/llm/models/heads/decision_head.py` | 선택지마다 점수를 내는 decision 헤드 기반 | `llm_decision_sft`, `llm_decision_cispo` |
+| `modeling/llm/models/heads/pointer_head.py` | pointer 헤드(Jeeves) | `llm_decision_sft`, `llm_decision_cispo` |
+| `modeling/llm/models/heads/readout_head.py` | readout 헤드(Jev, jeff) | `llm_decision_sft`, `llm_decision_cispo` |
 | `modeling/tts/__init__.py` | TTS 패밀리 패키지 | `tts_piper`, `tts_qwen` |
-| `modeling/tts/pipeline.py` | `PiperPipeline`, `QwenPipeline` 등록 | `tts_piper`, `tts_qwen` |
-| `modeling/tts/config.py` | `PiperConfig`, `QwenConfig`, ASR, Hub 파일 설정 | `tts_piper`, `tts_qwen`, `data_speech` |
-| `modeling/tts/stages.py` | `VoiceDataStage`, `FitStage`, `CloneStage`, `ListenStage` 와 하위 2종 | `tts_piper`, `tts_qwen` |
-| `modeling/tts/quality.py` | UTMOS, DNSMOS P.835, 화자 유사도 | `tts_piper`, `tts_qwen` |
-| `modeling/tts/asr.py` | Whisper 받아쓰기와 WER | `tts_piper`, `tts_qwen`, `data_speech`, `wakeword` |
-| `modeling/tts/audio.py` | WAV 위치, 샘플, 리샘플링, 음성 검사 측정 | `tts_piper`, `tts_qwen`, `data_speech`, `wakeword`, `evaluation_wakeword` |
+| `modeling/tts/tts_pipeline.py` | `PiperPipeline`, `QwenPipeline` 등록 | `tts_piper`, `tts_qwen` |
+| `modeling/tts/tts_config.py` | `PiperConfig`, `QwenConfig`, ASR, Hub 파일 설정 | `tts_piper`, `tts_qwen`, `data_speech` |
+| `modeling/tts/tts_stages.py` | `VoiceDataStage`, `FitStage`, `CloneStage`, `ListenStage` 와 하위 2종 | `tts_piper`, `tts_qwen` |
+| `modeling/tts/quality_rater.py` | UTMOS, DNSMOS P.835, 화자 유사도 | `tts_piper`, `tts_qwen` |
+| `modeling/tts/asr_listener.py` | Whisper 받아쓰기와 WER | `tts_piper`, `tts_qwen`, `data_speech`, `wakeword` |
+| `modeling/tts/audio_file.py` | WAV 위치, 샘플, 리샘플링, 음성 검사 측정 | `tts_piper`, `tts_qwen`, `data_speech`, `wakeword`, `evaluation_wakeword` |
 | `environment/piper/pyproject.toml` | Piper 실행 환경 의존성 | `tts_piper`, `data_speech` |
 | `environment/piper/uv.lock` | Piper 환경 잠금 파일 | `tts_piper`, `data_speech` |
 | `environment/piper/setup.sh` | `PIPER_PYTHON` 환경 구성 | `tts_piper`, `data_speech` |
 | `environment/Dockerfile` | 서비스 이미지 빌드 | 전체 |
-| `environment/docker-compose.yml` | 커밋 태그 이미지로 서비스 실행, `/health` 헬스체크 | 전체 |
+| `compose.yaml` | 커밋 태그 이미지로 서비스 실행, `/health` 헬스체크 | 전체 |
 | `environment/.env.sample` | 환경 변수 예시 | 전체 |
 
-공통 모듈의 테스트: 단위 `tests/unit/test_framework_files.py`, `tests/unit/test_framework_logger.py`, `tests/unit/test_framework_registry.py`, `tests/unit/test_framework_settings.py`, `tests/unit/test_framework_stages.py`, 통합 `tests/integ/test_framework.py`. 테스트 보조: `tests/conftest.py`(외부 접속 차단, 작은 무작위 LM, 공유 fixture), `tests/recipe_inputs.py`(레시피별 config 와 입력 행), `tests/recipe_fakes.py`(가짜 wandb, lm-evaluation-harness), `tests/speech_fakes.py`(가짜 Piper, Whisper, openWakeWord 전처리).
+공통 모듈의 테스트: 단위 `tests/unit/test_framework_file_store.py`, `tests/unit/test_framework_logger.py`, `tests/unit/test_framework_recipe_registry.py`, `tests/unit/test_framework_settings.py`, `tests/unit/test_framework_modeling_stages.py`, 통합 `tests/integ/test_framework.py`. 테스트 보조: `tests/conftest.py`(외부 접속 차단, 작은 무작위 LM, 공유 fixture), `tests/recipe_inputs.py`(레시피별 config 와 입력 행), `tests/recipe_fakes.py`(가짜 wandb, lm-evaluation-harness), `tests/speech_fakes.py`(가짜 Piper, Whisper, openWakeWord 전처리).

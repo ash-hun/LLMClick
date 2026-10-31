@@ -7,15 +7,15 @@ from pathlib import Path
 import pytest
 
 from tests.recipe_inputs import decision_raw, raw
-from evaluation.decision import jevbench
-from core.progress import StateProgress
-from core import pipeline
+from evaluation.decision_evaluation import jevbench
+from core.progress_reporter import StateProgress
+from core import pipeline_runner
 
 
 @pytest.fixture(scope="module")
 def decision(tiny_model: Path, tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
     out = tmp_path_factory.mktemp("decision")
-    return pipeline.build(decision_raw("llm_decision_sft", tiny_model, out, "readout")).run()
+    return pipeline_runner.build(decision_raw("llm_decision_sft", tiny_model, out, "readout")).run()
 
 
 def config(experiment: str, rows: dict[str, Any], out: Path, **keys: Any) -> dict[str, Any]:
@@ -27,7 +27,7 @@ def config(experiment: str, rows: dict[str, Any], out: Path, **keys: Any) -> dic
 def test_scores_without_and_with_reasoning(decision: dict[str, Any], tmp_path: Path) -> None:
     rows = {"name": "local_jsonl", "path": decision["stages"]["data"]["validation"]}
     progress = StateProgress()
-    result = pipeline.build(config(decision["directory"], rows, tmp_path, max_think=4), progress).run()
+    result = pipeline_runner.build(config(decision["directory"], rows, tmp_path, max_think=4), progress).run()
     report = json.loads(Path(result["stages"]["report"]["report"]).read_text())
     assert set(report["scores"]) == {"nothink", "think"} and report["settings"]["max_think"] == 4 and report["settings"]["think"] == "both"
     plain, think = report["scores"]["nothink"], report["scores"]["think"]
@@ -38,9 +38,9 @@ def test_scores_without_and_with_reasoning(decision: dict[str, Any], tmp_path: P
     items = [json.loads(line) for line in Path(report["items"]).read_text().splitlines()]
     assert len(items) == 2 * plain["questions"] and {item["mode"] for item in items} == {"nothink", "think"}
     assert all(0 <= item["confidence"] <= 1 and item["options"] >= 2 for item in items)
-    again = pipeline.build(config(decision["directory"], rows, tmp_path, max_think=4), StateProgress()).run()
+    again = pipeline_runner.build(config(decision["directory"], rows, tmp_path, max_think=4), StateProgress()).run()
     assert json.dumps(again) == json.dumps(result)
-    only = pipeline.build(config(decision["directory"], rows, tmp_path, think="off")).run()
+    only = pipeline_runner.build(config(decision["directory"], rows, tmp_path, think="off")).run()
     assert list(only["stages"]["report"]["scores"]) == ["nothink"]
 
 
@@ -65,7 +65,7 @@ def test_jevbench_tiers_are_read_and_reported_with_their_chance_levels(decision:
     with pytest.raises(ValueError, match="unknown JevBench tier"):
         jevbench({"path": str(bench), "tiers": ["judge"]})
 
-    result = pipeline.build(config(decision["directory"], {"name": "jevbench", "path": str(bench)}, tmp_path, think="off")).run()
+    result = pipeline_runner.build(config(decision["directory"], {"name": "jevbench", "path": str(bench)}, tmp_path, think="off")).run()
     scores = result["stages"]["report"]["scores"]["nothink"]
     assert scores["questions"] == 3 and set(scores["by_tier"]) == {"easy", "standard", "hard"}
     assert scores["by_tier"]["easy"]["chance"] == pytest.approx(1 / 3) and scores["by_tier"]["standard"]["chance"] == 0.5
@@ -73,7 +73,7 @@ def test_jevbench_tiers_are_read_and_reported_with_their_chance_levels(decision:
 
 
 def test_a_non_decision_experiment_is_refused(tiny_model: Path, tmp_path: Path) -> None:
-    sft = pipeline.build(raw("llm_sft", tiny_model, tmp_path)).run()
+    sft = pipeline_runner.build(raw("llm_sft", tiny_model, tmp_path)).run()
     rows = {"name": "local_jsonl", "path": "samples/llm_decision.jsonl"}
     with pytest.raises(ValueError, match="does not fit|not a decision experiment"):
-        pipeline.build(config(sft["directory"], rows, tmp_path)).run()
+        pipeline_runner.build(config(sft["directory"], rows, tmp_path)).run()

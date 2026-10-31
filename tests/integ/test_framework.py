@@ -6,13 +6,13 @@ from typing import Any, ClassVar
 
 import pytest
 
-from modeling.stages import TrainStage, ValidateStage, ValidationFailed
-from modeling.pipeline import ModelingPipeline
-from modeling.config import ModelingConfig
-from core.config.schema import BaseConfig
-from core.progress import StateProgress
-from core.stage import Outputs, Stage
-from core.pipeline import Pipeline
+from modeling.modeling_stages import TrainStage, ValidateStage, ValidationFailed
+from modeling.modeling_pipeline import ModelingPipeline
+from modeling.modeling_config import ModelingConfig
+from core.config.config_schema import BaseConfig
+from core.progress_reporter import StateProgress
+from core.stage_base import Outputs, Stage
+from core.pipeline_runner import Pipeline
 
 RUNS: list[str] = []
 
@@ -157,7 +157,7 @@ def test_a_run_waiting_for_a_locked_stage_says_so_and_reuses_the_result(tmp_path
     import threading
     import time
 
-    from core.utils.files import locked
+    from core.file_store import locked
 
     first = toy(tmp_path)
     lock = first.experiment.stage_dir("write", first.fingerprint("write"))

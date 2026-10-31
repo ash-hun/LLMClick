@@ -8,11 +8,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from tests.recipe_fakes import FakeWandb
-from core.progress import StateProgress
+from core.progress_reporter import StateProgress
 from core.settings import get_settings
-from modeling.tracker import flatten
-from core.api.app import app
-from core import pipeline
+from modeling.metric_tracker import flatten
+from core.api.api_app import app
+from core import pipeline_runner
 
 
 def evaluation(experiment: str, rows: str, out: Path, checkpoint: str = "validate", **keys: Any) -> dict[str, Any]:
@@ -23,7 +23,7 @@ def evaluation(experiment: str, rows: str, out: Path, checkpoint: str = "validat
 
 def test_scores_a_checkpoint_on_rows_with_the_recipes_own_metrics(trained: dict[str, Any], tmp_path: Path) -> None:
     held_out = trained["stages"]["data"]["validation"]  # the rows validate measured: the same numbers must come out
-    result = pipeline.build(evaluation(trained["directory"], held_out, tmp_path)).run()
+    result = pipeline_runner.build(evaluation(trained["directory"], held_out, tmp_path)).run()
     report = json.loads(Path(result["stages"]["report"]["report"]).read_text())
     assert report["scores"] == pytest.approx(trained["stages"]["validate"]["metrics"])
     assert report["model"] == {"experiment": trained["directory"], "checkpoint": f"{trained['directory']}/validate/checkpoint",
@@ -33,7 +33,7 @@ def test_scores_a_checkpoint_on_rows_with_the_recipes_own_metrics(trained: dict[
     assert overlap["items"] == 16 and overlap["exact"] == 0 and overlap["training_rows"] == 64 and overlap["ngram"] == 8
     assert report["settings"] == {"batch_size": 8, "max_length": 64, "device": "cpu"}
     progress = StateProgress()
-    again = pipeline.build(evaluation(trained["directory"], held_out, tmp_path), progress).run()
+    again = pipeline_runner.build(evaluation(trained["directory"], held_out, tmp_path), progress).run()
     assert json.dumps(again) == json.dumps(result)
     assert progress.snapshot()["stages"] == {"rows": "cached", "score": "cached", "report": "cached"}
 
@@ -42,24 +42,24 @@ def test_base_and_train_checkpoints_are_other_models(trained: dict[str, Any], tm
     held_out = trained["stages"]["data"]["validation"]
     scores = {}
     for checkpoint in ("validate", "train", "base"):
-        result = pipeline.build(evaluation(trained["directory"], held_out, tmp_path, checkpoint)).run()
+        result = pipeline_runner.build(evaluation(trained["directory"], held_out, tmp_path, checkpoint)).run()
         scores[checkpoint] = result["stages"]["report"]["scores"]["loss"]
     assert scores["validate"] == scores["train"]  # the same weights, found through the other link
     assert scores["base"] != scores["validate"]  # the weights the experiment started from
     explicit = evaluation(trained["directory"], held_out, tmp_path, trained["stages"]["train"]["checkpoint"])
-    assert pipeline.build(explicit).run()["stages"]["report"]["scores"]["loss"] == scores["train"]
+    assert pipeline_runner.build(explicit).run()["stages"]["report"]["scores"]["loss"] == scores["train"]
 
 
 def test_rows_are_checked_against_the_recipe_and_missing_experiments_fail_at_run_time(trained: dict[str, Any],
                                                                                         tmp_path: Path) -> None:
-    built = pipeline.build(evaluation(trained["directory"], "samples/llm_dpo.jsonl", tmp_path))
+    built = pipeline_runner.build(evaluation(trained["directory"], "samples/llm_dpo.jsonl", tmp_path))
     with pytest.raises(ValueError, match="Row 0 does not fit"):
         built.run()
-    missing = pipeline.build(evaluation(str(tmp_path / "nowhere"), "samples/llm_sft.jsonl", tmp_path))  # validates
+    missing = pipeline_runner.build(evaluation(str(tmp_path / "nowhere"), "samples/llm_sft.jsonl", tmp_path))  # validates
     assert missing.plan() == ["rows", "score", "report"]
     with pytest.raises(FileNotFoundError, match="run that experiment first"):
         missing.run()
-    unpassed = pipeline.build(evaluation(trained["directory"], "samples/llm_sft.jsonl", tmp_path, str(tmp_path / "no-dir")))
+    unpassed = pipeline_runner.build(evaluation(trained["directory"], "samples/llm_sft.jsonl", tmp_path, str(tmp_path / "no-dir")))
     with pytest.raises(FileNotFoundError, match="does not exist"):
         unpassed.run()
 
@@ -79,25 +79,25 @@ def test_the_api_knows_the_recipe_and_confines_its_paths(trained: dict[str, Any]
 
 
 def test_shipped_evaluation_config_points_at_the_sft_experiment() -> None:
-    sft = pipeline.load("configs/llm/sft.yaml")
-    custom = pipeline.load("configs/evaluation/custom.yaml")
+    sft = pipeline_runner.load("configs/llm/sft.yaml")
+    custom = pipeline_runner.load("configs/evaluation/custom.yaml")
     assert custom.config.model.experiment == f"output/{sft.experiment.key}"  # edit one config, update the other
 
 
 def test_shipped_decision_and_embedding_configs_point_at_their_experiments() -> None:
     for config, source in [("configs/evaluation/decision.yaml", "configs/llm/decision_pointer.yaml"),
                            ("configs/evaluation/embedding.yaml", "configs/embedding/contrastive.yaml")]:
-        trained = pipeline.load(source)
-        assert pipeline.load(config).config.model.experiment == f"output/{trained.experiment.key}"
+        trained = pipeline_runner.load(source)
+        assert pipeline_runner.load(config).config.model.experiment == f"output/{trained.experiment.key}"
 
 
 def test_base_checkpoints_report_no_contamination(trained: dict[str, Any], tmp_path: Path) -> None:
     body = evaluation(trained["directory"], trained["stages"]["data"]["validation"], tmp_path, "base")
-    result = pipeline.build(body).run()
+    result = pipeline_runner.build(body).run()
     report = json.loads(Path(result["stages"]["report"]["report"]).read_text())
     assert report["contamination"] is None  # the base weights never saw the experiment's rows
     contaminated = evaluation(trained["directory"], trained["stages"]["data"]["train"], tmp_path)  # the rows it trained on
-    report = json.loads(Path(pipeline.build(contaminated).run()["stages"]["report"]["report"]).read_text())
+    report = json.loads(Path(pipeline_runner.build(contaminated).run()["stages"]["report"]["report"]).read_text())
     assert report["contamination"]["exact"] == 64 and report["contamination"]["near"] == 64
 
 
@@ -112,8 +112,8 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
 
 def test_reports_are_listed_filtered_and_shown(trained: dict[str, Any], tmp_path: Path, client: TestClient) -> None:
     held_out = trained["stages"]["data"]["validation"]
-    done = pipeline.build(evaluation(trained["directory"], held_out, tmp_path)).run()
-    pipeline.build({**evaluation(trained["directory"], held_out, tmp_path, "base"), "pipeline": {"recipe": "evaluation_custom", "name": "base-eval", "output_dir": str(tmp_path), "device": "cpu"}}).run()
+    done = pipeline_runner.build(evaluation(trained["directory"], held_out, tmp_path)).run()
+    pipeline_runner.build({**evaluation(trained["directory"], held_out, tmp_path, "base"), "pipeline": {"recipe": "evaluation_custom", "name": "base-eval", "output_dir": str(tmp_path), "device": "cpu"}}).run()
     listed = client.get("/api/evaluations", params={"output_dir": str(tmp_path)}).json()
     assert [entry["recipe"] for entry in listed] == ["evaluation_custom", "evaluation_custom"]
     first = next(entry for entry in listed if entry["experiment"] == done["experiment"])
@@ -131,11 +131,11 @@ def test_reports_are_listed_filtered_and_shown(trained: dict[str, Any], tmp_path
 
 def test_the_report_goes_to_the_tracker_once(trained: dict[str, Any], tmp_path: Path, wandb: FakeWandb) -> None:
     body = {**evaluation(trained["directory"], trained["stages"]["data"]["validation"], tmp_path), "tracker": {"enabled": True, "project": "p"}}
-    result = pipeline.build(body).run()
+    result = pipeline_runner.build(body).run()
     assert len(wandb.runs) == 1 and wandb.runs[0]["project"] == "p" and wandb.finished == 1
     numbers, table = wandb.reports
     assert numbers["scores/loss"] == pytest.approx(result["stages"]["report"]["scores"]["loss"]) and "contamination/exact" in numbers
     assert table["report"].columns == ["name", "value"] and dict(table["report"].data)["scores/loss"] == numbers["scores/loss"]
-    pipeline.build(body).run()  # cached report: already sent to this project
+    pipeline_runner.build(body).run()  # cached report: already sent to this project
     assert len(wandb.runs) == 1
     assert flatten({"a": {"b": 1, "settings": {"c": 2}}, "d": True, "e": "text"}) == {"a/b": 1.0, "d": 1.0}

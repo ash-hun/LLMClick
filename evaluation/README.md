@@ -271,7 +271,7 @@ the channel measures the base model itself, under the same settings as the check
 ## Design
 
 A channel is a package that registers recipes; it reuses `Stage`, `Pipeline`, `Progress`, `Experiment` and the
-API's jobs as they are, and joins by adding `"evaluation"` to `CHANNELS` in `core/registry.py`.
+API's jobs as they are, and joins by adding `"evaluation"` to `CHANNELS` in `core/recipe_registry.py`.
 
 ### Recipes
 
@@ -357,12 +357,12 @@ Order of 4 and 5 can swap depending on which models are trained first.
 ## Known starting points
 
 - Each training method already has an `evaluate` that returns its metrics on a set of rows
-  (`modeling/tuning/method.py`); milestone 1 calls it on rows that were never part of training.
-- `DecisionMethod.collect` and `measured` (`modeling/llm/methods/decision/base.py`) compute accuracy, NLL and ECE
+  (`modeling/tuning/training_method.py`); milestone 1 calls it on rows that were never part of training.
+- `DecisionMethod.collect` and `measured` (`modeling/llm/methods/decision/decision_method.py`) compute accuracy, NLL and ECE
   with and without reasoning; milestone 4 adds a JevBench reader and timing around them.
 - The removed jeff package carried benchmark builders (a five-benchmark panel and JevBench) for decision models;
   they are in the git history before the commit "vendored jeff 와 jev 레시피 제거".
-- Row sources (`local_jsonl`, `huggingface`) live in `modeling/tuning/sources.py`; the `rows` stage reuses them.
+- Row sources (`local_jsonl`, `huggingface`) live in `modeling/tuning/row_sources.py`; the `rows` stage reuses them.
 
 ## Sources
 

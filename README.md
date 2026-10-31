@@ -36,65 +36,69 @@ released checkpoints do not load here.
 
 ```
 LLMClick/
-├── main.py                       # `uvicorn main:app` from the repository root; the app itself is core/api/app.py
+├── compose.yaml                  # `docker compose up -d`: the API in a container, tagged by commit
+├── main.py                       # `uvicorn main:app` from the repository root; the app itself is core/api/api_app.py
 ├── configs/                      # one YAML = one custom model; a directory per family (llm/, embedding/)
 ├── samples/                      # tiny rows per recipe so the shipped configs run offline
 ├── core/                         # the framework, shared by every channel
-│   ├── stage.py                  #   Stage: one fingerprinted, rerunnable unit of work
-│   ├── pipeline.py               #   Pipeline: runs a recipe's stages; build()/load() turn a config into one
-│   ├── progress.py               #   Progress, BarProgress (terminal), StateProgress (API jobs)
-│   ├── registry.py               #   Registry, RECIPES, CHANNELS
-│   ├── config/                   #   schema.py (BaseConfig), experiment.py (directories, manifest)
-│   ├── cli.py                    #   llmclick run|validate|recipes|serve
-│   ├── settings.py               #   process settings from the environment and environment/.env (LLMCLICK_ENV)
-│   ├── api/                      #   app.py; routers: config_channel, job_channel, system_channel; store.py, guard.py
-│   └── utils/                    #   files (hash, lock), device
+│   ├── stage_base.py             #   Stage: one fingerprinted, rerunnable unit of work
+│   ├── pipeline_runner.py        #   Pipeline: runs a recipe's stages; build()/load() turn a config into one
+│   ├── progress_reporter.py      #   Progress, BarProgress (terminal), StateProgress (API jobs)
+│   ├── recipe_registry.py        #   Registry, RECIPES, CHANNELS
+│   ├── file_store.py             #   content hashes, atomic writes, JSON and JSONL, locks
+│   ├── device_selector.py        #   cuda, then mps, then cpu, unless the config names one
+│   ├── logger.py settings.py     #   structlog setup (LOG_FORMAT); process settings from environment/.env (LLMCLICK_ENV)
+│   ├── config/                   #   config_schema.py (BaseConfig), experiment_store.py (directories, manifest)
+│   ├── cli_app.py                #   llmclick run|validate|recipes|serve
+│   └── api/                      #   api_app.py; routers: config_channel, job_channel, system_channel; job_store.py, access_guard.py
 ├── modeling/                     # Modeling channel: config -> trained, validated model
-│   ├── config.py                 #   ModelingConfig: tracker, validation bounds
-│   ├── stages.py                 #   TrainStage, ValidateStage (templates every recipe fills in)
-│   ├── pipeline.py               #   ModelingPipeline: training always brings validation
-│   ├── tracker.py                #   wandb replay
+│   ├── modeling_config.py        #   ModelingConfig: tracker, validation bounds
+│   ├── modeling_stages.py        #   TrainStage, ValidateStage (templates every recipe fills in)
+│   ├── modeling_pipeline.py      #   ModelingPipeline: training always brings validation
+│   ├── metric_tracker.py         #   wandb replay
 │   ├── tuning/                   #   in-process fine-tuning shared by the families below
-│   │   ├── backbone.py           #     Backbone: base of every model catalog entry
-│   │   ├── method.py             #     TrainingMethod: base of every training method
-│   │   ├── loop.py               #     the one training loop (accumulation, schedule, resume)
-│   │   ├── stages.py             #     data, train, validate
-│   │   ├── sources.py            #     row sources: local_jsonl, huggingface
-│   │   └── config.py pipeline.py #     TuningConfig, TuningPipeline
+│   │   ├── tuning_backbone.py    #     Backbone: base of every model catalog entry
+│   │   ├── training_method.py    #     TrainingMethod: base of every training method
+│   │   ├── training_loop.py      #     the one training loop (accumulation, schedule, resume)
+│   │   ├── tuning_stages.py      #     data, train, validate
+│   │   ├── row_sources.py        #     row sources: local_jsonl, huggingface
+│   │   └── tuning_config.py tuning_pipeline.py
 │   ├── llm/                      #   family: generative language models
-│   │   ├── models/               #     Model Catalog: base.py (LLMBackbone), transformer.py, hybrid.py
-│   │   │   └── heads/            #       decision heads on top of a backbone: base.py (DecisionHead), readout, pointer
-│   │   ├── methods/              #     Training Method: base.py (LLMMethod), sft, instruction, dpo, grpo
-│   │   │   └── decision/         #       base.py (DecisionMethod: rows, metrics, calibration), sft, cispo
-│   │   └── config.py pipeline.py #     one config class and one registered recipe per method
+│   │   ├── models/               #     Model Catalog: llm_backbone.py (LLMBackbone), transformer_backbone.py, hybrid_backbone.py
+│   │   │   └── heads/            #       decision heads: decision_head.py (DecisionHead), readout_head.py, pointer_head.py
+│   │   ├── methods/              #     Training Method: llm_method.py (LLMMethod), sft, instruction, dpo, grpo (*_method.py)
+│   │   │   └── decision/         #       decision_method.py (rows, metrics, calibration), decision_sft_method.py, cispo_method.py
+│   │   └── llm_config.py llm_pipeline.py  # one config class and one registered recipe per method
 │   ├── embedding/                #   family: text embedding models
-│   │   ├── models/               #     Model Catalog: base.py (EmbeddingBackbone), bi_encoder.py
-│   │   ├── methods/              #     Training Method: contrastive.py
-│   │   └── config.py pipeline.py
+│   │   ├── models/               #     Model Catalog: embedding_backbone.py (EmbeddingBackbone), bi_encoder_backbone.py
+│   │   ├── methods/              #     Training Method: contrastive_method.py
+│   │   └── embedding_config.py embedding_pipeline.py
 │   ├── tts/                      #   family: text-to-speech (tts_piper, tts_qwen)
-│   │   ├── piper.py              #     the Piper program (GPL) as a separate process: speak, fit, export
-│   │   ├── audio.py asr.py       #     WAV measurements; Whisper transcripts and word error rate
-│   │   └── config.py stages.py pipeline.py
+│   │   ├── piper_process.py      #     the Piper program (GPL) as a separate process: speak, fit, export
+│   │   ├── qwen_process.py       #     Qwen3-TTS as a separate process (environment/qwen)
+│   │   ├── audio_file.py asr_listener.py quality_rater.py  # WAV measurements; Whisper and word error rate; UTMOS, DNSMOS
+│   │   └── tts_config.py tts_stages.py tts_pipeline.py
 │   └── wakeword/                 #   family: wake word detection (wakeword)
-│       ├── features.py           #     openWakeWord's frozen front end on onnxruntime: audio -> embeddings every 80 ms
-│       ├── detector.py           #     the DNN head: trained with torch, exported and scored in ONNX
-│       └── config.py stages.py pipeline.py
+│       ├── feature_embedder.py   #     openWakeWord's frozen front end on onnxruntime: audio -> embeddings every 80 ms
+│       ├── wakeword_detector.py  #     the DNN head: trained with torch, exported and scored in ONNX
+│       └── wakeword_config.py wakeword_stages.py wakeword_pipeline.py
 ├── data/                         # Data channel: seeds -> prompts -> evolve -> respond -> verify -> select (data_synthetic)
-│   ├── teachers.py               #   anthropic, openai, ollama, local behind one complete()
-│   ├── config.py rows.py ...     #   one module per stage; rows.py: natural keys, atomic files, per-item caches
+│   ├── teacher_client.py         #   anthropic, openai, ollama, local behind one complete()
+│   ├── *_stage.py row_store.py   #   one module per stage; row_store.py: natural keys, atomic files, per-item caches
 │   └── speech/                   #   data_speech: synthesize, verify, select after the shared seeds and prompts
 ├── evaluation/                   # Evaluation channel: config -> scores of a trained model, report.json
-│   ├── source.py                 #   SourceExperiment: an experiment's config read back, its checkpoint located
-│   ├── stages.py                 #   rows, score, report (evaluation_custom)
-│   ├── benchmark.py              #   presets, one score stage per benchmark over lm-evaluation-harness (evaluation_benchmark)
-│   ├── compare.py                #   runs, verdicts against the base, polygon SVG, Markdown summary (evaluation_compare)
-│   ├── decision.py               #   jevbench source, decide without and with reasoning, ECE, tiers, latency (evaluation_decision)
-│   ├── embedding.py              #   mteb encoder wrapper, one stage per MTEB task (evaluation_embedding)
-│   ├── wakeword.py               #   clips, score traces, miss rate and false accepts per hour over thresholds (evaluation_wakeword)
-│   └── config.py pipeline.py     #   (README: design and milestones)
+│   ├── source_model.py           #   SourceExperiment: an experiment's config read back, its checkpoint located
+│   ├── custom_stages.py          #   rows, score, report (evaluation_custom)
+│   ├── contamination_check.py    #   exact and near-duplicate overlap between training rows and evaluation items
+│   ├── benchmark_evaluation.py   #   presets, one score stage per benchmark over lm-evaluation-harness (evaluation_benchmark)
+│   ├── compare_evaluation.py     #   runs, verdicts against the base, polygon SVG, Markdown summary (evaluation_compare)
+│   ├── decision_evaluation.py    #   jevbench source, decide without and with reasoning, ECE, tiers, latency (evaluation_decision)
+│   ├── embedding_evaluation.py   #   mteb encoder wrapper, one stage per MTEB task (evaluation_embedding)
+│   ├── wakeword_evaluation.py    #   clips, score traces, miss rate and false accepts per hour over thresholds (evaluation_wakeword)
+│   └── evaluation_config.py evaluation_pipeline.py  # (README: design and milestones)
 ├── tests/                        # unit/test_{feature}_{module}.py, integ/test_{feature}.py; shared fakes beside conftest.py
 ├── docs/                         # features.md, api_spec.md, view_spec.md
-├── environment/                  # Dockerfile, docker-compose.yml, .env.sample
+├── environment/                  # Dockerfile, .env.sample (compose.yaml sits at the root)
 │   └── piper/                    #   the Piper program's own locked environment (GPL), built by setup.sh
 └── output/
     ├── _stages/<stage>-<fingerprint>/   # what each stage built; shared by every experiment with the same inputs
@@ -112,7 +116,7 @@ runs an embedding model on MTEB tasks; `evaluation_wakeword` measures a wake wor
 false accepts per hour of audio without the name. All write `report.json` with the overlap between the evaluation items and
 the experiment's training rows (exact matches and n-gram near-duplicates) next to the scores, send the report to
 wandb with `tracker.enabled`, and are listed by `GET /api/evaluations` (`evaluation/README.md` has the details). `data/` produces rows: `data_synthetic` makes them from seeds through a teacher model (Anthropic, OpenAI-format, Ollama or a local checkpoint), evolves and verifies them, removes duplicates and leaks, and writes a recipe's rows with a manifest; every stage is cached by its inputs and safe to rerun, so a crash or a spent budget resumes where it stopped (`data/README.md`). Loading open datasets (`data_open`) is designed there and not built. A channel is a
-package that registers recipes; it joins by adding its name to `CHANNELS` in `core/registry.py` and reuses `Stage`,
+package that registers recipes; it joins by adding its name to `CHANNELS` in `core/recipe_registry.py` and reuses `Stage`,
 `Pipeline`, `Progress` and `Experiment` as they are.
 
 ## 02. How a run works
@@ -432,7 +436,7 @@ uv run llmclick recipes                                    # recipes, their stag
 uv run llmclick validate configs/llm/sft.yaml              # experiment key and stage plan
 uv run llmclick run configs/llm/sft.yaml                   # the stages the config asks for
 
-uv run llmclick serve --host 0.0.0.0 --port 8000           # API + Swagger at /docs (or: uvicorn core.api.app:app)
+uv run llmclick serve --host 0.0.0.0 --port 8000           # API + Swagger at /docs (or: uvicorn core.api.api_app:app)
 curl -X POST localhost:8000/api/jobs -H 'content-type: application/json' \
   -d '{"config_path": "configs/llm/sft.yaml"}'
 ```
@@ -467,7 +471,7 @@ curl -X POST localhost:8000/api/jobs -H 'content-type: application/json' \
 The `llm/` and `embedding/` configs ship as pilots: sample rows from `samples/` and `max_steps: 4`. Point
 `data.sources` at your rows and remove `max_steps` for a real run.
 
-Docker: `IMAGE_TAG=$(git rev-parse --short HEAD) docker compose -f environment/docker-compose.yml up -d --build`.
+Docker: `IMAGE_TAG=$(git rev-parse --short HEAD) docker compose up -d --build`.
 
 Installed as a package (`uv build`, then `pip install dist/llmclick-*.whl`), `llmclick` runs from any directory:
 config paths, `output_dir` and `environment/.env` are relative to the working directory, and `LLMCLICK_ENV` names a
@@ -502,7 +506,7 @@ modeling
 Subclass the family's backbone and register it; every recipe of the family can then name it in `model.architecture`.
 
 ```python
-@LLM_BACKBONES.register("moe")                  # modeling/llm/models/moe.py; import it in models/__init__.py
+@LLM_BACKBONES.register("moe")                  # modeling/llm/models/moe_backbone.py; import it in models/__init__.py
 class MoEBackbone(LLMBackbone):
     loader = AutoModelForCausalLM               # the transformers class that builds it
     frozen = ("router",)                        # parameter-name fragments training must not update
@@ -540,18 +544,18 @@ class MyMethod(LLMMethod):                      # modeling/llm/methods/my_method
     def loss(self, backbone, rows): ...         # differentiable scalar for one batch
     def evaluate(self, backbone, rows, batch_size, progress): ...   # metrics the validation bounds can name
 
-class MyConfig(LLMConfig):                      # modeling/llm/config.py
+class MyConfig(LLMConfig):                      # modeling/llm/llm_config.py
     method_class = MyMethod
     method: MyMethod.Config = Field(default_factory=MyMethod.Config)
 
-@recipe                                         # modeling/llm/pipeline.py
+@recipe                                         # modeling/llm/llm_pipeline.py
 class MyPipeline(LLMPipeline):
     kind = "llm_my_method"
     config_class = MyConfig
 ```
 
 `prepare(backbone, rows, workdir)` runs once before training with the untouched base weights (DPO caches its
-reference margins there). Helpers shared by LLM methods live in `modeling/llm/methods/base.py`.
+reference margins there). Helpers shared by LLM methods live in `modeling/llm/methods/llm_method.py`.
 
 ### A new family
 
@@ -576,7 +580,7 @@ training: {adapter: {name: lora, r: 16, alpha: 32}}
 ### A reward for `llm_grpo`
 
 ```python
-@REWARDS.register("json_valid")                 # modeling/llm/methods/grpo.py
+@REWARDS.register("json_valid")                 # modeling/llm/methods/grpo_method.py
 def json_valid(completion: str, row: dict, params: dict) -> float: ...
 ```
 
@@ -586,10 +590,10 @@ When training does not fit the shared loop (for example an external trainer run 
 brings its own config class, stages and pipeline class; users only see a new value for `pipeline.recipe`.
 
 ```python
-class MyConfig(ModelingConfig):                 # modeling/<recipe>/config.py
+class MyConfig(ModelingConfig):                 # modeling/<recipe>/<recipe>_config.py
     model: MyModelConfig
 
-class MyTrain(TrainStage[MyConfig]):            # modeling/<recipe>/stages.py
+class MyTrain(TrainStage[MyConfig]):            # modeling/<recipe>/<recipe>_stages.py
     sections = ("seed", "model")                # config sections that decide the result
     def train(self, workdir, inputs):           # write into workdir; must be safe to run again after a crash
         ...
@@ -599,7 +603,7 @@ class MyValidate(ValidateStage[MyConfig]):
     def measure(self, workdir, inputs):         # metrics on held-out data; bounds and report are handled for you
         return {"accuracy": ...}
 
-@recipe                                         # modeling/<recipe>/pipeline.py; import it in modeling/__init__.py
+@recipe                                         # modeling/<recipe>/<recipe>_pipeline.py; import it in modeling/__init__.py
 class MyPipeline(ModelingPipeline[MyConfig]):
     kind = "my_recipe"
     config_class = MyConfig
@@ -615,15 +619,15 @@ writing the step again, so the guarantee holds in one place:
 
 | Need | Use | Where |
 |---|---|---|
-| Write a file whole or not at all | `with atomic_path(path) as temporary:` | `core/utils/files.py` |
-| Build a checkpoint directory whole or not at all | `with staged_directory(workdir / "checkpoint") as staging:` | `core/utils/files.py` |
-| Rows between stages | `read_jsonl`, `write_jsonl` (atomic); the data channel's `read_rows` also reads a missing file as empty | `core/utils/files.py`, `data/rows.py` |
-| Per-item results that survive a crash | `cached(directory, key)`, `keep(directory, key, row)` under a natural `key(...)` | `data/rows.py` |
-| Hold out validation rows | `held_out_positions(count, seed, share)`: a row's side depends only on the seed and its position | `modeling/stages.py` |
-| Load a model for one block | `with backbone.loaded(device, checkpoint):` releases it afterwards, also on failure | `modeling/tuning/backbone.py` |
-| A `name:` key in the config | a `Registry`; in the config validator `REGISTRY.check(*names)` gives the standard error | `core/registry.py` |
-| Local files a config reads | `local_paths(entries, keys)` in `paths()`, so the API can confine them | `modeling/config.py` |
-| Recordings named by rows | `audio.recordings(source)`, `audio.signatures(sources)` for the fingerprint | `modeling/tts/audio.py` |
+| Write a file whole or not at all | `with atomic_path(path) as temporary:` | `core/file_store.py` |
+| Build a checkpoint directory whole or not at all | `with staged_directory(workdir / "checkpoint") as staging:` | `core/file_store.py` |
+| Rows between stages | `read_jsonl`, `write_jsonl` (atomic); the data channel's `read_rows` also reads a missing file as empty | `core/file_store.py`, `data/row_store.py` |
+| Per-item results that survive a crash | `cached(directory, key)`, `keep(directory, key, row)` under a natural `key(...)` | `data/row_store.py` |
+| Hold out validation rows | `held_out_positions(count, seed, share)`: a row's side depends only on the seed and its position | `modeling/modeling_stages.py` |
+| Load a model for one block | `with backbone.loaded(device, checkpoint):` releases it afterwards, also on failure | `modeling/tuning/tuning_backbone.py` |
+| A `name:` key in the config | a `Registry`; in the config validator `REGISTRY.check(*names)` gives the standard error | `core/recipe_registry.py` |
+| Local files a config reads | `local_paths(entries, keys)` in `paths()`, so the API can confine them | `modeling/modeling_config.py` |
+| Recordings named by rows | `audio.recordings(source)`, `audio.signatures(sources)` for the fingerprint | `modeling/tts/audio_file.py` |
 
 ## 05. Tests
 

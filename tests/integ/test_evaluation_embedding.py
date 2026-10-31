@@ -6,18 +6,18 @@ from pathlib import Path
 
 import pytest
 
-from evaluation.embedding import Encoder, model_meta
-from evaluation.source import SourceExperiment
-from evaluation.config import SourceModel
-from core.progress import StateProgress
+from evaluation.embedding_evaluation import Encoder, model_meta
+from evaluation.source_model import SourceExperiment
+from evaluation.evaluation_config import SourceModel
+from core.progress_reporter import StateProgress
 from tests.recipe_inputs import raw
-from core import pipeline
+from core import pipeline_runner
 
 
 @pytest.fixture(scope="module")
 def embedding(tiny_model: Path, tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
     out = tmp_path_factory.mktemp("embedding")
-    return pipeline.build(raw("embedding_contrastive", tiny_model, out)).run()
+    return pipeline_runner.build(raw("embedding_contrastive", tiny_model, out)).run()
 
 
 def config(experiment: str, out: Path, tasks: list[str], **keys: Any) -> dict[str, Any]:
@@ -44,33 +44,33 @@ def test_the_encoder_passes_mteb_mock_text_tasks(embedding: dict[str, Any]) -> N
 
 def test_one_stage_per_task_with_the_main_score(embedding: dict[str, Any], tmp_path: Path) -> None:
     progress = StateProgress()
-    result = pipeline.build(config(embedding["directory"], tmp_path, ["MockSTSTask", "MockRetrievalTask"]), progress).run()
+    result = pipeline_runner.build(config(embedding["directory"], tmp_path, ["MockSTSTask", "MockRetrievalTask"]), progress).run()
     assert progress.snapshot()["stages"] == {"score:MockSTSTask": "done", "score:MockRetrievalTask": "done", "report": "done"}
     report = json.loads(Path(result["stages"]["report"]["report"]).read_text())
     sts = report["tasks"]["MockSTSTask"]
     assert sts["metric"] == "cosine_spearman" and -1 <= sts["main_score"] <= 1 and sts["type"] == "STS" and Path(sts["results"]).exists()
     assert report["settings"]["package"] == {"name": "mteb", "version": report["settings"]["package"]["version"]} and report["model"]["recipe"] == "embedding_contrastive"
     again = StateProgress()
-    pipeline.build(config(embedding["directory"], tmp_path, ["MockSTSTask", "MockRetrievalTask", "MockClassificationTask"]), again).run()
+    pipeline_runner.build(config(embedding["directory"], tmp_path, ["MockSTSTask", "MockRetrievalTask", "MockClassificationTask"]), again).run()
     assert again.snapshot()["stages"]["score:MockSTSTask"] == "cached" and again.snapshot()["stages"]["score:MockClassificationTask"] == "done"
     with pytest.raises(ValueError, match="unknown MTEB task"):
-        pipeline.build(config(embedding["directory"], tmp_path, ["NoSuchTask"])).run()
+        pipeline_runner.build(config(embedding["directory"], tmp_path, ["NoSuchTask"])).run()
 
 
 def test_a_non_embedding_experiment_is_refused(tiny_model: Path, tmp_path: Path) -> None:
-    sft = pipeline.build(raw("llm_sft", tiny_model, tmp_path)).run()
+    sft = pipeline_runner.build(raw("llm_sft", tiny_model, tmp_path)).run()
     with pytest.raises(ValueError, match="not an embedding model"):
-        pipeline.build(config(sft["directory"], tmp_path, ["MockSTSTask"])).run()
+        pipeline_runner.build(config(sft["directory"], tmp_path, ["MockSTSTask"])).run()
 
 
 def test_a_hub_embedding_model_needs_its_architecture(tiny_model: Path, tmp_path: Path) -> None:
     body = {"pipeline": {"recipe": "evaluation_embedding", "name": "hub-emb", "output_dir": str(tmp_path), "device": "cpu"},
             "model": {"name": str(tiny_model), "architecture": "bi_encoder"}, "tasks": ["MockSTSTask"], "max_length": 32,
             "evaluation": {"batch_size": 4}}
-    result = pipeline.build(body).run()
+    result = pipeline_runner.build(body).run()
     report = json.loads(Path(result["stages"]["report"]["report"]).read_text())
     assert report["model"]["architecture"] == "bi_encoder" and -1 <= report["tasks"]["MockSTSTask"]["main_score"] <= 1
     with pytest.raises(ValueError, match="model.architecture is needed"):
-        pipeline.build({**body, "model": {"name": str(tiny_model)}}).run()
+        pipeline_runner.build({**body, "model": {"name": str(tiny_model)}}).run()
     with pytest.raises(ValueError, match="not an embedding model"):
-        pipeline.build({**body, "model": {"name": str(tiny_model), "architecture": "transformer"}}).run()
+        pipeline_runner.build({**body, "model": {"name": str(tiny_model), "architecture": "transformer"}}).run()

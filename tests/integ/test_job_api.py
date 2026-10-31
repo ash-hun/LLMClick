@@ -8,13 +8,13 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from core.api.schema import EXAMPLE_CONFIG, EXAMPLE_PLAN
-from core.api import store as job_store
-from core.progress import StateProgress
+from core.api.api_schema import EXAMPLE_CONFIG, EXAMPLE_PLAN
+from core.api import job_store as job_store
+from core.progress_reporter import StateProgress
 from core.settings import get_settings
-from core.api.store import JobStore
-from core.utils import device
-from core.api.app import app
+from core.api.job_store import JobStore
+from core import device_selector
+from core.api.api_app import app
 
 client = TestClient(app)
 
@@ -113,9 +113,9 @@ def test_workers_run_jobs_at_once_each_on_its_own_slot(tmp_path: Path) -> None:
     both_running, slots = threading.Barrier(2, timeout=5), []
 
     def work() -> int:
-        slots.append(device.slot.index)
+        slots.append(device_selector.slot.index)
         both_running.wait()  # passes only if the two jobs overlap
-        return device.slot.index
+        return device_selector.slot.index
 
     for name in ("a", "b"):
         store.submit(name, work, {"recipe": "r"}, StateProgress())

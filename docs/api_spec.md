@@ -35,7 +35,7 @@
 
 YAML 설정 하나를 커스텀 모델 하나로 실행하는 서버. config 의 `pipeline.recipe` 가 레시피(서브모델)를 고르고,
 `pipeline.stages` 가 수행 단계를 고른다. 정본은 `output/_stages/<stage>-<fingerprint>/` 의 스테이지 산출물과
-`output/<name>-<hash>/manifest.json` 이며, API 는 파이프라인(`core/pipeline.py`)을 백그라운드 워커(`JOB_WORKERS`, 기본 1)로 실행하고
+`output/<name>-<hash>/manifest.json` 이며, API 는 파이프라인(`core/pipeline_runner.py`)을 백그라운드 워커(`JOB_WORKERS`, 기본 1)로 실행하고
 상태와 진행률을 돌려준다. 라우터: `core/api/routers/`.
 
 ---
@@ -731,15 +731,15 @@ $ curl -s http://localhost:8000/health
 
 ### Config
 
-공통 키는 `core/config/schema.py` 의 `BaseConfig`(recipe, name, seed, output_dir, device, stages), 모델링 공통 키는
-`modeling/config.py` 의 `ModelingConfig`(tracker, validation), 레시피 고유 섹션은 레시피의 스키마가 정본이다.
+공통 키는 `core/config/config_schema.py` 의 `BaseConfig`(recipe, name, seed, output_dir, device, stages), 모델링 공통 키는
+`modeling/modeling_config.py` 의 `ModelingConfig`(tracker, validation), 레시피 고유 섹션은 레시피의 스키마가 정본이다.
 스키마에 없는 키는 최상위든 섹션 안이든 422 (`data.sources[*]` 와 `method.reward` 처럼 `name` + 임의 파라미터인 항목 제외).
 
-LLM, Embedding 계열 레시피는 `modeling/tuning/config.py` 의 `TuningConfig` 를 공유한다: `model`(architecture, name,
+LLM, Embedding 계열 레시피는 `modeling/tuning/tuning_config.py` 의 `TuningConfig` 를 공유한다: `model`(architecture, name,
 revision, init. LLM 계열은 여기에 template, head 가 더 있고 임베딩 계열에서 쓰면 422), `data`(sources, validation), `training`(epochs, lr, weight_decay, batch_size, accumulation,
 warmup_ratio, max_grad_norm, max_length, overflow, max_steps, resume_every, adapter), `validation`(min, max, batch_size), `method`.
 `training.adapter`(name, r, alpha, dropout, targets)가 있으면 LoRA 로 학습하고, 없으면 전체 가중치를 학습한다.
-`method` 섹션의 키는 레시피마다 다르며 `modeling/llm/config.py`, `modeling/embedding/config.py` 가 정본이다.
+`method` 섹션의 키는 레시피마다 다르며 `modeling/llm/llm_config.py`, `modeling/embedding/embedding_config.py` 가 정본이다.
 `validation.min/max` 에 쓸 수 있는 지표도 레시피마다 다르다: `llm_sft` 와 `llm_instruction` 은 `loss`,
 `perplexity`, `llm_dpo` 는 `accuracy`, `margin`, `llm_grpo` 는 `reward`, `llm_decision_sft` 는 `accuracy`, `nll`, `ece`,
 `llm_decision_cispo` 는 여기에 `think_accuracy`, `embedding_contrastive` 는 `accuracy`, `mrr`.

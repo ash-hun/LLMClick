@@ -88,7 +88,7 @@ class FakeRater:
         self.piper = piper
 
     def __call__(self, path: Path) -> dict[str, float]:
-        from modeling.tts.quality import METRICS
+        from modeling.tts.quality_rater import METRICS
         return dict.fromkeys(METRICS, 4.0 if str(path.resolve()) in self.piper.spoken else 3.0)
 
 
@@ -110,16 +110,16 @@ class FakeEmbedder:
         pass
 
     def __call__(self, samples: np.ndarray) -> np.ndarray:
-        from modeling.wakeword import features
-        count = max(0, (len(samples) - features.SPAN) // features.HOP + 1)
-        rows = [np.abs(np.fft.rfft(samples[i * features.HOP: i * features.HOP + features.SPAN]))[:features.DIM * 40]
+        from modeling.wakeword import feature_embedder
+        count = max(0, (len(samples) - feature_embedder.SPAN) // feature_embedder.HOP + 1)
+        rows = [np.abs(np.fft.rfft(samples[i * feature_embedder.HOP: i * feature_embedder.HOP + feature_embedder.SPAN]))[:feature_embedder.DIM * 40]
                 for i in range(count)]
-        return np.array([np.log1p(row.reshape(features.DIM, 40).mean(axis=1)) for row in rows], dtype=np.float32).reshape(-1, features.DIM)
+        return np.array([np.log1p(row.reshape(feature_embedder.DIM, 40).mean(axis=1)) for row in rows], dtype=np.float32).reshape(-1, feature_embedder.DIM)
 
 
 def fake_feature_models(directory: Path) -> Path:
-    from modeling.wakeword import features
+    from modeling.wakeword import feature_embedder
     directory.mkdir(parents=True, exist_ok=True)
-    for name in features.MODELS:
+    for name in feature_embedder.MODELS:
         (directory / name).write_text("a feature model")
     return directory

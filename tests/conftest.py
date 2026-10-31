@@ -8,11 +8,11 @@ from pathlib import Path
 import pytest
 
 from tests.speech_fakes import FakeEmbedder, FakeListener, FakePiper, FakeRater, FakeSpeaker, fake_feature_models
-from modeling.llm.models.transformer import TransformerBackbone
-from modeling.llm.models.config import LLMBackboneConfig
+from modeling.llm.models.transformer_backbone import TransformerBackbone
+from modeling.llm.models.backbone_config import LLMBackboneConfig
 from tests.recipe_fakes import FakeHarness, FakeWandb
 from tests.recipe_inputs import raw
-from core import pipeline
+from core import pipeline_runner
 
 CHATML = ("{% for m in messages %}<|im_start|>{{ m['role'] }}\n{{ m['content'] }}<|im_end|>\n{% endfor %}"
           "{% if add_generation_prompt %}<|im_start|>assistant\n{% endif %}")
@@ -63,7 +63,7 @@ def tiny_model(tmp_path_factory: pytest.TempPathFactory) -> Path:
 def trained(tiny_model: Path, tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
     """A tiny `llm_sft` experiment the evaluation recipes score, trained once per test file."""
     out = tmp_path_factory.mktemp("trained")
-    result = pipeline.build(raw("llm_sft", tiny_model, out)).run()
+    result = pipeline_runner.build(raw("llm_sft", tiny_model, out)).run()
     return result
 
 
@@ -98,16 +98,16 @@ def piper(monkeypatch: pytest.MonkeyPatch) -> FakePiper:
     `data_speech` patches other places and keeps its own `piper` fixture."""
     fake = FakePiper()
     for name in ("speak", "fit", "export"):
-        monkeypatch.setattr(f"modeling.tts.piper.{name}", getattr(fake, name))
-    monkeypatch.setattr("modeling.tts.piper.version", lambda: "test")
-    monkeypatch.setattr("modeling.tts.stages.Listener", FakeListener(fake, heard_as="a recording"))
-    monkeypatch.setattr("modeling.tts.stages.Rater", lambda directory: FakeRater(fake))
-    monkeypatch.setattr("modeling.tts.stages.Speaker", lambda recordings: FakeSpeaker(fake))
+        monkeypatch.setattr(f"modeling.tts.piper_process.{name}", getattr(fake, name))
+    monkeypatch.setattr("modeling.tts.piper_process.version", lambda: "test")
+    monkeypatch.setattr("modeling.tts.tts_stages.Listener", FakeListener(fake, heard_as="a recording"))
+    monkeypatch.setattr("modeling.tts.tts_stages.Rater", lambda directory: FakeRater(fake))
+    monkeypatch.setattr("modeling.tts.tts_stages.Speaker", lambda recordings: FakeSpeaker(fake))
     return fake
 
 
 @pytest.fixture
 def wakeword_front_end(monkeypatch: pytest.MonkeyPatch) -> None:
     """openWakeWord's feature models replaced by FakeEmbedder; the wakeword files use it on every test."""
-    monkeypatch.setattr("modeling.wakeword.features.ensure", fake_feature_models)
-    monkeypatch.setattr("modeling.wakeword.features.Embedder", FakeEmbedder)
+    monkeypatch.setattr("modeling.wakeword.feature_embedder.ensure", fake_feature_models)
+    monkeypatch.setattr("modeling.wakeword.feature_embedder.Embedder", FakeEmbedder)

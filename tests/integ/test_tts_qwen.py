@@ -8,8 +8,8 @@ import pytest
 
 from tests.recipe_inputs import tts_config as config, tts_recordings as recordings
 from tests.speech_fakes import FakePiper, FakeRater
-from modeling.tts import audio, qwen
-from core import pipeline
+from modeling.tts import audio_file, qwen_process
+from core import pipeline_runner
 
 
 class FakeQwen:
@@ -38,17 +38,17 @@ def qwen_config(root: Path, **keys: Any) -> dict[str, Any]:
 def test_qwen_clones_the_most_natural_clip_in_bounds_and_a_rerun_speaks_nothing(tmp_path: Path, piper: FakePiper,
                                                                                 monkeypatch: pytest.MonkeyPatch) -> None:
     fake = FakeQwen(piper)
-    monkeypatch.setattr("modeling.tts.qwen.speak", fake.speak)
-    monkeypatch.setattr("modeling.tts.qwen.version", lambda: "test")
+    monkeypatch.setattr("modeling.tts.qwen_process.speak", fake.speak)
+    monkeypatch.setattr("modeling.tts.qwen_process.version", lambda: "test")
     rated = FakeRater(piper)
     # the longer a recording the more natural, so the pick is the longest one inside the bounds
-    monkeypatch.setattr("modeling.tts.stages.Rater", lambda directory: (
-        lambda path: {**rated(path), "utmos": audio.seconds(path)} if str(path.resolve()) not in piper.spoken else rated(path)))
+    monkeypatch.setattr("modeling.tts.tts_stages.Rater", lambda directory: (
+        lambda path: {**rated(path), "utmos": audio_file.seconds(path)} if str(path.resolve()) not in piper.spoken else rated(path)))
     replies = {"wake_up": "At your service, sir.", "persona_jarvis": "Change to JARVIS."}
     settings = qwen_config(recordings(tmp_path), reference={"min_seconds": 0.5, "max_seconds": 0.85},
                            validation={"phrases": replies, "phrase_takes": 2, "max": {"wer": 0.1, "phrase_wer": 0.0},
                                        "min": {"speaker_similarity": 0.8}})
-    result = pipeline.build(settings).run()
+    result = pipeline_runner.build(settings).run()
     checkpoint = Path(result["stages"]["validate"]["checkpoint"])
     voice = json.loads((checkpoint / "voice.json").read_text())
     # the first of the three 0.8 s clips: a tie keeps the rows' order
@@ -56,11 +56,11 @@ def test_qwen_clones_the_most_natural_clip_in_bounds_and_a_rerun_speaks_nothing(
     assert result["stages"]["train"]["seconds"] == pytest.approx(0.8) and (checkpoint / "reference.wav").is_file()
     metrics = result["stages"]["validate"]["metrics"]
     assert metrics["wer"] == 0.0 and metrics["phrase_wer"] == 0.0 and metrics["speaker_similarity"] == 0.9
-    assert fake.seeds["wake_up-0.wav"] != fake.seeds["wake_up-1.wav"] and fake.seeds["wake_up-0.wav"] == qwen.seed(5, replies["wake_up"], 0)
+    assert fake.seeds["wake_up-0.wav"] != fake.seeds["wake_up-1.wav"] and fake.seeds["wake_up-0.wav"] == qwen_process.seed(5, replies["wake_up"], 0)
 
     piper.calls = []
-    assert json.dumps(pipeline.build(settings).run()) == json.dumps(result) and piper.calls == []
+    assert json.dumps(pipeline_runner.build(settings).run()) == json.dumps(result) and piper.calls == []
     with pytest.raises(ValueError, match="No training recording lasts"):
-        pipeline.build(qwen_config(tmp_path, reference={"min_seconds": 5, "max_seconds": 9})).run()
+        pipeline_runner.build(qwen_config(tmp_path, reference={"min_seconds": 5, "max_seconds": 9})).run()
     with pytest.raises(ValueError, match="below reference.max_seconds"):
-        pipeline.build(qwen_config(tmp_path, reference={"min_seconds": 9, "max_seconds": 5}))
+        pipeline_runner.build(qwen_config(tmp_path, reference={"min_seconds": 9, "max_seconds": 5}))

@@ -8,8 +8,8 @@ import pytest
 
 from tests.recipe_inputs import decision_raw, raw
 from tests.recipe_fakes import FakeHarness
-from core.progress import StateProgress
-from core import pipeline
+from core.progress_reporter import StateProgress
+from core import pipeline_runner
 
 
 def config(experiment: str, out: Path, **keys: Any) -> dict[str, Any]:
@@ -24,16 +24,16 @@ def test_compares_runs_on_benchmarks_and_rows_and_shares_their_stages(trained: d
     single = {"pipeline": {"recipe": "evaluation_benchmark", "name": "one", "output_dir": str(tmp_path), "device": "cpu"},
               "model": {"experiment": trained["directory"], "checkpoint": "validate"},
               "benchmarks": {"tasks": [{"name": "hellaswag"}], "limit": 4}, "evaluation": {"batch_size": 8}}
-    pipeline.build(single).run()  # the final checkpoint on hellaswag, measured before any comparison asked for it
+    pipeline_runner.build(single).run()  # the final checkpoint on hellaswag, measured before any comparison asked for it
     custom = {"pipeline": {"recipe": "evaluation_custom", "name": "rows", "output_dir": str(tmp_path), "device": "cpu"},
               "model": {"experiment": trained["directory"], "checkpoint": "validate"},
               "data": {"sources": [{"name": "local_jsonl", "path": held_out}]}, "evaluation": {"batch_size": 8}}
-    custom_result = pipeline.build(custom).run()
+    custom_result = pipeline_runner.build(custom).run()
 
     progress = StateProgress()
     body = config(trained["directory"], tmp_path, benchmarks={"tasks": [{"name": "hellaswag"}, {"name": "gsm8k"}], "limit": 4},
                   rows={"sources": [{"name": "local_jsonl", "path": held_out}]}, axes={"knowledge": ["hellaswag", "gsm8k"]})
-    built = pipeline.build(body, progress)
+    built = pipeline_runner.build(body, progress)
     assert built.plan() == ["score:base:hellaswag", "score:base:gsm8k", "score:final:hellaswag", "score:final:gsm8k",
                             "rows", "rows:base", "rows:final", "report"]
     result = built.run()
@@ -56,18 +56,18 @@ def test_compares_runs_on_benchmarks_and_rows_and_shares_their_stages(trained: d
     assert "| hellaswag | acc | 0.5000 ± 0.0500 | 0.2500 ± 0.0500 (-0.2500) |" in summary
     assert "| loss |" in summary and "?)" in summary and "![axes](axes.svg)" in summary
 
-    again = pipeline.build(body, StateProgress()).run()
+    again = pipeline_runner.build(body, StateProgress()).run()
     assert json.dumps(again) == json.dumps(result)
 
 
 def test_decision_and_embedding_sections_join_the_comparison(tmp_path: Path, tiny_model: Path) -> None:
-    decision = pipeline.build(decision_raw("llm_decision_sft", tiny_model, tmp_path, "readout")).run()
+    decision = pipeline_runner.build(decision_raw("llm_decision_sft", tiny_model, tmp_path, "readout")).run()
     body = {"pipeline": {"recipe": "evaluation_compare", "name": "cmp-dec", "output_dir": str(tmp_path), "device": "cpu"},
             "runs": [{"label": "base", "experiment": decision["directory"], "checkpoint": "base"},
                      {"label": "final", "experiment": decision["directory"], "checkpoint": "validate"}],
             "decision": {"data": {"sources": [{"name": "local_jsonl", "path": decision["stages"]["data"]["validation"]}]}, "think": "off"},
             "axes": {"decide": ["decision:nothink:accuracy"]}, "evaluation": {"batch_size": 4}}
-    built = pipeline.build(body)
+    built = pipeline_runner.build(body)
     assert built.plan() == ["questions", "decision:base", "decision:final", "report"]
     report = json.loads(Path(built.run()["stages"]["report"]["report"]).read_text())
     assert set(report["decision"]["nothink"]) >= {"accuracy", "nll", "ece", "questions"}
@@ -77,12 +77,12 @@ def test_decision_and_embedding_sections_join_the_comparison(tmp_path: Path, tin
     assert report["contamination"]["base"] is None and report["contamination"]["final"]["items"] > 0
     assert "## Decision" in Path(report["summary"]).read_text()
 
-    embedding = pipeline.build(raw("embedding_contrastive", tiny_model, tmp_path)).run()
+    embedding = pipeline_runner.build(raw("embedding_contrastive", tiny_model, tmp_path)).run()
     body = {"pipeline": {"recipe": "evaluation_compare", "name": "cmp-emb", "output_dir": str(tmp_path), "device": "cpu"},
             "runs": [{"label": "base", "experiment": embedding["directory"], "checkpoint": "base"},
                      {"label": "final", "experiment": embedding["directory"], "checkpoint": "validate"}],
             "embedding": {"tasks": ["MockSTSTask"]}, "axes": {"sts": ["embedding:MockSTSTask"]}, "evaluation": {"batch_size": 4}}
-    built = pipeline.build(body)
+    built = pipeline_runner.build(body)
     assert built.plan() == ["embedding:base:MockSTSTask", "embedding:final:MockSTSTask", "report"]
     report = json.loads(Path(built.run()["stages"]["report"]["report"]).read_text())
     assert set(report["embedding"]["MockSTSTask"]) == {"base", "final"} and "embedding:MockSTSTask" in report["comparison"]
@@ -94,7 +94,7 @@ def test_a_hub_model_serves_as_the_baseline(trained: dict[str, Any], tmp_path: P
             "runs": [{"label": "qwen", "name": str(tiny_model)},
                      {"label": "final", "experiment": trained["directory"], "checkpoint": "validate"}],
             "benchmarks": {"tasks": [{"name": "hellaswag"}], "limit": 4}, "evaluation": {"batch_size": 2}}
-    built = pipeline.build(body)
+    built = pipeline_runner.build(body)
     assert built.config.base.label == "qwen"
     report = json.loads(Path(built.run()["stages"]["report"]["report"]).read_text())
     assert report["base"] == "qwen" and report["runs"][0]["name"] == str(tiny_model) and report["runs"][0]["checkpoint"] == "hub"

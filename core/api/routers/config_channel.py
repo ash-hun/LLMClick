@@ -5,10 +5,10 @@ from typing import Annotated, Any
 import yaml
 from fastapi import APIRouter, Body, HTTPException, Query
 
-from core.api.guard import confined
-from core.api.schema import EXAMPLE_CONFIG, ConfigSummary
-from core.pipeline import Pipeline
-from core import pipeline
+from core.api.access_guard import confined
+from core.api.api_schema import EXAMPLE_CONFIG, ConfigSummary
+from core.pipeline_runner import Pipeline
+from core import pipeline_runner
 
 config_channel_router = APIRouter(prefix="/api/config", tags=["Config Channel"])
 
@@ -19,9 +19,9 @@ def parse(config_path: str | None, config: dict[str, Any] | None, **options: Any
     try:
         if config_path is not None:
             confined(config_path, "config_path")
-            built = pipeline.load(config_path, **options)
+            built = pipeline_runner.load(config_path, **options)
         else:
-            built = pipeline.build(config or {}, **options)
+            built = pipeline_runner.build(config or {}, **options)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"No such config: {config_path}") from None
     except (ValueError, yaml.YAMLError) as error:

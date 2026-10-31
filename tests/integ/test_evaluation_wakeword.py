@@ -8,7 +8,7 @@ import pytest
 
 from tests.recipe_inputs import wakeword_config, wakeword_recordings as recordings
 from tests.speech_fakes import melody
-from core import pipeline
+from core import pipeline_runner
 
 pytestmark = pytest.mark.usefixtures("wakeword_front_end")
 
@@ -29,8 +29,8 @@ def test_a_detector_is_scored_on_recordings_and_ambient_audio_and_a_new_threshol
     root = recordings(tmp_path)
     for index in range(4):  # 40 s without the phrase: other notes only
         melody(root / "ambient" / f"{index}.wav", [(440 + 200 * (index % 3), 4.0), (1500, 3.0), (300, 3.0)])
-    trained = pipeline.build(wakeword_config(root, validation={"min": {}, "max": {}})).run()
-    result = pipeline.build(evaluation(root, trained["directory"])).run()["stages"]
+    trained = pipeline_runner.build(wakeword_config(root, validation={"min": {}, "max": {}})).run()
+    result = pipeline_runner.build(evaluation(root, trained["directory"])).run()["stages"]
     report = json.loads(Path(result["report"]["report"]).read_text())
 
     assert report["data"]["positive"] == 10 and report["data"]["negative"] == 10 and report["data"]["ambient"] == 4
@@ -47,14 +47,14 @@ def test_a_detector_is_scored_on_recordings_and_ambient_audio_and_a_new_threshol
 
     traces = Path(result["traces"]["traces"])
     written = traces.stat().st_mtime_ns
-    assert json.dumps(pipeline.build(evaluation(root, trained["directory"])).run()["stages"]) == json.dumps(result)
-    pipeline.build(evaluation(root, trained["directory"], threshold=0.9)).run()
+    assert json.dumps(pipeline_runner.build(evaluation(root, trained["directory"])).run()["stages"]) == json.dumps(result)
+    pipeline_runner.build(evaluation(root, trained["directory"], threshold=0.9)).run()
     assert traces.stat().st_mtime_ns == written
 
 
 def test_shipped_config_validates_and_a_stage_checkpoint_needs_an_experiment() -> None:
-    loaded = pipeline.load("configs/evaluation/wakeword.yaml")
+    loaded = pipeline_runner.load("configs/evaluation/wakeword.yaml")
     assert loaded.config.recipe == "evaluation_wakeword" and list(loaded.stages) == ["clips", "traces", "report"]
     with pytest.raises(ValueError, match="needs model.experiment"):
-        pipeline.build({"pipeline": {"recipe": "evaluation_wakeword", "name": "x"}, "model": {"checkpoint": "validate"},
+        pipeline_runner.build({"pipeline": {"recipe": "evaluation_wakeword", "name": "x"}, "model": {"checkpoint": "validate"},
                         "data": {"positive": [{"name": "local_jsonl", "path": "x.jsonl"}]}})

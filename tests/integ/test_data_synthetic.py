@@ -6,14 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from data.evolve import EVOLVERS, evolve_prompt, failed
-from data.teachers import TEACHERS, Completion, Teacher
-from data.verify import majority_keys, sorry_short
-from core.progress import StateProgress
-from data.respond import BudgetExceeded
-from data.select import assemble
-from core import pipeline
-from data.rows import key
+from data.evolve_stage import EVOLVERS, evolve_prompt, failed
+from data.teacher_client import TEACHERS, Completion, Teacher
+from data.verify_stage import majority_keys, sorry_short
+from core.progress_reporter import StateProgress
+from data.respond_stage import BudgetExceeded
+from data.select_stage import assemble
+from core import pipeline_runner
+from data.row_store import key
 
 
 class Fake(Teacher):
@@ -84,7 +84,7 @@ def config(out: Path, **keys: Any) -> dict[str, Any]:
 
 def test_seeds_prompts_answers_rows_and_a_rerun_builds_nothing(tmp_path: Path) -> None:
     progress = StateProgress()
-    result = pipeline.build(config(tmp_path), progress).run()
+    result = pipeline_runner.build(config(tmp_path), progress).run()
     stages = result["stages"]
     assert stages["seeds"]["count"] == 2 and stages["seeds"]["kinds"] == {"topic": 2}  # the repeated seed is one seed
     assert stages["prompts"]["count"] == 4 and stages["prompts"]["calls"] == 2 * (1 + 2)  # per seed: one list, two refinements
@@ -100,7 +100,7 @@ def test_seeds_prompts_answers_rows_and_a_rerun_builds_nothing(tmp_path: Path) -
 
     Fake.calls = []
     again = StateProgress()
-    second = pipeline.build(config(tmp_path), again).run()
+    second = pipeline_runner.build(config(tmp_path), again).run()
     assert json.dumps(second) == json.dumps(result) and Fake.calls == []
     assert set(again.snapshot()["stages"].values()) == {"cached"}
 
@@ -109,21 +109,21 @@ def test_a_crash_mid_respond_resumes_without_repeating_calls(tmp_path: Path) -> 
     body = config(tmp_path)
     Fake.fail_after = 6 + 3  # the prompt stage's 6 calls, then three answers
     with pytest.raises(ConnectionError):
-        pipeline.build(body).run()
+        pipeline_runner.build(body).run()
     assert len(Fake.calls) == 9
     Fake.calls, Fake.fail_after = [], None
-    result = pipeline.build(body).run()
+    result = pipeline_runner.build(body).run()
     assert len(Fake.calls) == 5 and result["stages"]["respond"]["calls"] == 8  # the three answered before the crash were kept
 
 
 def test_the_budget_stops_before_the_call_that_would_exceed_it(tmp_path: Path) -> None:
     body = config(tmp_path, budget={"max_usd": 0.00002})
     with pytest.raises(BudgetExceeded, match="run again"):
-        pipeline.build(body).run()
+        pipeline_runner.build(body).run()
     answered = len([c for c in Fake.calls if "What is" in c[-1]["content"] and "Rewrite" not in c[-1]["content"]])
     assert 0 < answered < 8
     Fake.calls = []
-    result = pipeline.build(config(tmp_path, budget={"max_usd": 1.0})).run()  # the budget is not part of the identity
+    result = pipeline_runner.build(config(tmp_path, budget={"max_usd": 1.0})).run()  # the budget is not part of the identity
     assert result["stages"]["respond"]["calls"] == 8 and len(Fake.calls) == 8 - answered
 
 
@@ -134,7 +134,7 @@ def test_evolve_operators_elimination_and_judge_gain(tmp_path: Path) -> None:
     assert failed("Write a poem.", "write a poem.") == "unchanged" and failed("a", "b") is None
     assert "easier" in EVOLVERS and "code_misdirection" in EVOLVERS
     body = config(tmp_path, evolve={"rounds": 2, "operators": {"constraints": 1, "breadth": 1}, "judge_gain": True})
-    result = pipeline.build(body).run()
+    result = pipeline_runner.build(body).run()
     evolve = result["stages"]["evolve"]
     dropped = evolve["dropped"]
     assert evolve["originals"] == 4 and evolve["count"] == 12 - sum(dropped.values()) and dropped["scaffolding"] == 0 and dropped["no_gain"] == 0
@@ -142,7 +142,7 @@ def test_evolve_operators_elimination_and_judge_gain(tmp_path: Path) -> None:
     assert {row.get("round") for row in rows} == {None, 1, 2} and all(row["operator"] in {"constraints", "breadth"} for row in rows if row.get("round"))
     assert result["stages"]["respond"]["prompts"] == evolve["count"]  # answers go to originals and evolved prompts alike
     with pytest.raises(ValueError, match="Unknown evolve operators"):
-        pipeline.build(config(tmp_path, evolve={"operators": {"nope": 1}}))
+        pipeline_runner.build(config(tmp_path, evolve={"operators": {"nope": 1}}))
 
 
 def test_verify_rules_reward_majority_and_judge(tmp_path: Path) -> None:
@@ -152,18 +152,18 @@ def test_verify_rules_reward_majority_and_judge(tmp_path: Path) -> None:
     body = config(tmp_path, seeds=[{"kind": "instruction", "values": ["What is 2 plus 2?", "unanswerable request"]}],
                   prompts={"generator": "passthrough"}, respond={"answers_per_question": 4},
                   verify={"schema_recipe": "llm_sft", "majority": "last_number"})
-    result = pipeline.build(body).run()
+    result = pipeline_runner.build(body).run()
     verify = result["stages"]["verify"]
     assert verify["reasons"] == {"sorry": 4, "majority": 2} and verify["count"] == 2  # seeds 0 and 2 answered 4, 1 and 3 said 5
     judged = config(tmp_path, seeds=[{"kind": "instruction", "values": ["Describe tides."]}], prompts={"generator": "passthrough"},
                     respond={"answers_per_question": 2}, verify={"judge": {"rubric": "Rate it.", "min_score": 6}},
                     select={"assemble": "dpo", "margin": 1.0, "dedup": {"near": None}})
-    result = pipeline.build(judged).run()
+    result = pipeline_runner.build(judged).run()
     assert result["stages"]["verify"]["count"] == 0  # the fake judge gives 4 to answers without "step"
     rewarded = config(tmp_path, seeds=[{"kind": "instruction", "source": {"name": "local_jsonl", "path": "samples/llm_grpo.jsonl", "limit": 3}, "field": "prompt"}],
                       prompts={"generator": "passthrough", "params": {"answer_field": "answer"}}, respond={"answers_per_question": 1},
                       verify={"reward": {"name": "contains"}}, select={"assemble": "grpo", "dedup": {"near": None}})
-    result = pipeline.build(rewarded).run()
+    result = pipeline_runner.build(rewarded).run()
     assert result["stages"]["verify"]["reasons"] == {"reward": 3}  # the fake never answers the sums
 
 
@@ -177,10 +177,10 @@ def test_select_dedup_leak_and_assembly(tmp_path: Path) -> None:
     leak.write_text(json.dumps({"messages": [{"role": "user", "content": "What is tides question 1? (specifically)"}]}) + "\n")
     body = config(tmp_path, respond={"answers_per_question": 1},
                   select={"assemble": "sft", "dedup": {"near": None}, "leak": {"against": [{"name": "local_jsonl", "path": str(leak)}], "threshold": 0.5, "ngram": 3}})
-    counts = pipeline.build(body).run()["stages"]["select"]["counts"]
+    counts = pipeline_runner.build(body).run()["stages"]["select"]["counts"]
     assert counts["leaked"] == 1 and counts["rows"] == 3 and counts["near_duplicate"] == 0
     near = config(tmp_path, respond={"answers_per_question": 1}, select={"assemble": "sft", "dedup": {"near": 0.5, "ngram": 2}})
-    counts = pipeline.build(near).run()["stages"]["select"]["counts"]
+    counts = pipeline_runner.build(near).run()["stages"]["select"]["counts"]
     assert counts["near_duplicate"] >= 1 and counts["rows"] + counts["near_duplicate"] == 4  # "tides question 1" vs "tides question 2"
     assert key("a", 1) == key("a", 1) and key("a", 1) != key("a", 2)
 
@@ -188,11 +188,11 @@ def test_select_dedup_leak_and_assembly(tmp_path: Path) -> None:
 def test_the_shipped_config_validates_and_the_api_lists_the_recipe() -> None:
     from fastapi.testclient import TestClient
 
-    from core.api.app import app
+    from core.api.api_app import app
     from core.settings import get_settings
 
     get_settings.cache_clear()
-    built = pipeline.load("configs/data/synthetic.yaml")
+    built = pipeline_runner.load("configs/data/synthetic.yaml")
     assert built.plan() == ["seeds", "prompts", "evolve", "respond", "verify", "select"]
     recipes = TestClient(app).get("/api/system/recipes").json()
     assert set(recipes["data_synthetic"]["teacher"]) >= {"anthropic", "openai", "ollama", "local"}
@@ -208,7 +208,7 @@ def test_decision_rows_keep_the_requests_the_teacher_routes_as_their_seed_says(t
                     verify={"schema_recipe": "llm_decision_sft", "reward": {"name": "exact_match"}, "majority": "exact"},
                     select={"assemble": "decision", "dedup": {"near": None},
                             "decision": {"name": "route", "instructions": "How should the assistant respond?", "criteria": labels}})
-    stages = pipeline.build(routed).run()["stages"]
+    stages = pipeline_runner.build(routed).run()["stages"]
     assert stages["prompts"]["count"] == 16 and stages["verify"]["reasons"] == {"reward": 12}  # the trap, four times, three answers each
     rows = [json.loads(line) for line in Path(stages["select"]["rows"]).read_text().splitlines()]
     assert len(rows) == 12 and all(set(row) == {"state", "questions"} for row in rows)
@@ -219,4 +219,4 @@ def test_decision_rows_keep_the_requests_the_teacher_routes_as_their_seed_says(t
     assert rows[0]["questions"]["route"]["criteria"] == labels and rows[0]["questions"]["route"]["type"] == "choice"
 
     with pytest.raises(ValueError, match="need select.decision"):
-        pipeline.build(config(tmp_path, verify={"schema_recipe": "llm_decision_sft"}))
+        pipeline_runner.build(config(tmp_path, verify={"schema_recipe": "llm_decision_sft"}))

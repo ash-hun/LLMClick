@@ -7,21 +7,21 @@ from pathlib import Path
 import pytest
 
 from tests.recipe_inputs import raw
-from core import pipeline
+from core import pipeline_runner
 
 
 def test_changing_what_the_row_check_reads_checks_the_rows_again(tiny_model: Path, tmp_path: Path) -> None:
-    exact = pipeline.build(raw("llm_grpo", tiny_model, tmp_path))
+    exact = pipeline_runner.build(raw("llm_grpo", tiny_model, tmp_path))
     config = raw("llm_grpo", tiny_model, tmp_path)
     config["method"]["reward"] = {"name": "last_number"}
-    assert exact.fingerprint("data") != pipeline.build(config).fingerprint("data")
+    assert exact.fingerprint("data") != pipeline_runner.build(config).fingerprint("data")
     config = raw("llm_grpo", tiny_model, tmp_path)
     config["method"]["group_size"] = 5  # not read by the row check: the data stage is shared
-    assert exact.fingerprint("data") == pipeline.build(config).fingerprint("data")
+    assert exact.fingerprint("data") == pipeline_runner.build(config).fingerprint("data")
 
 
 def test_grpo_reuses_a_sampled_group_for_several_updates(tiny_model: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from modeling.llm.models.base import LLMBackbone
+    from modeling.llm.models.llm_backbone import LLMBackbone
 
     sampled, original = {"n": 0}, LLMBackbone.generate
 
@@ -32,7 +32,7 @@ def test_grpo_reuses_a_sampled_group_for_several_updates(tiny_model: Path, tmp_p
     monkeypatch.setattr(LLMBackbone, "generate", counting)
     config = raw("llm_grpo", tiny_model, tmp_path, max_steps=6)
     config["method"]["iterations"] = 3
-    result = pipeline.build(config).run()
+    result = pipeline_runner.build(config).run()
     log = [json.loads(line) for line in (Path(result["stages"]["train"]["run"]) / "training.jsonl").read_text().splitlines()]
     assert result["stages"]["train"]["steps"] == 6 and sampled["n"] == 2  # two groups, three updates each
     assert [event["reward"] for event in log[:3]] == [log[0]["reward"]] * 3  # the same group, so the same reward
@@ -43,9 +43,9 @@ def test_grpo_kl_needs_an_adapter_and_starts_at_zero(tiny_model: Path, tmp_path:
     config = raw("llm_grpo", tiny_model, tmp_path)
     config["method"]["beta"] = 0.5
     with pytest.raises(ValueError, match="method.beta needs training.adapter"):
-        pipeline.build(config)
+        pipeline_runner.build(config)
     config["training"]["adapter"] = {"r": 4, "targets": ["c_attn"]}
-    result = pipeline.build(config).run()
+    result = pipeline_runner.build(config).run()
     log = [json.loads(line) for line in (Path(result["stages"]["train"]["run"]) / "training.jsonl").read_text().splitlines()]
     assert log[0]["kl"] == pytest.approx(0.0, abs=1e-6)  # an untrained adapter is the base model
     assert all(event["kl"] >= -1e-6 for event in log)

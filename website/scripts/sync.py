@@ -138,7 +138,7 @@ def included(text: str) -> tuple[str, set[str], dict[str, str]]:
         return f'```{language} title="{path}"\n{(ROOT / path).read_text().rstrip()}\n```'
 
     def polygon(match: re.Match[str]) -> str:
-        from evaluation.compare import polygon_chart
+        from evaluation.compare_evaluation import polygon_chart
         files = {path: yaml.safe_load(path.read_text())["figures"] for path in sorted((ROOT / FIGURES).glob("*.yaml"))}
         found = {entry["id"]: (path, entry) for path, entries in files.items() for entry in entries}
         path, figure = found[match.group(1)]
@@ -174,7 +174,7 @@ def table(rows: list[list[str]], header: list[str]) -> str:
 
 
 def reference_recipes() -> str:
-    from core.registry import catalogue
+    from core.recipe_registry import catalogue
     rows = []
     for name, entry in catalogue().items():
         extras = {k: v for k, v in entry.items() if k != "stages"}
@@ -227,7 +227,7 @@ def resolve(prop: dict[str, Any], definitions: dict[str, Any]) -> tuple[dict[str
 
 
 def reference_config() -> str:
-    from core.registry import RECIPES, load_channels
+    from core.recipe_registry import RECIPES, load_channels
     load_channels()
     parts = [(INTROS / "reference/config.md").read_text().strip()]
     for name in RECIPES.names():
@@ -239,7 +239,7 @@ def reference_config() -> str:
 
 
 def reference_api() -> str:
-    from core.api.app import app
+    from core.api.api_app import app
     spec = app.openapi()
     parts = [(INTROS / "reference/api.md").read_text().strip()]
     for path, methods in spec["paths"].items():
@@ -266,7 +266,7 @@ def reference_api() -> str:
 def reference_cli() -> str:
     parts = [(INTROS / "reference/cli.md").read_text().strip()]
     for command in ([], ["run"], ["validate"], ["recipes"], ["serve"]):
-        output = subprocess.run([sys.executable, "-m", "core.cli", *command, "--help"], capture_output=True, text=True, cwd=ROOT, check=True).stdout
+        output = subprocess.run([sys.executable, "-m", "core.cli_app", *command, "--help"], capture_output=True, text=True, cwd=ROOT, check=True).stdout
         parts.append(f"## `llmclick {' '.join(command)}`".replace("`llmclick `", "`llmclick`") + "\n\n```text\n" + output.strip() + "\n```")
     return "\n\n".join(parts) + "\n"
 

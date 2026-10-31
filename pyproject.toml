@@ -44,7 +44,7 @@ data = [
 ]
 
 [project.scripts]
-llmclick = "core.cli:main"
+llmclick = "core.cli_app:main"
 
 [build-system]
 requires = ["hatchling"]

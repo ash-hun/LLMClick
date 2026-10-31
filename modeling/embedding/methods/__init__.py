@@ -1,1 +1,1 @@
-"""Embedding training methods; each recipe in modeling/embedding/pipeline.py binds one of them."""
+"""Embedding training methods; each recipe in modeling/embedding/embedding_pipeline.py binds one of them."""

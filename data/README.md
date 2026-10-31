@@ -45,7 +45,7 @@ writes `{"state": <earlier turns, a blank line, the request>, "questions": {<sel
 "instructions", "criteria", "label"}}}`. `configs/data/route.yaml` builds a router this way: whether an agent runs
 inner thought on a request.
 
-Teachers (`data/teachers.py`): `anthropic` (official SDK, `ANTHROPIC_API_KEY`, default `claude-opus-5-5`, cost from
+Teachers (`data/teacher_client.py`): `anthropic` (official SDK, `ANTHROPIC_API_KEY`, default `claude-opus-5-5`, cost from
 a small price table or `price: [in, out]` per million tokens), `openai` (chat-completions shape: OpenAI, vLLM, LM
 Studio, gateways; `base_url`, `api_key_env`; `reasoning_effort` for reasoning models, which then get
 `max_completion_tokens` and no temperature), `ollama` (native `/api/chat`, `keep_alive`), `local` (a checkpoint of
@@ -364,7 +364,7 @@ with the model being trained inside the loop; decontaminate before counting rows
 ## Design
 
 A channel is a package that registers recipes; it reuses `Stage`, `Pipeline`, `Progress`, `Experiment` and the
-API's jobs as they are, and joins by adding `"data"` to `CHANNELS` in `core/registry.py`.
+API's jobs as they are, and joins by adding `"data"` to `CHANNELS` in `core/recipe_registry.py`.
 
 ### Recipes
 
@@ -423,7 +423,7 @@ budget: {max_usd: 50}
 - **Verification** chain: `schema` (the row parses as the target recipe's row, through the recipe's own `check`),
   `verifier` (a reward function from `REWARDS`, for answers and code), `judge` (a teacher scoring with a rubric; a
   different model family than the generator by default). Rejected rows are kept in `rejected.jsonl` with the reason.
-- **Leak removal** reuses `evaluation/contamination.py` (exact and n-gram overlap) and the `jevbench` and benchmark
+- **Leak removal** reuses `evaluation/contamination_check.py` (exact and n-gram overlap) and the `jevbench` and benchmark
   readers for items, so the same arithmetic that measures contamination removes it; `against` takes row sources,
   benchmark names (through lm-evaluation-harness's documents) and JevBench tiers.
 - **Fingerprints**: dataset revisions and file contents, converter versions, filter settings, the prompt template's
@@ -433,7 +433,7 @@ budget: {max_usd: 50}
 - **Output**: `output/<experiment>/write/rows.jsonl` and `manifest.json` (per stage the counts in and out,
   sources with revisions and licences, teacher, tokens, cost, rejected reasons). Modeling's `data.sources` points
   at the rows; later a `dataset` source can name a data experiment directly.
-- **Row sources move here**: `local_jsonl` and `huggingface` in `modeling/tuning/sources.py` become
+- **Row sources move here**: `local_jsonl` and `huggingface` in `modeling/tuning/row_sources.py` become
   `data/sources.py`; Modeling and Evaluation import them from here.
 
 ### Reports and surfacing
@@ -465,11 +465,11 @@ Each milestone ends green on CI with tests on small local files and a fake teach
 
 ## Known starting points
 
-- Row sources (`local_jsonl`, `huggingface`) in `modeling/tuning/sources.py`, and the `jevbench` source in
-  `evaluation/decision.py`.
-- Contamination measurement in `evaluation/contamination.py` (exact and n-gram overlap, numpy-backed), to be
+- Row sources (`local_jsonl`, `huggingface`) in `modeling/tuning/row_sources.py`, and the `jevbench` source in
+  `evaluation/decision_evaluation.py`.
+- Contamination measurement in `evaluation/contamination_check.py` (exact and n-gram overlap, numpy-backed), to be
   reused as the leak filter.
-- Reward functions in `modeling/llm/methods/grpo.py` (`exact_match`, `contains`, `last_number`) as verifiers.
+- Reward functions in `modeling/llm/methods/grpo_method.py` (`exact_match`, `contains`, `last_number`) as verifiers.
 - The vendored jeff package that was removed carried a data pipeline (27 public datasets converted into decision
   rows, teacher-written synthetic questions, a near-duplicate leak filter). It is in the git history before the
   commit "vendored jeff 와 jev 레시피 제거" and is the reference for the decision converters and the question
