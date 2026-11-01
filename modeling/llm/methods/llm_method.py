@@ -20,6 +20,22 @@ def conversation(prompt: str | list[Message]) -> list[Message]:
     return [{"role": "user", "content": prompt}] if isinstance(prompt, str) else list(prompt)
 
 
+def completion(backbone: LLMBackbone, prompt: list[int], tokens: list[int], cap: int) -> Encoded:
+    """A sampled completion as a graded sequence. The end token is appended and graded only when the model
+    produced it: a completion cut off at `cap` new tokens did not choose to stop, and grading a stop there
+    would teach it to stop early whenever a truncated answer happened to score well."""
+    ended = [int(backbone.tokenizer.eos_token_id)] if len(tokens) < cap else []
+    return prompt + tokens + ended, [False] * len(prompt) + [True] * (len(tokens) + len(ended))
+
+
+def token_log_probabilities(backbone: LLMBackbone, encoded: list[Encoded], temperature: float = 1.0) -> tuple[torch.Tensor, torch.Tensor]:
+    """Per-token log-probabilities of the graded tokens, and their mask; shape (sequences, tokens - 1)."""
+    hidden, ids, mask = backbone.hidden([ids for ids, _ in encoded])
+    targets, _ = backbone.padded([[int(flag) for flag in flags] for _, flags in encoded])
+    graded = targets * mask
+    return backbone.next_token_log_probabilities(hidden, ids, graded, temperature), graded[:, 1:].float()
+
+
 class LLMMethod(TrainingMethod[LLMBackbone]):
     def encode(self, backbone: LLMBackbone, messages: list[Message], last_only: bool = False) -> Encoded:
         """Targets are the assistant turns (or only the last): the tokens between a turn's generation prompt and
@@ -37,11 +53,8 @@ class LLMMethod(TrainingMethod[LLMBackbone]):
     def log_probabilities(self, backbone: LLMBackbone, encoded: list[Encoded],
                           temperature: float = 1.0) -> tuple[torch.Tensor, torch.Tensor]:
         """Per sequence: the summed log-probability of its target tokens, and how many there are."""
-        hidden, ids, mask = backbone.hidden([ids for ids, _ in encoded])
-        targets, _ = backbone.padded([[int(flag) for flag in flags] for _, flags in encoded])
-        graded = targets * mask
-        scores = backbone.next_token_log_probabilities(hidden, ids, graded, temperature)
-        return scores.sum(dim=1), graded[:, 1:].sum(dim=1).float()
+        scores, graded = token_log_probabilities(backbone, encoded, temperature)
+        return scores.sum(dim=1), graded.sum(dim=1)
 
 
 class Reuse:

@@ -1,5 +1,6 @@
 """One config class per LLM recipe: the family's catalog plus the method and its `method:` section."""
 
+from pathlib import Path
 from typing import ClassVar
 
 from pydantic import Field, model_validator
@@ -8,6 +9,7 @@ from modeling.llm.methods.decision.cispo_method import DecisionCISPO
 from modeling.llm.methods.instruction_method import InstructionTuning
 from modeling.llm.methods.decision.decision_sft_method import DecisionSFT
 from modeling.llm.methods.grpo_reward import REWARDS, reward_names
+from modeling.llm.methods.distill_method import Distill
 from modeling.llm.methods.grpo_method import GRPO
 from modeling.tuning.tuning_config import TuningConfig
 from modeling.llm.models.backbone_config import LLMBackboneConfig
@@ -80,6 +82,17 @@ class GRPOConfig(LLMConfig):
         if self.method.beta > 0 and self.training.adapter is None:
             raise ValueError("method.beta needs training.adapter: the KL reference is the base model under the adapter")
         return self
+
+
+class DistillConfig(LLMConfig):
+    method_class: ClassVar = Distill
+    method: Distill.Config
+
+    def paths(self) -> list[str]:
+        return [*super().paths(), self.method.teacher.name]
+
+    def local_models(self) -> list[str]:
+        return [*super().local_models(), *([self.method.teacher.name] if Path(self.method.teacher.name).is_dir() else [])]
 
 
 class DecisionConfig(LLMConfig):
