@@ -72,5 +72,5 @@ def test_tool_call_exact_compares_the_written_call_with_the_rendered_one(backbon
     turns = method.tool_turns([row, {"messages": CALLING[:1] + CALLING[3:]}])
     assert turns == [(row, 1)]
     for written, expected in ((reference, 1.0), (reference[1:], 0.0)):
-        monkeypatch.setattr(backbone, "generate", lambda prompts, *a, **k: [[written] for _ in prompts])
+        monkeypatch.setattr(backbone, "generate", lambda prompts, *a, written=written, **k: [[written] for _ in prompts])
         assert method.tool_call_exact(backbone, turns, 4, Progress()) == expected
