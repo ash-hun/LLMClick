@@ -1,7 +1,8 @@
-"""`llm_sft` modeling/tuning/tuning_backbone.py: loaded weights are released after the block, even when it fails."""
+"""`llm_sft` modeling/tuning/tuning_backbone.py: weights are released after the block, and a QLoRA adapter merges into full precision."""
 
 from pathlib import Path
 
+import torch
 import pytest
 
 from modeling.llm.models.transformer_backbone import TransformerBackbone
@@ -17,3 +18,19 @@ def test_loaded_weights_are_released_after_the_block_even_when_it_fails(tiny_mod
         with model.loaded("cpu"):
             raise RuntimeError("measurement failed")
     assert model.model is None
+
+
+def test_qlora_export_merges_the_adapter_into_the_full_precision_base(tiny_model: Path) -> None:
+    from modeling.tuning.tuning_config import AdapterConfig
+    model = TransformerBackbone(LLMBackboneConfig(architecture="transformer", name=str(tiny_model)))
+    model.load("cpu")
+    model.adapt(AdapterConfig(r=4, alpha=8, targets=["c_attn"]))
+    for name, parameter in model.model.named_parameters():
+        if "lora_B" in name:
+            parameter.data.fill_(0.01)  # a fresh adapter is zero, which would merge into no change at all
+    model.quantize = "nf4"  # the export path a 4-bit base takes, exercised on a full-precision model
+    merged = model.exported().state_dict()
+    model.quantize = None
+    expected = model.exported().state_dict()  # merges in place, so it runs second
+    assert set(merged) == set(expected) and not any("lora" in name for name in merged)
+    assert all(torch.allclose(merged[name], expected[name], atol=1e-6) for name in expected)

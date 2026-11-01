@@ -2,7 +2,7 @@
 
 | 항목 | 값 |
 |---|---|
-| Last Updated | 2026-10-31 |
+| Last Updated | 2026-11-01 |
 
 > `Last Updated` 는 문서 내용이 실제로 바뀐 날만 적는다. 시각은 적지 않는다.
 
@@ -39,7 +39,10 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | `llm_dpo` | LLM 선호 최적화(DPO) | `llmclick run configs/llm/dpo.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_grpo` | LLM 보상 기반 강화 학습(GRPO) | `llmclick run configs/llm/grpo.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_instruction` | instruction/input/output 레코드로 LLM 지시 튜닝 | `llmclick run configs/llm/instruction.yaml`, `POST /api/jobs` | 구현됨 |
+| `llm_orpo` | 기준 모델 없는 선호 최적화(ORPO): chosen SFT 와 odds 비 항 | `llmclick run configs/llm/orpo.yaml`, `POST /api/jobs` | 구현됨 |
+| `llm_quantize` | 학습된 체크포인트나 Hub 모델 양자화(AWQ, GPTQ, W8A8, FP8, bitsandbytes NF4/INT8)와 기준 대비 손실 검증 | `llmclick run configs/llm/quantize_awq.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_sft` | 대화 데이터로 LLM 지도 미세조정 | `llmclick run configs/llm/sft.yaml`, `POST /api/jobs` | 구현됨 |
+| `llm_simpo` | 기준 모델 없는 선호 최적화(SimPO): 토큰 평균 로그 확률 마진 | `llmclick run configs/llm/simpo.yaml`, `POST /api/jobs` | 구현됨 |
 | `tts_piper` | Piper(VITS) 음성 미세조정과 청취 검증 | `llmclick run configs/tts/piper_jarvis.yaml`, `POST /api/jobs` | 구현됨 |
 | `tts_qwen` | Qwen3-TTS 로 녹음 하나에서 음성 복제와 청취 검증 | `llmclick run configs/tts/qwen_jarvis.yaml`, `POST /api/jobs` | 구현됨 |
 | `wakeword` | openWakeWord 검출기 학습과 스트리밍 테스트 | `llmclick run configs/wakeword/jarvis.yaml`, `POST /api/jobs` | 구현됨 |
@@ -497,6 +500,7 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | 파일 | 층 | 역할 |
 |---|---|---|
 | `modeling/llm/methods/dpo_method.py` | method | DPO 손실, 기준 로그 확률 캐시 |
+| `modeling/llm/methods/preference_method.py` | method | 선호 행 검사, 길이, accuracy/margin 평가(`llm_orpo`, `llm_simpo` 와 공유) |
 
 **테스트**
 
@@ -505,15 +509,15 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | 단위 | `tests/unit/test_llm_dpo_dpo_method.py` |
 | 통합 | `tests/integ/test_tuning.py` |
 
-**제약과 미구현**: `chosen`, `rejected` 는 빈 문자열이 아니고 서로 달라야 하며, `prompt` 는 문자열이나 메시지 목록이어야 한다(`modeling/llm/methods/dpo_method.py`).
+**제약과 미구현**: `chosen`, `rejected` 는 빈 문자열이 아니고 서로 달라야 하며, `prompt` 는 문자열이나 메시지 목록이어야 한다(`modeling/llm/methods/preference_method.py`).
 
 ---
 
 ### llm_grpo: 보상 기반 강화 학습
 
-**설명**: 프롬프트마다 완성문 그룹을 샘플링해 보상 함수(`contains`, `exact_match`, `last_number`)로 점수 매기고, 그룹 평균을 넘는 완성문의 가능도를 높인다.
+**설명**: 프롬프트마다 완성문 그룹을 샘플링해 보상 함수로 점수 매기고, 그룹 평균을 넘는 완성문의 가능도를 높인다. 보상은 정답 비교(`contains`, `exact_match`, `last_number`), 형식(`regex`), 길이(`length`), 교사 판정(`judge`), 이들의 가중합(`weighted`)이다.
 
-**진입점**: `llmclick run configs/llm/grpo.yaml`, `llmclick run configs/llm/grpo_gsm8k.yaml`, `POST /api/jobs`.
+**진입점**: `llmclick run configs/llm/grpo.yaml`, `llmclick run configs/llm/grpo_gsm8k.yaml`, `llmclick run configs/llm/grpo_weighted.yaml`, `POST /api/jobs`.
 
 **입력과 결과**
 
@@ -527,17 +531,21 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 
 | 파일 | 층 | 역할 |
 |---|---|---|
-| `modeling/llm/methods/grpo_method.py` | method | GRPO 손실, 보상 레지스트리 `REWARDS`(`data_synthetic` 의 verify 도 읽음) |
+| `modeling/llm/methods/grpo_method.py` | method | GRPO 손실 |
+| `modeling/llm/methods/grpo_reward.py` | method | 보상 레지스트리 `REWARDS` 와 규칙 보상, `weighted` 가중합(`data_synthetic` 의 verify 도 읽음) |
+| `data/judge_reward.py` | reward | `judge` 보상: 교사가 루브릭으로 1-10 점, 0-1 로 환산, 프로세스 메모리 캐시. data 채널에서 등록해 modeling 이 data 를 import 하지 않는다 |
 
 **테스트**
 
 | 종류 | 파일 |
 |---|---|
 | 단위 | `tests/unit/test_llm_grpo_grpo_method.py` |
+| 단위 | `tests/unit/test_llm_grpo_grpo_reward.py` |
+| 단위 | `tests/unit/test_llm_grpo_judge_reward.py` |
 | 통합 | `tests/integ/test_llm_grpo.py` |
 | 통합 | `tests/integ/test_tuning.py` |
 
-**제약과 미구현**: 등록되지 않은 보상은 거부한다. `method.beta > 0` 이면 `training.adapter` 가 필요하다: KL 기준이 어댑터 아래의 기준 모델이다(`modeling/llm/llm_config.py`).
+**제약과 미구현**: 등록되지 않은 보상은 거부하고, `weighted` 는 각 `parts` 의 이름도 검사하며 `weighted` 를 중첩하지 않는다(`modeling/llm/methods/grpo_reward.py`). `method.beta > 0` 이면 `training.adapter` 가 필요하다: KL 기준이 어댑터 아래의 기준 모델이다(`modeling/llm/llm_config.py`). `judge` 는 새 완성문마다 교사를 한 번 부른다(스텝당 최대 `group_size` x `batch_size` 회, 순차 호출). 판정 응답은 신뢰하지 않는 입력이라 1-10 범위 밖의 숫자나 숫자 없는 응답은 최저점이다.
 
 ---
 
@@ -574,11 +582,78 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 
 ---
 
+### llm_orpo: 기준 모델 없는 선호 최적화(ORPO)
+
+**설명**: chosen 답의 토큰당 NLL 에 chosen 대 rejected 의 log-odds 비 항을 `lam` 만큼 더해 학습한다. SFT 와 선호 정렬을 한 손실로 하고 기준 모델 패스가 없다.
+
+**진입점**: `llmclick run configs/llm/orpo.yaml`, `POST /api/jobs`.
+
+**입력과 결과**
+
+| 입력 | 결과 |
+|---|---|
+| DPO 와 같은 행 `{"prompt", "chosen", "rejected"}`(예: `samples/llm_dpo.jsonl`), `method.lam` | `train` 체크포인트, `validation.json`(accuracy, margin: log-odds 차) |
+
+**처리 흐름**: `ORPOPipeline` 에서 `data`, `train`, `validate` 순.
+
+**구현 파일**
+
+| 파일 | 층 | 역할 |
+|---|---|---|
+| `modeling/llm/methods/orpo_method.py` | method | ORPO 손실, 토큰 평균 로그 확률의 log-odds |
+| `modeling/llm/methods/preference_method.py` | method | 선호 행 검사, 길이, 평가 |
+
+**테스트**
+
+| 종류 | 파일 |
+|---|---|
+| 단위 | `tests/unit/test_llm_orpo_orpo_method.py` |
+| 통합 | `tests/integ/test_tuning.py` |
+
+**제약과 미구현**: 행 규칙은 `llm_dpo` 와 같다(`modeling/llm/methods/preference_method.py`).
+
+---
+
+### llm_quantize: 학습 후 양자화
+
+**설명**: 학습된 체크포인트나 Hub 모델을 양자화하고, 같은 held-out 행에서 양자화 전후 loss 를 비교한다. 양자화하는 스테이지 이름이 `train` 이라 `validate/checkpoint` 링크, `evaluation_*` 레시피, 다른 실험의 `model.name` 이 학습된 모델처럼 읽는다.
+
+**진입점**: `llmclick run configs/llm/quantize_awq.yaml`, `POST /api/jobs`.
+
+**입력과 결과**
+
+| 입력 | 결과 |
+|---|---|
+| `model`(디렉터리나 Hub ID+revision), SFT 대화 행(`data.sources`: train 몫이 보정, held-out 몫이 측정), `quantization.name`(`awq`, `gptq`, `w8a8`, `fp8`, `bnb_nf4`, `bnb_int8`), `quantization.rows`, 그 밖의 키는 scheme 인자(`scheme`, `smoothing`, gptq 와 w8a8 의 `dampening`) | `train/checkpoint` 양자화 모델(compressed-tensors 또는 bitsandbytes 직렬화), `summary.json`(base_loss, base_perplexity, size_mb), `validation.json`(loss, perplexity, tokens, base_loss, loss_delta, size_mb) |
+
+**처리 흐름**: `QuantizePipeline` 에서 `data`(`DataStage` 재사용), `train`(기준 모델 held-out loss 측정 후 scheme 실행, 결과는 임시 디렉터리에 쓰고 끝나면 이름 변경), `validate`(양자화 모델 loss 와 `loss_delta`) 순.
+
+**구현 파일**
+
+| 파일 | 층 | 역할 |
+|---|---|---|
+| `modeling/quantize/__init__.py` | package | 양자화 패키지, import 시 레시피 등록 |
+| `modeling/quantize/quantize_pipeline.py` | pipeline | `QuantizePipeline` 등록, catalogue 에 scheme 목록 |
+| `modeling/quantize/quantize_config.py` | config | `QuantizeConfig`(SFT 행, `quantization:` 섹션), adapter 거부 |
+| `modeling/quantize/quantize_scheme.py` | scheme | `SCHEMES` 레지스트리, llm-compressor 레시피(AWQ, GPTQ, SmoothQuant+GPTQ, FP8), bitsandbytes 직렬화 |
+| `modeling/quantize/quantize_stages.py` | stage | `QuantizeStage`, `QuantizeMeasureStage` |
+
+**테스트**
+
+| 종류 | 파일 |
+|---|---|
+| 단위 | `tests/unit/test_llm_quantize_quantize_scheme.py` |
+| 통합 | `tests/integ/test_llm_quantize.py` |
+
+**제약과 미구현**: `quantize` extra(llm-compressor, bitsandbytes)가 필요하다. `bnb_nf4`, `bnb_int8`, `fp8` 은 CUDA 에서만 돈다(다른 장치는 시작할 때 거부). `awq`, `gptq`, `w8a8` 은 보정 행이 필요하고 순서를 섞지 않는다. GPTQ(`gptq`, `w8a8`)는 레이어 Hessian 이 양의 정부호가 아니면 `quantization.dampening` 을 올리라는 에러로 멈춘다: Qwen3-0.6B 는 샘플 행에서 기본값 0.01 로 실패하고 0.1 로 통과한다. compressed-tensors 체크포인트는 평가할 때 dense 로 풀어 로드하므로 측정 loss 는 양자화 오차를 반영하지만 속도는 반영하지 않는다(`modeling/llm/models/llm_backbone.py`). 출력층(`lm_head`)과 백본의 `frozen` 모듈(Qwen3.5 비전 타워)은 양자화하지 않는다. GGUF 내보내기는 없다. `training.adapter` 는 거부한다.
+
+---
+
 ### llm_sft: 지도 미세조정
 
-**설명**: 대화 데이터의 모든 assistant 턴에 교차 엔트로피를 걸어 LLM 을 미세조정한다. 하이브리드(Qwen3.5)와 일반 트랜스포머(Qwen3) 백본, 전체 미세조정과 LoRA 어댑터를 config 로 고른다.
+**설명**: 대화 데이터의 모든 assistant 턴에 교차 엔트로피를 걸어 LLM 을 미세조정한다. 하이브리드(Qwen3.5)와 일반 트랜스포머(Qwen3) 백본, 전체 미세조정, LoRA 어댑터, QLoRA(`training.adapter.quantize: nf4 | int8`)를 config 로 고른다. QLoRA 는 모든 `llm_*` 학습 레시피에 같은 키로 적용된다.
 
-**진입점**: `llmclick run configs/llm/sft.yaml`, `llmclick run configs/llm/sft_lora.yaml`, `llmclick run configs/llm/sft_transformer.yaml`, `POST /api/jobs`.
+**진입점**: `llmclick run configs/llm/sft.yaml`, `llmclick run configs/llm/sft_lora.yaml`, `llmclick run configs/llm/sft_qlora.yaml`, `llmclick run configs/llm/sft_transformer.yaml`, `POST /api/jobs`.
 
 **입력과 결과**
 
@@ -605,7 +680,39 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | 통합 | `tests/integ/test_llm_sft.py` |
 | 통합 | `tests/integ/test_tuning.py` |
 
-**제약과 미구현**: 대화는 assistant 턴으로 끝나야 하고 모든 메시지는 허용된 role 과 문자열 content 를 가져야 한다(`modeling/llm/methods/sft_method.py`). decision 이 아닌 레시피에 `model.head` 를 주면 거부한다(`modeling/llm/llm_config.py`).
+**제약과 미구현**: 대화는 assistant 턴으로 끝나야 하고 모든 메시지는 허용된 role 과 문자열 content 를 가져야 한다(`modeling/llm/methods/sft_method.py`). decision 이 아닌 레시피에 `model.head` 를 주면 거부한다(`modeling/llm/llm_config.py`). QLoRA 는 CUDA 에서만 로드하고(다른 장치는 학습 전에 거부), 저장할 때 기준 모델을 `dtype`(FP32)로 CPU 에 다시 올려 어댑터를 병합하므로 체크포인트는 일반 모델이다. 병합하는 동안 기준 모델 전체가 호스트 메모리에 올라간다(`modeling/llm/models/llm_backbone.py`). QLoRA 는 `quantize` extra(bitsandbytes)가 필요하다. 키를 비워 두면 config 지문에서 빠져 이전 LoRA 실험의 지문이 그대로다(`modeling/tuning/tuning_config.py`).
+
+---
+
+### llm_simpo: 기준 모델 없는 선호 최적화(SimPO)
+
+**설명**: chosen 답의 토큰 평균 로그 확률이 rejected 의 것보다 마진 `gamma` 이상 크도록 학습한다. 합이 아닌 평균이라 긴 답이 길이로 이기지 않고, 기준 모델 패스가 없다.
+
+**진입점**: `llmclick run configs/llm/simpo.yaml`, `POST /api/jobs`.
+
+**입력과 결과**
+
+| 입력 | 결과 |
+|---|---|
+| DPO 와 같은 행 `{"prompt", "chosen", "rejected"}`(예: `samples/llm_dpo.jsonl`, `data_synthetic` 의 `dpo` 조립), `method.beta`, `method.gamma` | `train` 체크포인트, `validation.json`(accuracy, margin: 토큰 평균 로그 확률 차) |
+
+**처리 흐름**: `SimPOPipeline` 에서 `data`, `train`, `validate` 순.
+
+**구현 파일**
+
+| 파일 | 층 | 역할 |
+|---|---|---|
+| `modeling/llm/methods/simpo_method.py` | method | SimPO 손실, 토큰 평균 마진 |
+| `modeling/llm/methods/preference_method.py` | method | 선호 행 검사, 길이, 평가 |
+
+**테스트**
+
+| 종류 | 파일 |
+|---|---|
+| 단위 | `tests/unit/test_llm_simpo_simpo_method.py` |
+| 통합 | `tests/integ/test_tuning.py` |
+
+**제약과 미구현**: 행 규칙은 `llm_dpo` 와 같다(`modeling/llm/methods/preference_method.py`). 손실에 SFT 항은 없다.
 
 ---
 
@@ -742,12 +849,12 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | `core/stage_base.py` | 입력으로 지문을 매기고 두 번 실행해도 안전한 스테이지 단위 | 전체 |
 | `core/device_selector.py` | cuda, mps, cpu 순 장치 선택 | 전체 |
 | `core/file_store.py` | 내용 해시, 원자적 쓰기, JSON, 잠금 | 전체 |
-| `data/__init__.py` | data 채널 패키지, import 시 레시피 등록 | `data_speech`, `data_synthetic` |
+| `data/__init__.py` | data 채널 패키지, import 시 레시피와 `judge` 보상 등록 | `data_speech`, `data_synthetic`, `llm_grpo` |
 | `data/data_pipeline.py` | `SyntheticData`, `SpeechData` 레시피 | `data_speech`, `data_synthetic` |
 | `data/data_config.py` | 교사, 시드, 스테이지별 config(`SyntheticConfig`, `SeedConfig`) | `data_speech`, `data_synthetic` |
 | `data/seeds_stage.py` | `seeds` 스테이지: 시드마다 안정적인 id 를 가진 행 | `data_speech`, `data_synthetic` |
 | `data/prompts_stage.py` | `prompts` 스테이지와 생성기 레지스트리 `GENERATORS` | `data_speech`, `data_synthetic` |
-| `data/teacher_client.py` | 교사 모델 4종(`TEACHERS`), 토큰과 비용 보고 | `data_speech`, `data_synthetic` |
+| `data/teacher_client.py` | 교사 모델 4종(`TEACHERS`), 토큰과 비용 보고 | `data_speech`, `data_synthetic`, `llm_grpo`(`judge`) |
 | `data/row_store.py` | 자연 키와 원자적 행 파일 | `data_speech`, `data_synthetic` |
 | `evaluation/__init__.py` | evaluation 채널 패키지, import 시 레시피 등록 | `evaluation_*` 전체 |
 | `evaluation/evaluation_pipeline.py` | 평가 레시피 6종과 리포트 트래커 전송 | `evaluation_*` 전체 |
@@ -765,15 +872,15 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | `modeling/tuning/training_loop.py` | 결정적 배치, 누적, 워밍업 후 선형 감쇠, 재개 스냅샷 | `llm_*`, `embedding_contrastive` |
 | `modeling/tuning/training_method.py` | 학습 방법 기반: 행 검사, 손실, 평가 | `llm_*`, `embedding_contrastive`, `evaluation_custom`, `evaluation_decision` |
 | `modeling/tuning/tuning_backbone.py` | 모델 카탈로그 기반: 로드, 저장, 학습 가중치 | `llm_*`, `embedding_contrastive`, `evaluation_*`(wakeword 제외) |
-| `modeling/tuning/tuning_config.py` | 백본, 행, 최적화 설정, LoRA 어댑터 | `llm_*`, `embedding_contrastive`, `tts_*` |
+| `modeling/tuning/tuning_config.py` | 백본, 행, 최적화 설정, LoRA 어댑터와 QLoRA `quantize` 키 | `llm_*`, `embedding_contrastive`, `tts_*` |
 | `modeling/tuning/row_sources.py` | 행 소스 레지스트리(`delimited`, `huggingface`, `jevbench`, `local_jsonl`) | 전체 레시피 |
 | `modeling/llm/__init__.py` | LLM 패밀리 패키지 | `llm_*` |
-| `modeling/llm/llm_pipeline.py` | LLM 레시피 6종 등록 | `llm_*` |
+| `modeling/llm/llm_pipeline.py` | LLM 학습 레시피 8종 등록 | `llm_*` |
 | `modeling/llm/llm_config.py` | 레시피별 config 와 head 검사 | `llm_*` |
 | `modeling/llm/methods/__init__.py` | LLM 학습 방법 패키지 | `llm_*` |
-| `modeling/llm/methods/llm_method.py` | 대화를 토큰 id 와 채점 위치로 | `llm_sft`, `llm_instruction`, `llm_dpo`, `llm_grpo`, `llm_decision_*` |
+| `modeling/llm/methods/llm_method.py` | 대화를 토큰 id 와 채점 위치로 | `llm_sft`, `llm_instruction`, `llm_dpo`, `llm_orpo`, `llm_simpo`, `llm_grpo`, `llm_decision_*`, `llm_quantize` |
 | `modeling/llm/models/__init__.py` | `LLM_BACKBONES` 카탈로그 | `llm_*`, `evaluation_*` |
-| `modeling/llm/models/llm_backbone.py` | LLM 백본 기반: 채팅 렌더링, 로짓, 생성 | `llm_*`, `data_synthetic`, `evaluation_benchmark`, `evaluation_decision` |
+| `modeling/llm/models/llm_backbone.py` | LLM 백본 기반: 채팅 렌더링, 로짓, 생성, QLoRA 4/8bit 로드와 병합 저장, 양자화된 체크포인트 로드 | `llm_*`, `data_synthetic`, `evaluation_benchmark`, `evaluation_decision` |
 | `modeling/llm/models/backbone_config.py` | LLM `model:` 섹션 | `llm_*`, `evaluation_*` |
 | `modeling/llm/models/hybrid_backbone.py` | 하이브리드 디코더(Qwen3.5-0.8B, 2B) | `llm_*` |
 | `modeling/llm/models/transformer_backbone.py` | 일반 디코더 트랜스포머(Qwen3-0.6B, 1.7B) | `llm_*` |
@@ -793,9 +900,9 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | `environment/piper/pyproject.toml` | Piper 실행 환경 의존성 | `tts_piper`, `data_speech` |
 | `environment/piper/uv.lock` | Piper 환경 잠금 파일 | `tts_piper`, `data_speech` |
 | `environment/piper/setup.sh` | `PIPER_PYTHON` 환경 구성 | `tts_piper`, `data_speech` |
-| `environment/Dockerfile` | 서비스 이미지 빌드 | 전체 |
+| `environment/Dockerfile` | 서비스 이미지 빌드, `EXTRAS` 빌드 인자로 선택 의존성 그룹 설치 | 전체 |
 | `compose.yaml` | 커밋 태그 이미지로 서비스 실행, `/health` 헬스체크, 포트는 loopback 만 | 전체 |
-| `compose.gpu.yaml` | NVIDIA GPU 를 서비스에 붙이는 compose 덧붙임 파일 | 전체 |
+| `compose.gpu.yaml` | NVIDIA GPU 를 서비스에 붙이고 `quantize` extra 로 빌드하는 compose 덧붙임 파일 | 전체, QLoRA, `llm_quantize` |
 | `environment/.env.sample` | 환경 변수 예시 | 전체 |
 
 공통 모듈의 테스트: 단위 `tests/unit/test_framework_file_store.py`, `tests/unit/test_framework_logger.py`, `tests/unit/test_framework_recipe_registry.py`, `tests/unit/test_framework_settings.py`, `tests/unit/test_framework_modeling_stages.py`, 통합 `tests/integ/test_framework.py`. 테스트 보조: `tests/conftest.py`(외부 접속 차단, 작은 무작위 LM, 공유 fixture), `tests/recipe_inputs.py`(레시피별 config 와 입력 행), `tests/recipe_fakes.py`(가짜 wandb, lm-evaluation-harness), `tests/speech_fakes.py`(가짜 Piper, Whisper, openWakeWord 전처리).

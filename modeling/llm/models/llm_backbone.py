@@ -19,6 +19,35 @@ if TYPE_CHECKING:
 
 Message = dict[str, str]
 HEAD_WEIGHTS, HEAD_CONFIG = "head.safetensors", "head.json"
+MISSING_BITSANDBYTES = "training.adapter.quantize needs bitsandbytes: `uv sync --extra quantize`"
+
+
+def prequantized(origin: Path) -> dict[str, Any] | None:
+    """Loader arguments for a local model directory holding quantized weights (bitsandbytes or compressed-tensors),
+    or None for ordinary weights."""
+    config = origin / "config.json"
+    saved = json.loads(config.read_text()).get("quantization_config") if config.is_file() else None
+    if saved is None:
+        return None
+    if saved.get("quant_method") == "compressed-tensors":
+        from transformers import CompressedTensorsConfig
+        # decompressed into dense layers on load: the packed kernels exist for vLLM on CUDA, and measuring the
+        # dequantized weights scores the quantization error itself, the same on every device
+        return {"quantization_config": CompressedTensorsConfig(run_compressed=False)}
+    return {}
+
+
+def quantization_config(scheme: str) -> Any:
+    """bitsandbytes settings of a QLoRA base: NF4 with double quantization and bf16 compute, or LLM.int8()."""
+    try:
+        import bitsandbytes  # noqa: F401
+    except ImportError:
+        raise ImportError(MISSING_BITSANDBYTES) from None
+    from transformers import BitsAndBytesConfig
+    if scheme == "nf4":
+        return BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_use_double_quant=True,  # type: ignore[no-untyped-call]
+                                  bnb_4bit_compute_dtype=torch.bfloat16)
+    return BitsAndBytesConfig(load_in_8bit=True)  # type: ignore[no-untyped-call]
 
 
 @dataclass(frozen=True)
@@ -38,6 +67,7 @@ QWEN_MARKERS = Markers("<|fim_prefix|>", "<|fim_middle|>", "<|box_start|>", "<|b
 
 
 class LLMBackbone(Backbone):
+    quantizable: ClassVar[bool] = True
     loader: ClassVar[Any]                        # the transformers Auto class that builds this architecture
     frozen: ClassVar[tuple[str, ...]] = ()       # parameter-name fragments that text training must not update
     markers: ClassVar[Markers | None] = None     # needed by decision recipes; set by architectures that support them
@@ -57,13 +87,43 @@ class LLMBackbone(Backbone):
         self.tokenizer = AutoTokenizer.from_pretrained(origin, revision=revision)
         if self.tokenizer.pad_token_id is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
-        self.model = self.loader.from_pretrained(origin, revision=revision, dtype=self.dtype).to(device)
+        if self.quantize is not None and checkpoint is None:
+            self.model = self.quantized(origin, revision, device)
+        elif (quantized := prequantized(Path(origin))) is not None:
+            # weights `llm_quantize` wrote: they keep their own dtypes, and a quantized model is placed, never moved
+            self.model = self.loader.from_pretrained(origin, revision=revision, device_map={"": device}, **quantized)
+        else:
+            self.model = self.loader.from_pretrained(origin, revision=revision, dtype=self.dtype).to(device)
         for name, parameter in self.model.named_parameters():
             if any(fragment in name for fragment in self.frozen):
                 parameter.requires_grad_(False)
         self.device = device
         if self.config.head is not None:
             self.load_head(Path(origin))
+
+    def quantized(self, origin: str, revision: str | None, device: Device) -> Any:
+        """The base weights in 4 or 8 bits for QLoRA, everything else in `dtype`. bitsandbytes kernels exist for CUDA
+        only, so another device stops here rather than in the first forward pass."""
+        if not device.startswith("cuda"):
+            raise ValueError(f"training.adapter.quantize needs a CUDA device, not {device!r}")
+        from peft import prepare_model_for_kbit_training
+        model = self.loader.from_pretrained(origin, revision=revision, dtype=self.dtype, device_map={"": device},
+                                            quantization_config=quantization_config(str(self.quantize)))
+        return prepare_model_for_kbit_training(model, use_gradient_checkpointing=False)  # type: ignore[no-untyped-call]
+
+    def exported(self) -> Any:
+        """A QLoRA adapter is folded into the base reloaded in `dtype` on the CPU, not into the 4-bit weights: merging
+        into quantized weights rounds the update away, and the checkpoint must load like any other model."""
+        if self.quantize is None or not hasattr(self.model, "merge_and_unload"):
+            return super().exported()
+        from peft import get_peft_model, get_peft_model_state_dict, set_peft_model_state_dict
+        # ponytail: the full base is held in CPU memory at `dtype` while merging (about 4 bytes a weight); stream
+        # the merge layer by layer if a model ever outgrows the host's memory
+        origin, revision = self.origin(None)
+        base = self.loader.from_pretrained(origin, revision=revision, dtype=self.dtype)
+        merged = get_peft_model(base, self.model.peft_config["default"])
+        set_peft_model_state_dict(merged, get_peft_model_state_dict(self.model))
+        return merged.merge_and_unload()
 
     def load_head(self, origin: Path) -> None:
         """A fresh head on a base model; the saved head (weights, option codes, temperature) on a checkpoint."""

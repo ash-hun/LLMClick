@@ -1,0 +1,26 @@
+# Odds Ratio Preference Optimization: SFT on `chosen` and a push of its odds over `rejected` in one loss, with no
+# reference model, so there is no reference pass before training and it can start from the base model directly.
+pipeline:
+  recipe: llm_orpo
+  name: orpo-qwen3.5-0.8b
+  seed: 20260920
+  output_dir: ./output
+
+model:
+  architecture: hybrid              # Qwen3.5: linear-attention + full-attention layers, vision tower frozen
+  name: Qwen/Qwen3.5-0.8B
+  revision: 2fc06364715b967f1860aea9cf38778875588b17
+
+data:
+  sources:
+    - name: local_jsonl
+      path: samples/llm_dpo.jsonl   # the DPO rows: {"prompt": str | messages, "chosen": ..., "rejected": ...}
+  validation: 0.1
+
+method:
+  lam: 0.1                          # larger weighs the preference more against plain SFT on chosen
+
+training: {epochs: 1, lr: 8.0e-6, batch_size: 4, accumulation: 2, max_length: 512, max_steps: 4}
+
+validation:
+  min: {accuracy: 0.5}            # share of held-out pairs where chosen has the higher odds

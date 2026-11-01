@@ -1,0 +1,30 @@
+# Quantize a model to 4-bit AWQ with llm-compressor and check how much held-out loss it costs. Needs a CUDA GPU and
+# the quantize extra (compose.gpu.yaml builds it in). Point `model.name` at a trained checkpoint, e.g.
+# output/sft-qwen3.5-0.8b-<hash>/validate/checkpoint, to quantize what you trained; the base model is the default.
+# Other schemes: gptq (4-bit weights), w8a8 (8-bit weights and activations), fp8 (no calibration), bnb_nf4, bnb_int8.
+# gptq and w8a8 take `dampening` (default 0.01); Qwen3-0.6B on the sample rows needs `dampening: 0.1`.
+pipeline:
+  recipe: llm_quantize
+  name: awq-qwen3-0.6b
+  seed: 20260920
+  output_dir: ./output
+
+model:
+  architecture: transformer
+  name: Qwen/Qwen3-0.6B
+  revision: c1899de289a04d12100db370d81485cdf75e47ca
+
+data:
+  sources:
+    - name: local_jsonl
+      path: samples/llm_sft.jsonl   # conversations: the train fold calibrates, the held-out fold measures the loss
+  validation: 0.2
+
+quantization:
+  name: awq
+  rows: 64                          # calibration rows; 128 to 512 is usual for a real dataset
+
+training: {max_length: 512}         # only the length rule is read: nothing is trained
+
+validation:
+  max: {loss_delta: 0.5}          # held-out loss may rise this much over the unquantized model's

@@ -42,6 +42,10 @@ eval = [
 data = [
     "anthropic>=1.0",
 ]
+quantize = [
+    "bitsandbytes==0.50.2",
+    "llmcompressor==0.15.0",
+]
 
 [project.scripts]
 llmclick = "core.cli_app:main"

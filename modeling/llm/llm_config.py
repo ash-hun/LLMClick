@@ -7,12 +7,15 @@ from pydantic import Field, model_validator
 from modeling.llm.methods.decision.cispo_method import DecisionCISPO
 from modeling.llm.methods.instruction_method import InstructionTuning
 from modeling.llm.methods.decision.decision_sft_method import DecisionSFT
-from modeling.llm.methods.grpo_method import GRPO, REWARDS
+from modeling.llm.methods.grpo_reward import REWARDS, reward_names
+from modeling.llm.methods.grpo_method import GRPO
 from modeling.tuning.tuning_config import TuningConfig
 from modeling.llm.models.backbone_config import LLMBackboneConfig
 from modeling.llm.models.heads import HEADS
 from core.recipe_registry import Registry
 from modeling.llm.models import LLM_BACKBONES
+from modeling.llm.methods.simpo_method import SimPO
+from modeling.llm.methods.orpo_method import ORPO
 from modeling.llm.methods.dpo_method import DPO
 from modeling.llm.methods.sft_method import SFT
 
@@ -51,13 +54,23 @@ class DPOConfig(LLMConfig):
     method: DPO.Config = Field(default_factory=DPO.Config)
 
 
+class ORPOConfig(LLMConfig):
+    method_class: ClassVar = ORPO
+    method: ORPO.Config = Field(default_factory=ORPO.Config)
+
+
+class SimPOConfig(LLMConfig):
+    method_class: ClassVar = SimPO
+    method: SimPO.Config = Field(default_factory=SimPO.Config)
+
+
 class GRPOConfig(LLMConfig):
     method_class: ClassVar = GRPO
     method: GRPO.Config = Field(default_factory=GRPO.Config)
 
     @model_validator(mode="after")
     def _reward_registered(self) -> "GRPOConfig":
-        REWARDS.check(self.method.reward.name)
+        REWARDS.check(*reward_names(self.method.reward.name, self.method.reward.params))
         if self.method.beta > 0 and self.training.adapter is None:
             raise ValueError("method.beta needs training.adapter: the KL reference is the base model under the adapter")
         return self

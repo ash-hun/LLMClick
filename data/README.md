@@ -469,7 +469,7 @@ Each milestone ends green on CI with tests on small local files and a fake teach
   `evaluation/decision_evaluation.py`.
 - Contamination measurement in `evaluation/contamination_check.py` (exact and n-gram overlap, numpy-backed), to be
   reused as the leak filter.
-- Reward functions in `modeling/llm/methods/grpo_method.py` (`exact_match`, `contains`, `last_number`) as verifiers.
+- Reward functions in `modeling/llm/methods/grpo_reward.py` (`exact_match`, `contains`, `last_number`, `regex`, `length`, `weighted`, and `judge` from `data/judge_reward.py`) as verifiers.
 - The vendored jeff package that was removed carried a data pipeline (27 public datasets converted into decision
   rows, teacher-written synthetic questions, a near-duplicate leak filter). It is in the git history before the
   commit "vendored jeff 와 jev 레시피 제거" and is the reference for the decision converters and the question

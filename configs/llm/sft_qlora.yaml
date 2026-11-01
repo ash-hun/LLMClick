@@ -1,0 +1,38 @@
+# SFT with QLoRA: the frozen base weights are loaded in 4 bits (NF4) and LoRA trains next to them, so a model about
+# four times larger fits the same GPU. CUDA only, with the quantize extra (compose.gpu.yaml builds it in).
+# `training.adapter.quantize` works the same way in every llm_* training recipe. The saved checkpoint is the adapter
+# merged into the full-precision base, so validation and the evaluation recipes read it like any other model.
+pipeline:
+  recipe: llm_sft
+  name: sft-qlora-qwen3-1.7b
+  seed: 20260920
+  output_dir: ./output
+  device: cuda
+
+model:
+  architecture: transformer
+  name: Qwen/Qwen3-1.7B
+  revision: 70d244cc86ccca08cf5af4e1e306ecf908b1ad5e
+
+data:
+  sources:
+    - name: local_jsonl
+      path: samples/llm_sft.jsonl
+  validation: 0.1
+
+training:
+  epochs: 1
+  lr: 2.0e-4
+  batch_size: 4
+  accumulation: 2
+  max_length: 512
+  max_steps: 4
+  adapter:
+    name: lora
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    quantize: nf4                   # or int8 (LLM.int8()); leave it out for plain LoRA
+
+validation:
+  max: {loss: 5.0}

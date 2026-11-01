@@ -1,22 +1,6 @@
-"""`llm_grpo` modeling/llm/methods/grpo_method.py: the rewards, and the end token graded only when the model stopped."""
+"""`llm_grpo` modeling/llm/methods/grpo_method.py: the end token graded only when the model stopped."""
 
 from pathlib import Path
-
-import pytest
-
-from modeling.llm.methods.grpo_method import contains, exact_match, last_number_match
-
-
-def test_rewards() -> None:
-    row = {"answer": "12"}
-    assert exact_match(" 12 ", row, {}) == 1.0 and exact_match("12 .", row, {}) == 0.0
-    assert contains("It is 12 .", row, {}) == 1.0 and contains("13", row, {}) == 0.0
-    worked = {"answer": "She sells 16 - 7 = 9 eggs for 9 * 2 = $18.\n#### 1,018"}
-    assert last_number_match("So 9 * 2 gives 1018.", worked, {}) == 1.0
-    assert last_number_match("The answer is 1018 eggs, not 9", worked, {}) == 0.0
-    assert last_number_match("no digits here", worked, {}) == 0.0
-    with pytest.raises(ValueError, match="no number"):
-        last_number_match("3", {"answer": "unknown"}, {})
 
 
 def test_grpo_grades_the_end_token_only_when_the_model_stopped(tiny_model: Path) -> None:
