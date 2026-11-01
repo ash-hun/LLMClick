@@ -69,7 +69,12 @@ class Backbone:
         from peft import LoraConfig, get_peft_model
         self.model = get_peft_model(self.model, LoraConfig(
             r=adapter.r, lora_alpha=adapter.alpha, lora_dropout=adapter.dropout,
-            target_modules=list(adapter.targets or self.adapter_targets), modules_to_save=self.saved_modules() or None))
+            target_modules=list(adapter.targets or self.adapter_targets), modules_to_save=self.saved_modules() or None,
+            trainable_token_indices=self.trainable_tokens() or None))
+
+    def trainable_tokens(self) -> list[int]:
+        """Token ids whose embedding rows train beside a LoRA adapter: tokens the tokenizer gained for this model."""
+        return []
 
     def saved_modules(self) -> list[str]:
         """Modules that train in full beside a LoRA adapter, e.g. a freshly initialised output layer."""

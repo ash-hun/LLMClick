@@ -45,6 +45,7 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | `llm_orpo` | 기준 모델 없는 선호 최적화(ORPO): chosen SFT 와 odds 비 항 | `llmclick run configs/llm/orpo.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_quantize` | 학습된 체크포인트나 Hub 모델 양자화(AWQ, GPTQ, W8A8, FP8, bitsandbytes NF4/INT8, GGUF)와 기준 대비 손실 검증 | `llmclick run configs/llm/quantize_awq.yaml`, `llmclick run configs/llm/quantize_gguf.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_reward` | chosen/rejected 짝으로 답마다 점수 하나를 내는 보상 모델(Bradley-Terry) 학습 | `llmclick run configs/llm/reward.yaml`, `POST /api/jobs` | 구현됨 |
+| `llm_tokenizer` | 코퍼스에서 토크나이저에 추가할 단어를 골라 토큰 절감을 측정(학습 없음), 학습 레시피의 `model.tokenizer` 가 적용 | `llmclick run configs/llm/tokenizer_ko.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_sft` | 대화 데이터로 LLM 지도 미세조정 | `llmclick run configs/llm/sft.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_simpo` | 기준 모델 없는 선호 최적화(SimPO): 토큰 평균 로그 확률 마진 | `llmclick run configs/llm/simpo.yaml`, `POST /api/jobs` | 구현됨 |
 | `tts_piper` | Piper(VITS) 음성 미세조정과 청취 검증 | `llmclick run configs/tts/piper_jarvis.yaml`, `POST /api/jobs` | 구현됨 |
@@ -789,6 +790,48 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 
 ---
 
+### llm_tokenizer: 토크나이저 어휘 확장
+
+**설명**: 한국어나 도메인 코퍼스에서 기준 토크나이저가 여러 조각으로 쪼개는 단어를 세고, 줄어드는 토큰 수(빈도 x (조각 수 - 1))가 큰 순서로 고른다. 고른 단어를 BPE merge 로 덧붙인 토크나이저를 쓰고, held-out 행에서 글자당 토큰 수를 확장 전후로 잰다. 학습은 하지 않는다. 고른 단어는 학습 레시피의 `model.tokenizer` 가 적용한다.
+
+**`model.tokenizer`(모든 `llm_*` 학습 레시피)**: `tokens`(단어나 용어), `tokens_file`(한 줄에 하나, `llm_tokenizer` 의 `tokens.txt`), `special_tokens`(쪼개지지 않는 제어 토큰, 예: 새 도구 형식의 표지), `chat_template`(교체할 Jinja 파일). 기준 모델이나 `model.init` 을 올릴 때 적용하고 체크포인트에 토크나이저와 template 이 함께 저장되므로, 다음 레시피와 서빙이 같은 토큰과 template 을 쓴다.
+- 단어는 added token 이 아니라 BPE merge 로 넣는다. byte-level BPE 는 앞 공백을 단어와 한 토큰으로 묶는데, added token 으로 넣으면 공백이 따로 떨어져 오히려 토큰이 늘 수 있다. merge 는 기존 merge 뒤에 붙으므로 다른 텍스트는 전과 같이 나뉜다. 단어마다 문장 앞과 공백 뒤 두 형태를 넣는다.
+- 새 임베딩 행은 그 토큰이 합치는 조각들의 행 평균으로 시작한다(출력층이 tie 되지 않았으면 출력층도). 어휘가 임베딩 행보다 많아지면 행을 늘린다.
+- LoRA 를 쓰면 config 가 이름 붙인 토큰의 임베딩 행이 어댑터 옆에서 학습된다(peft `trainable_token_indices`). 다른 행은 그대로다.
+
+**진입점**: `llmclick run configs/llm/tokenizer_ko.yaml`, `POST /api/jobs`.
+
+**입력과 결과**
+
+| 입력 | 결과 |
+|---|---|
+| `model`(확장할 토크나이저의 모델), 행 `{"text"}`(예: `samples/llm_pretrain_ko.jsonl`), `vocabulary.count`, `vocabulary.min_frequency` | `train/tokens.txt`(고른 단어), `train/candidates.json`(단어, 빈도, 절감 토큰), `train/checkpoint/`(확장된 토크나이저), `validation.json`(base_chars_per_token, chars_per_token, token_reduction: held-out 토큰이 줄어든 비율, words) |
+
+**처리 흐름**: `VocabularyPipeline` 에서 `data`(`DataStage` 재사용), `train`(단어 집계, 선택, 확장 토크나이저 저장), `validate`(확장 전후 글자당 토큰) 순.
+
+**구현 파일**
+
+| 파일 | 층 | 역할 |
+|---|---|---|
+| `modeling/vocabulary/__init__.py` | package | 패키지, import 시 레시피 등록 |
+| `modeling/vocabulary/vocabulary_pipeline.py` | pipeline | `VocabularyPipeline` 등록 |
+| `modeling/vocabulary/vocabulary_config.py` | config | `TokenizerConfig`, `vocabulary:` 섹션, 텍스트 행 검사(`TextRows`), `model.tokenizer` 와 adapter 거부 |
+| `modeling/vocabulary/vocabulary_stages.py` | stage | `VocabularyStage`, `VocabularyMeasureStage` |
+| `modeling/llm/models/vocabulary_extender.py` | model | 단어를 BPE merge 로 추가, 후보 집계, 글자당 토큰 |
+| `modeling/llm/models/backbone_config.py` | config | `model.tokenizer`(`VocabularyConfig`) |
+| `modeling/llm/models/llm_backbone.py` | model | `extend_vocabulary`, `grow_embeddings`, LoRA 가 학습할 토큰 id |
+
+**테스트**
+
+| 종류 | 파일 |
+|---|---|
+| 단위 | `tests/unit/test_llm_tokenizer_vocabulary_extender.py` |
+| 통합 | `tests/integ/test_llm_tokenizer.py` |
+
+**제약과 미구현**: byte-level BPE 토크나이저(Qwen, Llama 3, GPT-2 계열)만 확장한다. 다른 종류는 거부한다. 단어는 사전 토큰화(pre-tokenize)했을 때 한 조각이어야 하고, 안에 구두점이 있으면 건너뛴다. 후보는 공백으로 나뉜 단어 단위이고, 단어 안의 하위 조각(어미, 조사)은 따로 고르지 않는다. 새 merge 끼리 겹치면 나중 단어가 끝까지 합쳐지지 않을 수 있지만, 디코딩은 항상 원문과 같다. 같은 단어를 다시 적용하면 아무것도 바뀌지 않는다. `tokens_file` 과 `chat_template` 파일의 내용이 train 지문에 들어간다. 어휘가 바뀐 모델은 `llm_distill`(교사와 어휘가 같아야 함)과 `llm_merge`(텐서 shape 가 같아야 함)가 거부한다. MPS 에서 Qwen3-0.6B 와 `samples/llm_pretrain_ko.jsonl` 로 91 단어를 골랐더니 held-out 글자당 토큰이 1.40 에서 3.74 로, 토큰 수가 1412 에서 540 으로 줄었다. 학습 전 held-out 글자당 NLL 은 기준 2.02, 평균 초기화 1.97, 무작위 초기화 3.36 이었다(샘플 문장이 반복적이라 실제 코퍼스의 절감은 이보다 작다).
+
+---
+
 ### llm_sft: 지도 미세조정
 
 **설명**: 대화 데이터의 모든 assistant 턴에 교차 엔트로피를 걸어 LLM 을 미세조정한다. assistant 턴에 `reasoning_content` 가 있으면 thinking SFT 다: template 이 추론을 답 앞의 thinking 블록(Qwen: `<think>`)으로 쓰고 추론과 답을 함께 학습한다. 행에 `tools`(호출할 수 있는 함수의 JSON 스키마)와 assistant 턴의 `tool_calls` 가 있으면 tool calling 을 학습한다: 모델의 chat template 이 호출을 자기 형식(Qwen3 는 JSON, Qwen3.5 는 XML 형태)으로 쓰고, 호출 턴은 학습 대상이며 `tool` 턴(함수 결과)은 문맥으로만 쓴다. 하이브리드(Qwen3.5)와 일반 트랜스포머(Qwen3) 백본, 전체 미세조정, LoRA 어댑터, QLoRA(`training.adapter.quantize: nf4 | int8`), gradient checkpointing(`training.gradient_checkpointing`), 한 서버 여러 GPU 의 데이터 병렬 학습(`training.devices`)을 config 로 고른다. QLoRA 는 모든 `llm_*` 학습 레시피에 같은 키로 적용된다.
@@ -1023,7 +1066,7 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | `modeling/llm/methods/__init__.py` | LLM 학습 방법 패키지 | `llm_*` |
 | `modeling/llm/methods/llm_method.py` | 대화를 토큰 id 와 채점 위치로, 샘플링한 완성문의 채점 표시와 토큰별 로그 확률 | `llm_sft`, `llm_instruction`, `llm_dpo`, `llm_orpo`, `llm_simpo`, `llm_grpo`, `llm_distill`, `llm_decision_*`, `llm_quantize` |
 | `modeling/llm/models/__init__.py` | `LLM_BACKBONES` 카탈로그 | `llm_*`, `evaluation_*` |
-| `modeling/llm/models/llm_backbone.py` | LLM 백본 기반: 채팅 렌더링, 로짓, 생성, QLoRA 4/8bit 로드와 병합 저장, 양자화된 체크포인트 로드, 보상 모델(sequence classifier) 로드, 파일을 읽는 도구용 로컬 스냅숏(`local_snapshot`) | `llm_*`, `data_synthetic`, `evaluation_benchmark`, `evaluation_decision` |
+| `modeling/llm/models/llm_backbone.py` | LLM 백본 기반: 채팅 렌더링, 로짓, 생성, `model.tokenizer` 적용(어휘 확장, 임베딩 행 추가, template 교체), QLoRA 4/8bit 로드와 병합 저장, 양자화된 체크포인트 로드, 보상 모델(sequence classifier) 로드, 파일을 읽는 도구용 로컬 스냅숏(`local_snapshot`) | `llm_*`, `data_synthetic`, `evaluation_benchmark`, `evaluation_decision` |
 | `modeling/llm/models/backbone_config.py` | LLM `model:` 섹션 | `llm_*`, `evaluation_*` |
 | `modeling/llm/models/hybrid_backbone.py` | 하이브리드 디코더(Qwen3.5-0.8B, 2B) | `llm_*` |
 | `modeling/llm/models/transformer_backbone.py` | 일반 디코더 트랜스포머(Qwen3-0.6B, 1.7B) | `llm_*` |

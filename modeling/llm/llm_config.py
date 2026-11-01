@@ -40,6 +40,12 @@ class LLMConfig(TuningConfig):
             raise ValueError(f"model.head is {self.model.head!r}; recipe {self.recipe!r} needs one of {self.heads.names()}")
         return self
 
+    def paths(self) -> list[str]:
+        return [*super().paths(), *(self.model.tokenizer.files() if self.model.tokenizer else [])]
+
+    def local_files(self) -> list[str]:
+        return [*super().local_files(), *(self.model.tokenizer.files() if self.model.tokenizer else [])]
+
     def versions(self) -> dict[str, int]:
         head = {"head": self.heads.get(str(self.model.head)).version} if self.heads is not None else {}
         return {**super().versions(), **head}

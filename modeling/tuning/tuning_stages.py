@@ -12,7 +12,7 @@ from modeling.tuning.tuning_config import TuningConfig
 from modeling.tuning.training_method import Row, fitting
 from modeling.modeling_config import keyed_identity
 from core.device_selector import Device, resolve_device
-from core.file_store import directory_signature, read_json, read_jsonl, write_jsonl
+from core.file_store import directory_signature, read_json, read_jsonl, sha256_file, write_jsonl
 from modeling.metric_tracker import History
 from core.progress_reporter import Progress
 from core.stage_base import Outputs, Stage
@@ -60,10 +60,11 @@ class TuneStage(TrainStage[TuningConfig]):
     def identity(self) -> Any:
         """Local weights count by content, not by path: `model.init` usually goes through an experiment's link,
         which points somewhere else once that experiment is rebuilt."""
-        model, others = self.config.model, self.config.local_models()
+        model, others, files = self.config.model, self.config.local_models(), self.config.local_files()
         return [super().identity(), directory_signature(Path(model.init)) if model.init else None,
                 directory_signature(Path(model.name)), self.config.versions(),
-                *([[directory_signature(Path(path)) for path in others]] if others else [])]
+                *([[directory_signature(Path(path)) for path in others]] if others else []),
+                *([[sha256_file(Path(path)) if Path(path).is_file() else None for path in files]] if files else [])]
 
     def train(self, workdir: Path, inputs: dict[str, Outputs]) -> Outputs:
         checkpoint, summary = workdir / CHECKPOINT, workdir / SUMMARY

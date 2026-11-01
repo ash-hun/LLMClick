@@ -1,6 +1,7 @@
 """Fixtures that need no download or GPU: no network, a tiny random LM, and the fakes and runs several files share."""
 
 import sys
+import json
 import socket
 from typing import Any
 from pathlib import Path
@@ -57,6 +58,30 @@ def tiny_model(tmp_path_factory: pytest.TempPathFactory) -> Path:
                                        resid_pdrop=0.0, embd_pdrop=0.0, attn_pdrop=0.0,
                                        bos_token_id=fast.eos_token_id, eos_token_id=fast.eos_token_id))
     path = tmp_path_factory.mktemp("tiny-model")
+    model.save_pretrained(path)
+    fast.save_pretrained(path)
+    return path
+
+
+@pytest.fixture(scope="session")
+def bpe_model(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A 2-layer GPT-2 with a byte-level BPE tokenizer (the kind `model.tokenizer.tokens` extends) over a few Korean
+    sample rows, so most Korean words split into several tokens."""
+    from tokenizers import Tokenizer, decoders, models, pre_tokenizers, trainers
+    from transformers import GPT2Config, GPT2LMHeadModel, PreTrainedTokenizerFast
+    import torch
+
+    tokenizer = Tokenizer(models.BPE())
+    tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
+    tokenizer.decoder = decoders.ByteLevel()
+    texts = [json.loads(line)["text"] for line in Path("samples/llm_pretrain_ko.jsonl").read_text(encoding="utf-8").splitlines()[:10]]
+    tokenizer.train_from_iterator(texts, trainers.BpeTrainer(vocab_size=400, special_tokens=["<|im_start|>", "<|im_end|>", "<think>", "</think>"],
+                                                             initial_alphabet=pre_tokenizers.ByteLevel.alphabet()))
+    fast = PreTrainedTokenizerFast(tokenizer_object=tokenizer, eos_token="<|im_end|>", pad_token="<|im_end|>", chat_template=CHATML)
+    torch.manual_seed(0)
+    model = GPT2LMHeadModel(GPT2Config(vocab_size=len(fast), n_positions=256, n_embd=32, n_layer=2, n_head=2, resid_pdrop=0.0,
+                                       embd_pdrop=0.0, attn_pdrop=0.0, bos_token_id=fast.eos_token_id, eos_token_id=fast.eos_token_id))
+    path = tmp_path_factory.mktemp("bpe-model")
     model.save_pretrained(path)
     fast.save_pretrained(path)
     return path

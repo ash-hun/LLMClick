@@ -106,6 +106,11 @@ class TuningConfig(ModelingConfig):
         return [*super().paths(), self.model.name, *([self.model.init] if self.model.init else []),
                 *local_paths(self.data.sources)]
 
+    def local_files(self) -> list[str]:
+        """Local files the backbone reads besides its weights (a tokens list, a chat template); their content joins
+        the train fingerprint."""
+        return []
+
     def local_models(self) -> list[str]:
         """Local model directories the method reads besides `model` (a distillation teacher); their content joins
         the train fingerprint like `model.init`'s."""
