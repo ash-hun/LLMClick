@@ -34,7 +34,7 @@ module.exports = {
     {
       type: 'category',
       label: 'Reference',
-      items: ['reference/recipes', 'reference/config', 'reference/api', 'reference/cli', 'reference/settings'],
+      items: ['reference/recipes', 'reference/config', 'reference/api', 'reference/cli', 'reference/settings', 'reference/references'],
     },
     {
       type: 'category',

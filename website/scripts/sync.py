@@ -73,6 +73,7 @@ PAGES: dict[str, tuple[str, list[tuple[str, str | None, bool]]]] = {
     "operations/jobs": ("operations/jobs", []),
     "operations/security": ("operations/security", []),
     "contributing/development": ("contributing/development", [("README.md", "05. Tests", False)]),
+    "reference/references": ("reference/references", []),
 }
 GENERATED = {"reference/recipes", "reference/config", "reference/api", "reference/cli", "reference/settings"}
 
