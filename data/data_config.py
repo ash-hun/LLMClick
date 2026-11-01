@@ -44,10 +44,12 @@ class EvolveSettings(Section):
 
 
 class RespondSettings(Section):
+    added_keys: ClassVar[frozenset[str]] = frozenset({"keep_reasoning"})
     answers_per_question: int = Field(default=1, ge=1)
     system: str | None = None
     max_tokens: int = Field(default=1024, ge=1)
     temperature: float = Field(default=0.7, ge=0)
+    keep_reasoning: bool = Field(default=False, description="Keep the teacher's thinking; sft rows then carry it as reasoning_content")
 
 
 class JudgeSettings(Section):
@@ -143,6 +145,13 @@ class SyntheticConfig(SeedConfig):
             REWARDS.check(*reward_names(self.verify.reward.name, self.verify.reward.params))
         if self.verify.judge is not None and self.verify.judge.teacher is not None and self.verify.judge.teacher.name not in TEACHERS:
             raise ValueError(f"Unknown judge teacher {self.verify.judge.teacher.name!r}; registered: {TEACHERS.names()}")
+        if self.respond.keep_reasoning:
+            if self.select.assemble != "sft":
+                raise ValueError("respond.keep_reasoning makes thinking SFT rows: it needs select.assemble: sft")
+            if self.teacher.name == "anthropic":
+                raise ValueError("the anthropic teacher returns summarized thinking only; keep_reasoning needs its raw reasoning")
+            if self.teacher.name == "ollama" and not self.teacher.params.get("think"):
+                raise ValueError("respond.keep_reasoning with ollama needs the teacher's think: true")
         if self.select.assemble == "kto" and self.verify.judge is None:
             raise ValueError("kto rows are labelled by the judge's score: set verify.judge (and a min_score below select.kto_threshold)")
         if (self.select.assemble == "decision" or self.verify.schema_recipe == "llm_decision_sft") and self.select.decision is None:

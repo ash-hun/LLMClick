@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from modeling.tuning.training_method import Row, chunks
 from modeling.llm.models.llm_backbone import LLMBackbone, Message
-from modeling.llm.methods.llm_method import LLMMethod
+from modeling.llm.methods.llm_method import LLMMethod, token_log_probabilities
 from core.progress_reporter import Progress
 
 
@@ -29,11 +29,12 @@ class Turn(BaseModel):
     role: Literal["system", "user", "assistant", "tool"]
     content: str
     tool_calls: list[ToolCall] | None = Field(default=None, min_length=1)
+    reasoning_content: str | None = Field(default=None, description="The assistant's reasoning before its answer")
 
     @model_validator(mode="after")
-    def _calls_from_the_assistant(self) -> "Turn":
-        if self.tool_calls is not None and self.role != "assistant":
-            raise ValueError("only an assistant turn makes tool_calls")
+    def _from_the_assistant(self) -> "Turn":
+        if self.role != "assistant" and (self.tool_calls is not None or self.reasoning_content is not None):
+            raise ValueError("only an assistant turn makes tool_calls or has reasoning_content")
         return self
 
 
@@ -58,8 +59,9 @@ class Conversation(BaseModel):
 
 
 class SFT(LLMMethod):
-    """Rows: {"messages": [{"role": "system"|"user"|"assistant"|"tool", "content": str, "tool_calls"?: [...]}, ...],
-    "tools"?: [...]} ending with an assistant turn. Tool results are context, never targets."""
+    """Rows: {"messages": [{"role": "system"|"user"|"assistant"|"tool", "content": str, "tool_calls"?: [...],
+    "reasoning_content"?: str}, ...], "tools"?: [...]} ending with an assistant turn. Tool results are context, never
+    targets; reasoning is a target, written by the template where the model writes it (Qwen: a <think> block)."""
     version: ClassVar[int] = 2  # 2: earlier assistant turns are graded under templates that mark only the final turn (Qwen3)
 
     def messages(self, row: Row) -> list[Message]:
@@ -113,8 +115,35 @@ class SFT(LLMMethod):
         return exact / len(turns)
 
     @torch.no_grad()
+    def reasoning_losses(self, backbone: LLMBackbone, rows: list[Row], batch_size: int, progress: Progress) -> dict[str, float]:
+        """The loss on the reasoning tokens (up to the end of the thinking block) and on the answer tokens after it."""
+        end = backbone.tokenizer.convert_tokens_to_ids(backbone.decision_markers().think_end)
+        sums = {"reasoning": [0.0, 0.0], "answer": [0.0, 0.0]}  # part -> [negative log-probability, tokens]
+        batches = chunks(rows, batch_size)
+        for index, batch in enumerate(batches):
+            progress.update(index, len(batches), "reasoning and answer loss")
+            encoded = [sequence for row in batch for sequence in self.encode_turns(backbone, self.messages(row), self.tools(row))]
+            values, graded = token_log_probabilities(backbone, encoded)
+            thinking = torch.zeros_like(graded)
+            for row, (ids, targets) in enumerate(encoded):
+                span: list[int] = []
+                for position in [*range(len(ids)), len(ids)]:
+                    if position < len(ids) and targets[position]:
+                        span.append(position)
+                        continue
+                    closes = [p for p in span if ids[p] == end]
+                    for p in span[:span.index(closes[-1]) + 1] if closes else []:
+                        thinking[row, p - 1] = 1.0  # column p - 1 predicts token p
+                    span = []
+            for part, mask in (("reasoning", graded * thinking), ("answer", graded * (1 - thinking))):
+                sums[part][0] -= float((values * mask).sum())
+                sums[part][1] += float(mask.sum())
+        return {f"{part}_loss": total / tokens for part, (total, tokens) in sums.items() if tokens}
+
+    @torch.no_grad()
     def evaluate(self, backbone: LLMBackbone, rows: list[Row], batch_size: int, progress: Progress) -> dict[str, float]:
-        """Loss and perplexity on the assistant turns; `tool_call_exact` as well when the rows call tools."""
+        """Loss and perplexity on the assistant turns; `tool_call_exact` as well when the rows call tools, and
+        `reasoning_loss` and `answer_loss` when they carry reasoning."""
         negative, count, batches = 0.0, 0.0, chunks(rows, batch_size)
         for index, batch in enumerate(batches):
             progress.update(index, len(batches), "loss")
@@ -126,4 +155,6 @@ class SFT(LLMMethod):
         turns = self.tool_turns(rows)
         if turns:
             metrics["tool_call_exact"] = self.tool_call_exact(backbone, turns, batch_size, progress)
+        if any(message.get("reasoning_content") for row in rows for message in self.messages(row)):
+            metrics.update(self.reasoning_losses(backbone, rows, batch_size, progress))
         return metrics

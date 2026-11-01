@@ -65,7 +65,8 @@ def assemble(kind: str, group: list[Row], margin: float, question: DecisionQuest
         return decision_row(top, question)
     content = f"{top['context']}\n\n{top['instruction']}" if top.get("context") else top["instruction"]
     if kind == "sft":
-        return {"messages": [{"role": "user", "content": content}, {"role": "assistant", "content": top["text"]}]}
+        reasoning = {"reasoning_content": top["reasoning"]} if top.get("reasoning") else {}
+        return {"messages": [{"role": "user", "content": content}, {"role": "assistant", "content": top["text"], **reasoning}]}
     if kind == "grpo":
         return {"prompt": content, "answer": top["answer"]} if top.get("answer") is not None else None
     bottom = ranked[-1]

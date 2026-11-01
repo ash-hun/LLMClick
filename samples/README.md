@@ -7,6 +7,7 @@ config under `configs/llm/` and `configs/embedding/` runs offline in minutes; th
 |---|---|---|
 | `llm_sft.jsonl` | `llm_sft` | `messages` ending with an assistant turn |
 | `llm_tool_sft.jsonl` | `llm_sft` | `tools`, `messages` with `tool_calls` and `tool` turns (three made-up functions; one row in four answers without a call) |
+| `llm_think_sft.jsonl` | `llm_sft` | `messages` whose assistant turn has `reasoning_content` (the steps of a two-digit sum or product) before the answer |
 | `llm_instruction.jsonl` | `llm_instruction` | `instruction`, `input`, `output` |
 | `llm_dpo.jsonl` | `llm_dpo`, `llm_orpo`, `llm_simpo`, `llm_reward` | `prompt`, `chosen`, `rejected` |
 | `llm_kto.jsonl` | `llm_kto` | `prompt`, `completion`, `label` (the first forty DPO pairs, each split into a desirable and an undesirable row) |

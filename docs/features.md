@@ -104,7 +104,7 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 
 | 입력 | 결과 |
 |---|---|
-| config 의 `teacher`, `seeds`, `prompts`(생성기), `evolve`(선택), `respond`, `verify`(스키마, 보상, 다수결, 판정자), `select.assemble`(`sft`, `dpo`, `grpo`, `decision`, `kto`: judge 점수가 `select.kto_threshold` 이상이면 바람직함, 프롬프트의 판정된 답마다 한 행) | `select` 스테이지의 `rows.jsonl`(목표 레시피 형식), manifest, 행 수와 제외 사유별 카운트 |
+| config 의 `teacher`, `seeds`, `prompts`(생성기), `evolve`(선택), `respond`(`keep_reasoning: true` 면 교사의 추론을 sft 행의 `reasoning_content` 로), `verify`(스키마, 보상, 다수결, 판정자), `select.assemble`(`sft`, `dpo`, `grpo`, `decision`, `kto`: judge 점수가 `select.kto_threshold` 이상이면 바람직함, 프롬프트의 판정된 답마다 한 행) | `select` 스테이지의 `rows.jsonl`(목표 레시피 형식), manifest, 행 수와 제외 사유별 카운트 |
 
 **처리 흐름**: `SyntheticData` 에서 `seeds`, `prompts`, `evolve`(config 에 `evolve` 가 있을 때만), `respond`, `verify`, `select` 순.
 
@@ -113,7 +113,7 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | 파일 | 층 | 역할 |
 |---|---|---|
 | `data/evolve_stage.py` | stage | `evolve`: Evol-Instruct 연산자(`EVOLVERS`)로 프롬프트를 어렵게 바꾸고 실패를 제거 |
-| `data/respond_stage.py` | stage | `respond`: 교사가 프롬프트마다 N번 답변, 예산 초과 시 `BudgetExceeded` |
+| `data/respond_stage.py` | stage | `respond`: 교사가 프롬프트마다 N번 답변(`keep_reasoning` 이면 추론도 캐시), 예산 초과 시 `BudgetExceeded` |
 | `data/verify_stage.py` | stage | `verify`: 스키마, sorry 규칙, 보상, 다수결 검사 후 판정자, 거절 사유 기록 |
 | `data/select_stage.py` | stage | `select`: 중복과 유출 제거, 목표 레시피 형식으로 조립, manifest 기록 |
 
@@ -125,6 +125,7 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | 통합 | `tests/integ/test_data_synthetic.py` |
 
 **제약과 미구현**:
+- `respond.keep_reasoning` 은 `assemble: sft` 에서만 쓰고, ollama 교사는 `think: true` 가 필요하다. anthropic 교사는 요약된 thinking 만 돌려주므로 거부한다. openai 형식 서버는 `reasoning_content`(vLLM, SGLang)나 `reasoning` 을, local 교사는 생성문의 thinking 블록을 끝 토큰에서 나눠 쓴다(`data/teacher_client.py`). 이 키는 기본값이면 지문에서 빠진다.
 - 시드는 `values` 와 `source` 중 하나만, `source` 에는 `field` 가 필요하다. 등록되지 않은 evolve 연산자, 보상, 판정 교사는 config 검증에서 거부한다. `assemble: decision` 이나 `verify.schema_recipe: llm_decision_sft` 에는 `select.decision` 이 필요하다(`data/data_config.py`).
 - `# ponytail:` 근사 중복 검사가 남긴 행 전부와 비교해 O(n^2) 이다. 약 5만 행을 넘으면 MinHash 와 LSH 로 바꾼다(`data/select_stage.py`).
 
@@ -790,15 +791,15 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 
 ### llm_sft: 지도 미세조정
 
-**설명**: 대화 데이터의 모든 assistant 턴에 교차 엔트로피를 걸어 LLM 을 미세조정한다. 행에 `tools`(호출할 수 있는 함수의 JSON 스키마)와 assistant 턴의 `tool_calls` 가 있으면 tool calling 을 학습한다: 모델의 chat template 이 호출을 자기 형식(Qwen3 는 JSON, Qwen3.5 는 XML 형태)으로 쓰고, 호출 턴은 학습 대상이며 `tool` 턴(함수 결과)은 문맥으로만 쓴다. 하이브리드(Qwen3.5)와 일반 트랜스포머(Qwen3) 백본, 전체 미세조정, LoRA 어댑터, QLoRA(`training.adapter.quantize: nf4 | int8`), gradient checkpointing(`training.gradient_checkpointing`), 한 서버 여러 GPU 의 데이터 병렬 학습(`training.devices`)을 config 로 고른다. QLoRA 는 모든 `llm_*` 학습 레시피에 같은 키로 적용된다.
+**설명**: 대화 데이터의 모든 assistant 턴에 교차 엔트로피를 걸어 LLM 을 미세조정한다. assistant 턴에 `reasoning_content` 가 있으면 thinking SFT 다: template 이 추론을 답 앞의 thinking 블록(Qwen: `<think>`)으로 쓰고 추론과 답을 함께 학습한다. 행에 `tools`(호출할 수 있는 함수의 JSON 스키마)와 assistant 턴의 `tool_calls` 가 있으면 tool calling 을 학습한다: 모델의 chat template 이 호출을 자기 형식(Qwen3 는 JSON, Qwen3.5 는 XML 형태)으로 쓰고, 호출 턴은 학습 대상이며 `tool` 턴(함수 결과)은 문맥으로만 쓴다. 하이브리드(Qwen3.5)와 일반 트랜스포머(Qwen3) 백본, 전체 미세조정, LoRA 어댑터, QLoRA(`training.adapter.quantize: nf4 | int8`), gradient checkpointing(`training.gradient_checkpointing`), 한 서버 여러 GPU 의 데이터 병렬 학습(`training.devices`)을 config 로 고른다. QLoRA 는 모든 `llm_*` 학습 레시피에 같은 키로 적용된다.
 
-**진입점**: `llmclick run configs/llm/sft.yaml`, `llmclick run configs/llm/sft_tools.yaml`, `llmclick run configs/llm/sft_lora.yaml`, `llmclick run configs/llm/sft_qlora.yaml`, `llmclick run configs/llm/sft_transformer.yaml`, `POST /api/jobs`.
+**진입점**: `llmclick run configs/llm/sft.yaml`, `llmclick run configs/llm/sft_tools.yaml`, `llmclick run configs/llm/sft_thinking.yaml`, `llmclick run configs/llm/sft_lora.yaml`, `llmclick run configs/llm/sft_qlora.yaml`, `llmclick run configs/llm/sft_transformer.yaml`, `POST /api/jobs`.
 
 **입력과 결과**
 
 | 입력 | 결과 |
 |---|---|
-| 행 `{"messages": [...], "tools"?: [...]}`(예: `samples/llm_sft.jsonl`, `samples/llm_tool_sft.jsonl`), 메시지 role 은 `system`, `user`, `assistant`, `tool`, assistant 턴은 `tool_calls`(선택), `model.architecture`(`hybrid`, `transformer`), `training.adapter`(선택) | `train` 체크포인트, `validation.json`(loss, perplexity, tokens, held-out 행에 tool call 이 있으면 tool_call_exact: 앞 대화를 주고 greedy 로 쓴 호출 턴이 template 이 렌더링한 정답과 토큰까지 같은 비율) |
+| 행 `{"messages": [...], "tools"?: [...]}`(예: `samples/llm_sft.jsonl`, `samples/llm_tool_sft.jsonl`, `samples/llm_think_sft.jsonl`), 메시지 role 은 `system`, `user`, `assistant`, `tool`, assistant 턴은 `tool_calls`, `reasoning_content`(선택), `model.architecture`(`hybrid`, `transformer`), `training.adapter`(선택) | `train` 체크포인트, `validation.json`(loss, perplexity, tokens, held-out 행에 tool call 이 있으면 tool_call_exact: 앞 대화를 주고 greedy 로 쓴 호출 턴이 template 이 렌더링한 정답과 토큰까지 같은 비율, held-out 행에 추론이 있으면 reasoning_loss: thinking 블록 끝 토큰까지, answer_loss: 그 뒤) |
 
 **처리 흐름**: `SFTPipeline` 에서 `data`, `train`, `validate` 순.
 
@@ -821,7 +822,7 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | 통합 | `tests/integ/test_llm_sft.py` |
 | 통합 | `tests/integ/test_tuning.py` |
 
-**제약과 미구현**: 대화는 assistant 턴으로 끝나야 하고 모든 메시지는 허용된 role 과 문자열 content 를 가져야 한다. `tool_calls` 는 assistant 턴에만, `tool` 턴은 호출 턴이나 다른 `tool` 턴 뒤에만 오고, 호출이 있는 행은 `tools` 가 있어야 한다(`modeling/llm/methods/sft_method.py`). Qwen3 의 template 은 마지막 assistant 턴에만 빈 thinking 블록을 붙이고 생성 프롬프트도 그 블록을 연다. 그래서 대화 중간 턴은 한 시퀀스 안에서는 추론 때와 다른 모양이 된다. 이런 턴은 그 턴에서 끝나는 별도 시퀀스로 한 번씩 채점한다(`encode_turns`). 이전에는 이런 턴이 채점되지 않았고 method 버전이 2 로 올라 기존 `llm_sft`, `llm_quantize` 실험은 한 번 다시 만들어진다. 대화 중간 턴을 한 시퀀스에서 채점하면 Qwen3-0.6B 가 tool call 대신 바로 답하는 쪽으로 기울었다(MPS, 8 스텝, held-out tool_call_exact 1.0 에서 0.4). 분리한 뒤에는 1.0 을 유지했고, Qwen3.5-0.8B 는 0.6 에서 1.0 으로 올랐다(`configs/llm/sft_tools.yaml`). `tool_call_exact` 는 호출 턴마다 greedy 생성을 한 번 하므로 tool 행이 많으면 validate 가 길어진다. decision 이 아닌 레시피에 `model.head` 를 주면 거부한다(`modeling/llm/llm_config.py`). QLoRA 는 CUDA 에서만 로드하고(다른 장치는 학습 전에 거부), 저장할 때 기준 모델을 `dtype`(FP32)로 CPU 에 다시 올려 어댑터를 병합하므로 체크포인트는 일반 모델이다. 병합하는 동안 기준 모델 전체가 호스트 메모리에 올라간다(`modeling/llm/models/llm_backbone.py`). QLoRA 는 `quantize` extra(bitsandbytes)가 필요하다. 키를 비워 두면 config 지문에서 빠져 이전 LoRA 실험의 지문이 그대로다(`modeling/tuning/tuning_config.py`). gradient checkpointing 은 non-reentrant 방식이라 LoRA, QLoRA 에서도 그대로 동작하고, 같은 config 의 가중치는 켜고 끈 것이 같다. Qwen3-0.6B LoRA, 1832 토큰 배치의 MPS 측정에서 forward activation 메모리가 9645MB 에서 2011MB 로 줄었다. 모든 `llm_*` 학습 레시피와 `embedding_contrastive` 에 같은 키로 적용된다(`modeling/tuning/tuning_backbone.py`). `training.devices` 가 1보다 크면 train 단계가 장치마다 프로세스를 띄운다(CUDA 는 NCCL, CPU 는 gloo, MPS 는 거부). 각 프로세스가 배치를 `rows[rank::devices]` 로 나눠 받고, 손실에 몫의 행 수 비율을 곱한 뒤 gradient 를 평균한다. 그래서 행 평균 손실(DPO, ORPO, SimPO)은 단일 프로세스와 같은 가중치가 나오고(CPU 2 프로세스, DPO 로 확인), 토큰 평균(SFT, instruction, GRPO `loss_norm: token`)이나 배치 통계(KTO 의 KL 기준점)를 쓰는 손실은 근사다. 준비(DPO, KTO 기준값)와 파일 쓰기, 중간 평가, 진행 보고는 첫 프로세스만 하고 진행과 스텝 지표는 큐로 부모에 전달한다. 취소하면 모든 프로세스를 멈춘다. 프로세스마다 모델 전체를 올리므로 한 장에 들어가는 모델만 빨라진다. NCCL 경로와 다중 프로세스 재개는 확인하지 않았다(`modeling/tuning/data_parallel.py`).
+**제약과 미구현**: 대화는 assistant 턴으로 끝나야 하고 모든 메시지는 허용된 role 과 문자열 content 를 가져야 한다. `tool_calls` 는 assistant 턴에만, `tool` 턴은 호출 턴이나 다른 `tool` 턴 뒤에만 오고, 호출이 있는 행은 `tools` 가 있어야 한다(`modeling/llm/methods/sft_method.py`). Qwen3 의 template 은 마지막 assistant 턴에만 빈 thinking 블록을 붙이고 생성 프롬프트도 그 블록을 연다. 그래서 대화 중간 턴은 한 시퀀스 안에서는 추론 때와 다른 모양이 된다. 이런 턴은 그 턴에서 끝나는 별도 시퀀스로 한 번씩 채점한다(`encode_turns`). 이전에는 이런 턴이 채점되지 않았고 method 버전이 2 로 올라 기존 `llm_sft`, `llm_quantize` 실험은 한 번 다시 만들어진다. 대화 중간 턴을 한 시퀀스에서 채점하면 Qwen3-0.6B 가 tool call 대신 바로 답하는 쪽으로 기울었다(MPS, 8 스텝, held-out tool_call_exact 1.0 에서 0.4). 분리한 뒤에는 1.0 을 유지했고, Qwen3.5-0.8B 는 0.6 에서 1.0 으로 올랐다(`configs/llm/sft_tools.yaml`). `tool_call_exact` 는 호출 턴마다 greedy 생성을 한 번 하므로 tool 행이 많으면 validate 가 길어진다. Qwen3, Qwen3.5 template 은 마지막 사용자 질문 앞 턴의 추론을 지운다. 그런 턴은 같은 `encode_turns` 규칙으로 추론을 포함한 별도 시퀀스가 된다. Qwen3.5 는 `model.template: {enable_thinking: true}` 여야 생성 프롬프트가 thinking 블록을 연다(기본은 빈 블록으로 닫음). `reasoning_loss`, `answer_loss` 는 thinking 블록 끝 토큰(`</think>`)으로 나누므로 decision 마커가 있는 아키텍처(Qwen 계열)에서만 낸다. MPS 에서 Qwen3.5-0.8B 를 `samples/llm_think_sft.jsonl` 로 8 스텝 학습하자 reasoning_loss 1.75 에서 0.029, answer_loss 0.57 에서 0.0002 였고, greedy 생성이 thinking 블록 뒤에 답을 썼다(파일럿이라 산수는 틀리기도 했다). decision 이 아닌 레시피에 `model.head` 를 주면 거부한다(`modeling/llm/llm_config.py`). QLoRA 는 CUDA 에서만 로드하고(다른 장치는 학습 전에 거부), 저장할 때 기준 모델을 `dtype`(FP32)로 CPU 에 다시 올려 어댑터를 병합하므로 체크포인트는 일반 모델이다. 병합하는 동안 기준 모델 전체가 호스트 메모리에 올라간다(`modeling/llm/models/llm_backbone.py`). QLoRA 는 `quantize` extra(bitsandbytes)가 필요하다. 키를 비워 두면 config 지문에서 빠져 이전 LoRA 실험의 지문이 그대로다(`modeling/tuning/tuning_config.py`). gradient checkpointing 은 non-reentrant 방식이라 LoRA, QLoRA 에서도 그대로 동작하고, 같은 config 의 가중치는 켜고 끈 것이 같다. Qwen3-0.6B LoRA, 1832 토큰 배치의 MPS 측정에서 forward activation 메모리가 9645MB 에서 2011MB 로 줄었다. 모든 `llm_*` 학습 레시피와 `embedding_contrastive` 에 같은 키로 적용된다(`modeling/tuning/tuning_backbone.py`). `training.devices` 가 1보다 크면 train 단계가 장치마다 프로세스를 띄운다(CUDA 는 NCCL, CPU 는 gloo, MPS 는 거부). 각 프로세스가 배치를 `rows[rank::devices]` 로 나눠 받고, 손실에 몫의 행 수 비율을 곱한 뒤 gradient 를 평균한다. 그래서 행 평균 손실(DPO, ORPO, SimPO)은 단일 프로세스와 같은 가중치가 나오고(CPU 2 프로세스, DPO 로 확인), 토큰 평균(SFT, instruction, GRPO `loss_norm: token`)이나 배치 통계(KTO 의 KL 기준점)를 쓰는 손실은 근사다. 준비(DPO, KTO 기준값)와 파일 쓰기, 중간 평가, 진행 보고는 첫 프로세스만 하고 진행과 스텝 지표는 큐로 부모에 전달한다. 취소하면 모든 프로세스를 멈춘다. 프로세스마다 모델 전체를 올리므로 한 장에 들어가는 모델만 빨라진다. NCCL 경로와 다중 프로세스 재개는 확인하지 않았다(`modeling/tuning/data_parallel.py`).
 
 ---
 

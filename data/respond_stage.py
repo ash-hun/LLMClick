@@ -50,13 +50,16 @@ class RespondStage(Stage[SyntheticConfig]):
                     raise BudgetExceeded(f"budget.max_usd={limit} reached after {spent:.2f} USD; {len(jobs) - done} answers left. "
                                          "Raise the budget and run again: what is answered stays.")
                 completion = teacher.complete(messages_for(prompt, settings.system), max_tokens=settings.max_tokens,
-                                              temperature=settings.temperature, seed=config.seed + sample)
+                                              temperature=settings.temperature, seed=config.seed + sample,
+                                              reasoning=settings.keep_reasoning)
                 cost = {"input": completion.input_tokens, "output": completion.output_tokens, "usd": completion.cost_usd, "calls": 1}
-                entry = keep(workdir / "cache", identifier, {"text": completion.text, "cost": cost})
+                entry = keep(workdir / "cache", identifier, {"text": completion.text, "cost": cost,
+                                                             **({"reasoning": completion.reasoning} if completion.reasoning else {})})
                 spent += completion.cost_usd
             rows.append({"id": identifier, "prompt_id": prompt["id"], "seed_id": prompt.get("seed_id"), "sample": sample,
                          "instruction": prompt["instruction"], **({"context": prompt["context"]} if prompt.get("context") else {}),
-                         **({"answer": prompt["answer"]} if prompt.get("answer") is not None else {}), "text": entry["text"]})
+                         **({"answer": prompt["answer"]} if prompt.get("answer") is not None else {}), "text": entry["text"],
+                         **({"reasoning": entry["reasoning"]} if entry.get("reasoning") else {})})
         self.progress.update(len(jobs), len(jobs))
         rows.sort(key=lambda row: (row["prompt_id"], row["sample"]))
         write_rows(workdir / CANDIDATES, rows)
