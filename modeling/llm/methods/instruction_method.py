@@ -1,5 +1,7 @@
 """Instruction tuning: SFT on instruction/input/output records instead of ready-made conversations."""
 
+from typing import ClassVar
+
 from pydantic import Field
 
 from core.config.config_schema import Section
@@ -11,6 +13,7 @@ from modeling.llm.methods.sft_method import SFT
 
 class InstructionTuning(SFT):
     """Rows: {"instruction": str, "input"?: str, "output": str}. The loss is on the output only."""
+    version: ClassVar[int] = 1  # one assistant turn per row: SFT's version 2 fix to earlier turns changes nothing here
 
     class Config(Section):
         system: str | None = Field(default=None, description="System prompt put in front of every instruction")

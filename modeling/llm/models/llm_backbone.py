@@ -17,7 +17,7 @@ from core.file_store import write_json
 if TYPE_CHECKING:
     from modeling.llm.models.heads.decision_head import DecisionHead
 
-Message = dict[str, str]
+Message = dict[str, Any]  # role and content, and an assistant turn's tool_calls
 HEAD_WEIGHTS, HEAD_CONFIG = "head.safetensors", "head.json"
 MISSING_BITSANDBYTES = "training.adapter.quantize needs bitsandbytes: `uv sync --extra quantize`"
 GGUF_FILE = "model.gguf"  # the file llm_quantize's gguf scheme writes next to the tokenizer
@@ -238,13 +238,14 @@ class LLMBackbone(Backbone):
             out[selected] = torch.log_softmax(logits, dim=-1).gather(-1, ids[:, 1:][selected].unsqueeze(-1)).squeeze(-1)
         return out
 
-    def render(self, messages: list[Message], generation_prompt: bool) -> list[int]:
-        """Token ids of a conversation in the model's own chat format."""
-        key = ("chat", str(generation_prompt), json.dumps(messages, ensure_ascii=False, sort_keys=True))
+    def render(self, messages: list[Message], generation_prompt: bool, tools: list[dict[str, Any]] | None = None) -> list[int]:
+        """Token ids of a conversation in the model's own chat format, with the tools it may call when given."""
+        key = ("chat", str(generation_prompt), json.dumps(messages, ensure_ascii=False, sort_keys=True),
+               *([json.dumps(tools, ensure_ascii=False, sort_keys=True)] if tools else []))
         ids = self._tokens.get(key)
         if ids is None:
             text = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=generation_prompt,
-                                                      **self.config.template)
+                                                      **({"tools": tools} if tools else {}), **self.config.template)
             ids = self._tokens[key] = self.tokenizer(text, add_special_tokens=False)["input_ids"]
         return list(ids)
 
