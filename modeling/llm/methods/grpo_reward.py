@@ -90,3 +90,6 @@ def weighted(completion: str, row: Row, params: dict[str, Any]) -> float:
 def reward_names(name: str, params: dict[str, Any]) -> list[str]:
     """Every reward a config entry uses, for the registry check: a weighted reward names its parts too."""
     return [name, *(str(entry["name"]) for entry in parts(params))] if name == "weighted" else [name]
+
+
+from modeling.llm.methods import scorer_reward  # noqa: E402, F401  registers reward_model, which loads a model

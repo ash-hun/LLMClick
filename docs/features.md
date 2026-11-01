@@ -43,6 +43,7 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | `llm_kto` | 짝 없이 바람직함/아님 라벨만으로 하는 선호 최적화(KTO) | `llmclick run configs/llm/kto.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_orpo` | 기준 모델 없는 선호 최적화(ORPO): chosen SFT 와 odds 비 항 | `llmclick run configs/llm/orpo.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_quantize` | 학습된 체크포인트나 Hub 모델 양자화(AWQ, GPTQ, W8A8, FP8, bitsandbytes NF4/INT8, GGUF)와 기준 대비 손실 검증 | `llmclick run configs/llm/quantize_awq.yaml`, `llmclick run configs/llm/quantize_gguf.yaml`, `POST /api/jobs` | 구현됨 |
+| `llm_reward` | chosen/rejected 짝으로 답마다 점수 하나를 내는 보상 모델(Bradley-Terry) 학습 | `llmclick run configs/llm/reward.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_sft` | 대화 데이터로 LLM 지도 미세조정 | `llmclick run configs/llm/sft.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_simpo` | 기준 모델 없는 선호 최적화(SimPO): 토큰 평균 로그 확률 마진 | `llmclick run configs/llm/simpo.yaml`, `POST /api/jobs` | 구현됨 |
 | `tts_piper` | Piper(VITS) 음성 미세조정과 청취 검증 | `llmclick run configs/tts/piper_jarvis.yaml`, `POST /api/jobs` | 구현됨 |
@@ -579,7 +580,7 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | 통합 | `tests/integ/test_llm_grpo.py` |
 | 통합 | `tests/integ/test_tuning.py` |
 
-**제약과 미구현**: 등록되지 않은 보상은 거부하고, `weighted` 는 각 `parts` 의 이름도 검사하며 `weighted` 를 중첩하지 않는다(`modeling/llm/methods/grpo_reward.py`). `method.beta > 0` 이면 `training.adapter` 가 필요하다: KL 기준이 어댑터 아래의 기준 모델이다(`modeling/llm/llm_config.py`). `judge` 는 새 완성문마다 교사를 한 번 부른다(스텝당 최대 `group_size` x `batch_size` 회, 순차 호출). 판정 응답은 신뢰하지 않는 입력이라 1-10 범위 밖의 숫자나 숫자 없는 응답은 최저점이다. `reward_workers` 가 1보다 크면 한 배치의 보상을 스레드로 동시에 계산하고 결과 순서와 값은 순차 계산과 같다. `local` 교사는 프로세스 안의 모델 하나라 호출이 잠금으로 차례를 지킨다(`data/teacher_client.py`). `loss_norm: token` 은 배치의 채점 토큰 전체로 평균을 내 긴 완성문의 토큰이 짧은 것과 같은 무게를 갖는다(Dr. GRPO, DAPO). 평균은 마이크로 배치 안에서 내므로 `accumulation` 이 1보다 크면 스텝 전체의 토큰 평균과 조금 다르다. `scale_rewards: false` 는 그룹 표준편차로 나누지 않는다. `policy_loss` 는 `ppo`(토큰마다 비율 클립), `gspo`(완성문마다 토큰 평균 로그 비의 지수 하나를 클립, Qwen3), `cispo`(토큰 비율을 위에서만 자르고 그래디언트 없는 가중치로 씀, MiniMax-M1) 중 하나이고, `clip_high` 는 위쪽 클립만 넓힌다(DAPO 의 clip-higher). 이 레시피는 샘플을 만든 가중치로 바로 학습하므로 그룹을 처음 쓸 때 비율이 1 이고 세 손실의 그래디언트가 같다. 차이는 `iterations` 가 1보다 클 때 재사용하는 스텝에서만 나고, 그때 `clipped`(클립된 토큰이나 완성문 비율)를 기록한다. `gspo` 는 `loss_norm: sequence` 만 받는다. MPS 에서 Qwen3-0.6B(lr 2e-6, `iterations: 2`)로 돌리면 재사용 스텝의 clipped 가 ppo(clip 0.2) 0.07에서 0.32, gspo(clip 3e-4, clip_high 4e-4) 0.38에서 1.0, cispo(clip_high 4) 0에서 0.01 이었다. 논문의 gspo 클립 값은 이 lr 에서 재사용 스텝을 대부분 멈추므로 `clipped` 를 보고 고른다. 이 다섯 키는 기본값이면 지문에서 빠진다.
+**제약과 미구현**: 등록되지 않은 보상은 거부하고, `weighted` 는 각 `parts` 의 이름도 검사하며 `weighted` 를 중첩하지 않는다(`modeling/llm/methods/grpo_reward.py`). `method.beta > 0` 이면 `training.adapter` 가 필요하다: KL 기준이 어댑터 아래의 기준 모델이다(`modeling/llm/llm_config.py`). `reward_model` 은 `llm_reward` 체크포인트가 완성문을 채점한다([llm_reward](#llm_reward-보상-모델bradley-terry)). `judge` 는 새 완성문마다 교사를 한 번 부른다(스텝당 최대 `group_size` x `batch_size` 회, 순차 호출). 판정 응답은 신뢰하지 않는 입력이라 1-10 범위 밖의 숫자나 숫자 없는 응답은 최저점이다. `reward_workers` 가 1보다 크면 한 배치의 보상을 스레드로 동시에 계산하고 결과 순서와 값은 순차 계산과 같다. `local` 교사는 프로세스 안의 모델 하나라 호출이 잠금으로 차례를 지킨다(`data/teacher_client.py`). `loss_norm: token` 은 배치의 채점 토큰 전체로 평균을 내 긴 완성문의 토큰이 짧은 것과 같은 무게를 갖는다(Dr. GRPO, DAPO). 평균은 마이크로 배치 안에서 내므로 `accumulation` 이 1보다 크면 스텝 전체의 토큰 평균과 조금 다르다. `scale_rewards: false` 는 그룹 표준편차로 나누지 않는다. `policy_loss` 는 `ppo`(토큰마다 비율 클립), `gspo`(완성문마다 토큰 평균 로그 비의 지수 하나를 클립, Qwen3), `cispo`(토큰 비율을 위에서만 자르고 그래디언트 없는 가중치로 씀, MiniMax-M1) 중 하나이고, `clip_high` 는 위쪽 클립만 넓힌다(DAPO 의 clip-higher). 이 레시피는 샘플을 만든 가중치로 바로 학습하므로 그룹을 처음 쓸 때 비율이 1 이고 세 손실의 그래디언트가 같다. 차이는 `iterations` 가 1보다 클 때 재사용하는 스텝에서만 나고, 그때 `clipped`(클립된 토큰이나 완성문 비율)를 기록한다. `gspo` 는 `loss_norm: sequence` 만 받는다. MPS 에서 Qwen3-0.6B(lr 2e-6, `iterations: 2`)로 돌리면 재사용 스텝의 clipped 가 ppo(clip 0.2) 0.07에서 0.32, gspo(clip 3e-4, clip_high 4e-4) 0.38에서 1.0, cispo(clip_high 4) 0에서 0.01 이었다. 논문의 gspo 클립 값은 이 lr 에서 재사용 스텝을 대부분 멈추므로 `clipped` 를 보고 고른다. 이 다섯 키는 기본값이면 지문에서 빠진다.
 
 ---
 
@@ -713,6 +714,40 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | 통합 | `tests/integ/test_llm_quantize.py` |
 
 **제약과 미구현**: `quantize` extra(llm-compressor, bitsandbytes)가 필요하다. `bnb_nf4`, `bnb_int8`, `fp8` 은 CUDA 에서만 돈다(다른 장치는 시작할 때 거부). `awq`, `gptq`, `w8a8` 은 보정 행이 필요하고 순서를 섞지 않는다. GPTQ(`gptq`, `w8a8`)는 레이어 Hessian 이 양의 정부호가 아니면 `quantization.dampening` 을 올리라는 에러로 멈춘다: Qwen3-0.6B 는 샘플 행에서 기본값 0.01 로 실패하고 0.1 로 통과한다. `evaluation_benchmark`, `evaluation_compare` 는 lm-eval 이 compressed-tensors 체크포인트를 직접 읽어 따로 처리하지 않는다(MPS, CPU 에서 AWQ 로 확인). validate 단계는 compressed-tensors 체크포인트를 dense 로 풀어 로드하므로 측정 loss 는 양자화 오차를 반영하지만 속도는 반영하지 않는다(`modeling/llm/models/llm_backbone.py`). 출력층(`lm_head`)과 백본의 `frozen` 모듈(Qwen3.5 비전 타워)은 양자화하지 않는다. `gguf` 는 llama.cpp 의 Python 변환기를 앱 환경의 별도 프로세스로 실행하고(`environment/llama_cpp/setup.sh` 가 고정 릴리스를 받음), `type` 은 `q8_0`, `f16`, `bf16` 이다. k-quant(q4_k_m 등)는 llama.cpp 의 C++ 도구가 필요해 없다. transformers 가 GGUF 를 다시 읽어 validate 하므로 그 목록에 없는 아키텍처(Qwen3.5 hybrid)는 거부한다. 고정한 llama.cpp 커밋이 지문에 들어간다. `evaluation_benchmark` 와 `evaluation_compare` 는 `gguf_file` 로 GGUF 체크포인트를 읽는다(MPS 에서 q8_0 의 arc_challenge 40 문항 acc_norm 0.40, 원본 0.425). `training.adapter` 는 거부한다.
+
+---
+
+### llm_reward: 보상 모델(Bradley-Terry)
+
+**설명**: DPO 와 같은 chosen, rejected 짝으로 답마다 점수 하나를 내는 보상 모델을 학습한다. 손실은 `-logsigmoid(r_chosen - r_rejected)` 다. 체크포인트는 출력 하나짜리 sequence classifier(`AutoModelForSequenceClassification`)라 보상 모델 서버나 다른 학습기가 그대로 읽고, `llm_grpo` 는 `reward_model` 보상으로 읽는다.
+
+**진입점**: `llmclick run configs/llm/reward.yaml`, `POST /api/jobs`.
+
+**입력과 결과**
+
+| 입력 | 결과 |
+|---|---|
+| 행 `{"prompt", "chosen", "rejected"}`(예: `samples/llm_dpo.jsonl`) | `train` 체크포인트(sequence classifier, `num_labels: 1`, `pad_token_id` 기록), `validation.json`(accuracy: chosen 점수가 더 높은 짝의 비율, margin: 점수 차 평균) |
+
+**처리 흐름**: `RewardPipeline` 에서 `data`, `train`, `validate` 순. 백본을 sequence classifier 로 올리고(`LLMBackbone.scorer`), 각 답의 마지막 토큰 hidden state 에 `score` 층을 씌워 점수를 읽는다. LoRA 를 쓰면 새로 만든 `score` 층은 어댑터 옆에서 전부 학습하고(`modules_to_save`), 저장할 때 어댑터와 함께 합친다.
+
+**구현 파일**
+
+| 파일 | 층 | 역할 |
+|---|---|---|
+| `modeling/llm/methods/reward_method.py` | method | 짝별 점수, Bradley-Terry 손실 |
+| `modeling/llm/methods/scorer_reward.py` | reward | `llm_grpo` 의 `reward_model` 보상: 체크포인트를 프로세스당 하나 올려 완성문을 채점 |
+| `modeling/llm/models/llm_backbone.py` | model | `scorer`, `sequence_scores`, sequence classifier 로드와 저장 |
+
+**테스트**
+
+| 종류 | 파일 |
+|---|---|
+| 단위 | `tests/unit/test_llm_reward_reward_method.py` |
+| 통합 | `tests/integ/test_llm_reward.py` |
+| 통합 | `tests/integ/test_tuning.py` |
+
+**제약과 미구현**: 점수는 범위가 없고, GRPO 는 그룹 안에서 비교하므로 순서와 간격만 쓴다. `reward_model` 보상은 프로세스당 보상 모델 하나를 최적 장치에 올려 두고 다른 `path` 를 요청받으면 바꾼다. Job 서버에서는 다음 요청까지 메모리에 남는다. 완성문마다 forward 한 번씩 순서대로 채점한다(`reward_workers` 를 늘려도 잠금으로 차례를 지킨다). `path` 가 로컬 디렉터리면 그 내용이 `llm_grpo` 의 train 지문에 들어간다. 과정 보상 모델(PRM)은 없다. MPS 에서 Qwen3.5-0.8B 를 LoRA 로 9 스텝 학습하자 held-out 8 짝의 accuracy 1.0, margin 1.66 이었고, 그 체크포인트를 보상으로 쓴 GRPO 6 스텝이 돌았다(보상 6.4 안팎).
 
 ---
 

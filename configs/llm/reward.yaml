@@ -1,0 +1,25 @@
+# Bradley-Terry reward model: one score per answer, the chosen answer of each pair trained to outscore the rejected one.
+# The checkpoint is a sequence classifier with one output; `llm_grpo` reads it with the `reward_model` reward.
+pipeline:
+  recipe: llm_reward
+  name: reward-qwen3.5-0.8b
+  seed: 20260920
+  output_dir: ./output
+
+model:
+  architecture: hybrid              # Qwen3.5: linear-attention + full-attention layers, vision tower frozen
+  name: Qwen/Qwen3.5-0.8B           # or Qwen/Qwen3.5-2B @ 15852e8c16360a2fea060d615a32b45270f8a8fc
+  revision: 2fc06364715b967f1860aea9cf38778875588b17
+
+data:
+  sources:
+    - name: local_jsonl
+      path: samples/llm_dpo.jsonl   # rows: {"prompt": str | messages, "chosen": ..., "rejected": ...}
+  validation: 0.1
+
+training:
+  {epochs: 1, lr: 1.0e-4, batch_size: 4, accumulation: 2, max_length: 512, max_steps: 8,
+   adapter: {name: lora, r: 16, alpha: 32}}   # the score layer is new; it trains in full beside the adapter
+
+validation:
+  min: {accuracy: 0.5}            # share of held-out pairs whose chosen answer scores higher
