@@ -645,13 +645,13 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | 단위 | `tests/unit/test_llm_quantize_quantize_scheme.py` |
 | 통합 | `tests/integ/test_llm_quantize.py` |
 
-**제약과 미구현**: `quantize` extra(llm-compressor, bitsandbytes)가 필요하다. `bnb_nf4`, `bnb_int8`, `fp8` 은 CUDA 에서만 돈다(다른 장치는 시작할 때 거부). `awq`, `gptq`, `w8a8` 은 보정 행이 필요하고 순서를 섞지 않는다. GPTQ(`gptq`, `w8a8`)는 레이어 Hessian 이 양의 정부호가 아니면 `quantization.dampening` 을 올리라는 에러로 멈춘다: Qwen3-0.6B 는 샘플 행에서 기본값 0.01 로 실패하고 0.1 로 통과한다. compressed-tensors 체크포인트는 평가할 때 dense 로 풀어 로드하므로 측정 loss 는 양자화 오차를 반영하지만 속도는 반영하지 않는다(`modeling/llm/models/llm_backbone.py`). 출력층(`lm_head`)과 백본의 `frozen` 모듈(Qwen3.5 비전 타워)은 양자화하지 않는다. GGUF 내보내기는 없다. `training.adapter` 는 거부한다.
+**제약과 미구현**: `quantize` extra(llm-compressor, bitsandbytes)가 필요하다. `bnb_nf4`, `bnb_int8`, `fp8` 은 CUDA 에서만 돈다(다른 장치는 시작할 때 거부). `awq`, `gptq`, `w8a8` 은 보정 행이 필요하고 순서를 섞지 않는다. GPTQ(`gptq`, `w8a8`)는 레이어 Hessian 이 양의 정부호가 아니면 `quantization.dampening` 을 올리라는 에러로 멈춘다: Qwen3-0.6B 는 샘플 행에서 기본값 0.01 로 실패하고 0.1 로 통과한다. `evaluation_benchmark`, `evaluation_compare` 는 lm-eval 이 compressed-tensors 체크포인트를 직접 읽어 따로 처리하지 않는다(MPS, CPU 에서 AWQ 로 확인). validate 단계는 compressed-tensors 체크포인트를 dense 로 풀어 로드하므로 측정 loss 는 양자화 오차를 반영하지만 속도는 반영하지 않는다(`modeling/llm/models/llm_backbone.py`). 출력층(`lm_head`)과 백본의 `frozen` 모듈(Qwen3.5 비전 타워)은 양자화하지 않는다. GGUF 내보내기는 없다. `training.adapter` 는 거부한다.
 
 ---
 
 ### llm_sft: 지도 미세조정
 
-**설명**: 대화 데이터의 모든 assistant 턴에 교차 엔트로피를 걸어 LLM 을 미세조정한다. 하이브리드(Qwen3.5)와 일반 트랜스포머(Qwen3) 백본, 전체 미세조정, LoRA 어댑터, QLoRA(`training.adapter.quantize: nf4 | int8`)를 config 로 고른다. QLoRA 는 모든 `llm_*` 학습 레시피에 같은 키로 적용된다.
+**설명**: 대화 데이터의 모든 assistant 턴에 교차 엔트로피를 걸어 LLM 을 미세조정한다. 하이브리드(Qwen3.5)와 일반 트랜스포머(Qwen3) 백본, 전체 미세조정, LoRA 어댑터, QLoRA(`training.adapter.quantize: nf4 | int8`), gradient checkpointing(`training.gradient_checkpointing`)을 config 로 고른다. QLoRA 는 모든 `llm_*` 학습 레시피에 같은 키로 적용된다.
 
 **진입점**: `llmclick run configs/llm/sft.yaml`, `llmclick run configs/llm/sft_lora.yaml`, `llmclick run configs/llm/sft_qlora.yaml`, `llmclick run configs/llm/sft_transformer.yaml`, `POST /api/jobs`.
 
@@ -680,7 +680,7 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | 통합 | `tests/integ/test_llm_sft.py` |
 | 통합 | `tests/integ/test_tuning.py` |
 
-**제약과 미구현**: 대화는 assistant 턴으로 끝나야 하고 모든 메시지는 허용된 role 과 문자열 content 를 가져야 한다(`modeling/llm/methods/sft_method.py`). decision 이 아닌 레시피에 `model.head` 를 주면 거부한다(`modeling/llm/llm_config.py`). QLoRA 는 CUDA 에서만 로드하고(다른 장치는 학습 전에 거부), 저장할 때 기준 모델을 `dtype`(FP32)로 CPU 에 다시 올려 어댑터를 병합하므로 체크포인트는 일반 모델이다. 병합하는 동안 기준 모델 전체가 호스트 메모리에 올라간다(`modeling/llm/models/llm_backbone.py`). QLoRA 는 `quantize` extra(bitsandbytes)가 필요하다. 키를 비워 두면 config 지문에서 빠져 이전 LoRA 실험의 지문이 그대로다(`modeling/tuning/tuning_config.py`).
+**제약과 미구현**: 대화는 assistant 턴으로 끝나야 하고 모든 메시지는 허용된 role 과 문자열 content 를 가져야 한다(`modeling/llm/methods/sft_method.py`). decision 이 아닌 레시피에 `model.head` 를 주면 거부한다(`modeling/llm/llm_config.py`). QLoRA 는 CUDA 에서만 로드하고(다른 장치는 학습 전에 거부), 저장할 때 기준 모델을 `dtype`(FP32)로 CPU 에 다시 올려 어댑터를 병합하므로 체크포인트는 일반 모델이다. 병합하는 동안 기준 모델 전체가 호스트 메모리에 올라간다(`modeling/llm/models/llm_backbone.py`). QLoRA 는 `quantize` extra(bitsandbytes)가 필요하다. 키를 비워 두면 config 지문에서 빠져 이전 LoRA 실험의 지문이 그대로다(`modeling/tuning/tuning_config.py`). gradient checkpointing 은 non-reentrant 방식이라 LoRA, QLoRA 에서도 그대로 동작하고, 같은 config 의 가중치는 켜고 끈 것이 같다. Qwen3-0.6B LoRA, 1832 토큰 배치의 MPS 측정에서 forward activation 메모리가 9645MB 에서 2011MB 로 줄었다. 모든 `llm_*` 학습 레시피와 `embedding_contrastive` 에 같은 키로 적용된다(`modeling/tuning/tuning_backbone.py`).
 
 ---
 
@@ -840,7 +840,7 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | `core/__init__.py` | 프레임워크 패키지 | 전체 |
 | `core/cli_app.py` | `llmclick run`, `validate`, `recipes`, `serve` | 전체 |
 | `core/config/experiment_store.py` | 지문으로 이름 붙인 공유 스테이지 디렉터리와 실험 디렉터리 | 전체 |
-| `core/config/config_schema.py` | 모든 레시피가 공유하는 config 키(`BaseConfig`) | 전체 |
+| `core/config/config_schema.py` | 모든 레시피가 공유하는 config 키(`BaseConfig`), 나중에 더한 키는 기본값이면 지문에서 빼는 `added_keys` | 전체 |
 | `core/logger.py` | structlog 로깅, `LOG_FORMAT` 에 따라 콘솔 또는 JSON | 전체 |
 | `core/pipeline_runner.py` | 스테이지를 순서대로 실행하고 이미 만든 것은 건너뛰는 러너, `@recipe` 등록 | 전체 |
 | `core/progress_reporter.py` | 진행률 보고(터미널 바, Job 상태), 취소 | 전체 |
@@ -872,7 +872,7 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | `modeling/tuning/training_loop.py` | 결정적 배치, 누적, 워밍업 후 선형 감쇠, 재개 스냅샷 | `llm_*`, `embedding_contrastive` |
 | `modeling/tuning/training_method.py` | 학습 방법 기반: 행 검사, 손실, 평가 | `llm_*`, `embedding_contrastive`, `evaluation_custom`, `evaluation_decision` |
 | `modeling/tuning/tuning_backbone.py` | 모델 카탈로그 기반: 로드, 저장, 학습 가중치 | `llm_*`, `embedding_contrastive`, `evaluation_*`(wakeword 제외) |
-| `modeling/tuning/tuning_config.py` | 백본, 행, 최적화 설정, LoRA 어댑터와 QLoRA `quantize` 키 | `llm_*`, `embedding_contrastive`, `tts_*` |
+| `modeling/tuning/tuning_config.py` | 백본, 행, 최적화 설정(`gradient_checkpointing` 포함), LoRA 어댑터와 QLoRA `quantize` 키 | `llm_*`, `embedding_contrastive`, `tts_*` |
 | `modeling/tuning/row_sources.py` | 행 소스 레지스트리(`delimited`, `huggingface`, `jevbench`, `local_jsonl`) | 전체 레시피 |
 | `modeling/llm/__init__.py` | LLM 패밀리 패키지 | `llm_*` |
 | `modeling/llm/llm_pipeline.py` | LLM 학습 레시피 8종 등록 | `llm_*` |
@@ -905,4 +905,4 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | `compose.gpu.yaml` | NVIDIA GPU 를 서비스에 붙이고 `quantize` extra 로 빌드하는 compose 덧붙임 파일 | 전체, QLoRA, `llm_quantize` |
 | `environment/.env.sample` | 환경 변수 예시 | 전체 |
 
-공통 모듈의 테스트: 단위 `tests/unit/test_framework_file_store.py`, `tests/unit/test_framework_logger.py`, `tests/unit/test_framework_recipe_registry.py`, `tests/unit/test_framework_settings.py`, `tests/unit/test_framework_modeling_stages.py`, 통합 `tests/integ/test_framework.py`. 테스트 보조: `tests/conftest.py`(외부 접속 차단, 작은 무작위 LM, 공유 fixture), `tests/recipe_inputs.py`(레시피별 config 와 입력 행), `tests/recipe_fakes.py`(가짜 wandb, lm-evaluation-harness), `tests/speech_fakes.py`(가짜 Piper, Whisper, openWakeWord 전처리).
+공통 모듈의 테스트: 단위 `tests/unit/test_framework_file_store.py`, `tests/unit/test_framework_logger.py`, `tests/unit/test_framework_recipe_registry.py`, `tests/unit/test_framework_settings.py`, `tests/unit/test_framework_config_schema.py`, `tests/unit/test_framework_modeling_stages.py`, 통합 `tests/integ/test_framework.py`. 테스트 보조: `tests/conftest.py`(외부 접속 차단, 작은 무작위 LM, 공유 fixture), `tests/recipe_inputs.py`(레시피별 config 와 입력 행), `tests/recipe_fakes.py`(가짜 wandb, lm-evaluation-harness), `tests/speech_fakes.py`(가짜 Piper, Whisper, openWakeWord 전처리).

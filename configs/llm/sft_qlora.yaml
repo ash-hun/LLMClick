@@ -27,6 +27,7 @@ training:
   accumulation: 2
   max_length: 512
   max_steps: 4
+  gradient_checkpointing: true      # 4-bit weights leave activations as the largest cost; recompute them
   adapter:
     name: lora
     r: 16
