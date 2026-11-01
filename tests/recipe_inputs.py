@@ -12,6 +12,7 @@ RECIPES = {  # recipe -> (sample file, method section, metric the validate stage
     "llm_dpo": ("llm_dpo", {"beta": 0.1}, "accuracy"),
     "llm_orpo": ("llm_dpo", {"lam": 0.1}, "accuracy"),
     "llm_simpo": ("llm_dpo", {"beta": 2.0, "gamma": 1.0}, "accuracy"),
+    "llm_kto": ("llm_kto", {"beta": 0.1}, "gap"),
     "llm_grpo": ("llm_grpo", {"group_size": 3, "max_new_tokens": 3, "reward": {"name": "contains"}}, "reward"),
     "embedding_contrastive": ("embedding_contrastive", {"temperature": 0.1}, "mrr"),
 }

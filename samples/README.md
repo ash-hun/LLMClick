@@ -7,12 +7,13 @@ config under `configs/llm/` and `configs/embedding/` runs offline in minutes; th
 |---|---|---|
 | `llm_sft.jsonl` | `llm_sft` | `messages` ending with an assistant turn |
 | `llm_instruction.jsonl` | `llm_instruction` | `instruction`, `input`, `output` |
-| `llm_dpo.jsonl` | `llm_dpo` | `prompt`, `chosen`, `rejected` |
+| `llm_dpo.jsonl` | `llm_dpo`, `llm_orpo`, `llm_simpo` | `prompt`, `chosen`, `rejected` |
+| `llm_kto.jsonl` | `llm_kto` | `prompt`, `completion`, `label` (the first forty DPO pairs, each split into a desirable and an undesirable row) |
 | `llm_grpo.jsonl` | `llm_grpo` | `prompt`, `answer` (read by the `exact_match` reward) |
 | `llm_decision.jsonl` | `llm_decision_sft`, `llm_decision_cispo` | `state`, `questions` (120 records, 360 questions of type choice, noul and score) |
 | `embedding_contrastive.jsonl` | `embedding_contrastive` | `query`, `positive`, `negative` |
 
 `evaluation/` holds evaluation sets made for an experiment. They stay local (not committed: the repository holds
 recipes and the framework) and apart from the rows above, because the tests build their tiny model's tokenizer from
-every `samples/*.jsonl`: a new file there changes that model. `configs/evaluation/route.yaml` reads
+the sample files `tests/conftest.py` lists in `CORPUS`; a file added here leaves that model as it is. `configs/evaluation/route.yaml` reads
 `evaluation/route_boundary.jsonl`: 19 requests routed by hand, listed in the jarvis-router experiment page.

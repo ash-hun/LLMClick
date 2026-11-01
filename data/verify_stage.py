@@ -57,6 +57,8 @@ def assembled(row: Row, recipe: str, question: DecisionQuestion | None = None) -
         return {"instruction": row["instruction"], **({"input": row["context"]} if row.get("context") else {}), "output": row["text"]}
     if recipe == "llm_grpo":
         return {"prompt": content, "answer": row.get("answer", "")}
+    if recipe == "llm_kto":
+        return {"prompt": content, "completion": row["text"], "label": True}
     raise ValueError(f"verify.schema_recipe {recipe!r} is not a recipe this stage can assemble")
 
 

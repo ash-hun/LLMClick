@@ -39,6 +39,7 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | `llm_dpo` | LLM 선호 최적화(DPO) | `llmclick run configs/llm/dpo.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_grpo` | LLM 보상 기반 강화 학습(GRPO) | `llmclick run configs/llm/grpo.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_instruction` | instruction/input/output 레코드로 LLM 지시 튜닝 | `llmclick run configs/llm/instruction.yaml`, `POST /api/jobs` | 구현됨 |
+| `llm_kto` | 짝 없이 바람직함/아님 라벨만으로 하는 선호 최적화(KTO) | `llmclick run configs/llm/kto.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_orpo` | 기준 모델 없는 선호 최적화(ORPO): chosen SFT 와 odds 비 항 | `llmclick run configs/llm/orpo.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_quantize` | 학습된 체크포인트나 Hub 모델 양자화(AWQ, GPTQ, W8A8, FP8, bitsandbytes NF4/INT8)와 기준 대비 손실 검증 | `llmclick run configs/llm/quantize_awq.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_sft` | 대화 데이터로 LLM 지도 미세조정 | `llmclick run configs/llm/sft.yaml`, `POST /api/jobs` | 구현됨 |
@@ -100,7 +101,7 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 
 | 입력 | 결과 |
 |---|---|
-| config 의 `teacher`, `seeds`, `prompts`(생성기), `evolve`(선택), `respond`, `verify`(스키마, 보상, 다수결, 판정자), `select.assemble`(`sft`, `dpo`, `grpo`, `decision`) | `select` 스테이지의 `rows.jsonl`(목표 레시피 형식), manifest, 행 수와 제외 사유별 카운트 |
+| config 의 `teacher`, `seeds`, `prompts`(생성기), `evolve`(선택), `respond`, `verify`(스키마, 보상, 다수결, 판정자), `select.assemble`(`sft`, `dpo`, `grpo`, `decision`, `kto`: judge 점수가 `select.kto_threshold` 이상이면 바람직함, 프롬프트의 판정된 답마다 한 행) | `select` 스테이지의 `rows.jsonl`(목표 레시피 형식), manifest, 행 수와 제외 사유별 카운트 |
 
 **처리 흐름**: `SyntheticData` 에서 `seeds`, `prompts`, `evolve`(config 에 `evolve` 가 있을 때만), `respond`, `verify`, `select` 순.
 
@@ -582,6 +583,38 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 
 ---
 
+### llm_kto: 라벨 선호 최적화(KTO)
+
+**설명**: 답 하나마다 바람직함(`true`) 또는 아님(`false`) 라벨만 있으면 학습한다. chosen, rejected 짝이 필요 없어 평점이나 좋아요/싫어요 기록을 그대로 쓴다. 기준 모델 대비 로그 확률 비를 바람직한 답은 올리고 아닌 답은 내리며, 기준점은 행끼리 답을 맞바꾼 쌍에서 추정한 KL 이다(KTO 논문).
+
+**진입점**: `llmclick run configs/llm/kto.yaml`, `POST /api/jobs`.
+
+**입력과 결과**
+
+| 입력 | 결과 |
+|---|---|
+| 행 `{"prompt", "completion", "label"}`(예: `samples/llm_kto.jsonl`, `data_synthetic` 의 `kto` 조립), `method.beta`, `method.desirable_weight`, `method.undesirable_weight` | `train` 체크포인트, `validation.json`(desirable_logp, undesirable_logp, gap: 토큰 평균 로그 확률 차) |
+
+**처리 흐름**: `KTOPipeline` 에서 `data`, `train`, `validate` 순. `train` 이 학습 전에 기준 모델의 로그 확률(행의 답, 다음 행의 답)을 한 번 계산해 `reference_logps.json` 에 캐시한다.
+
+**구현 파일**
+
+| 파일 | 층 | 역할 |
+|---|---|---|
+| `modeling/llm/methods/kto_method.py` | method | KTO 손실, 기준 로그 확률 캐시, 라벨별 평가 |
+
+**테스트**
+
+| 종류 | 파일 |
+|---|---|
+| 단위 | `tests/unit/test_llm_kto_kto_method.py` |
+| 통합 | `tests/integ/test_tuning.py` |
+| 통합 | `tests/integ/test_data_synthetic.py`(kto 조립) |
+
+**제약과 미구현**: `label` 은 bool, `completion` 은 빈 문자열이 아니어야 한다. KL 추정용 맞바꾼 쌍은 학습 행 순서로 정해지고 `max_length` 에서 잘린다. validate 단계에는 기준 모델이 없어 지표는 절대 로그 확률이고, held-out 행에 한쪽 라벨이 없으면 그 지표와 `gap` 은 빠진다. 짝이 없어 행끼리 공유하는 턴 끝 토큰을 바람직하지 않은 행이 함께 내리므로 lr 에 민감하다: Qwen3.5-0.8B(MPS, 6 스텝)에서 2e-5 는 모델이 무너졌고(gap 2.87 → -0.56), 5e-6 은 바람직한 답의 확률도 내렸고, 1e-6 은 gap 을 7.69 로 넓히며 유지했다.
+
+---
+
 ### llm_orpo: 기준 모델 없는 선호 최적화(ORPO)
 
 **설명**: chosen 답의 토큰당 NLL 에 chosen 대 rejected 의 log-odds 비 항을 `lam` 만큼 더해 학습한다. SFT 와 선호 정렬을 한 손실로 하고 기준 모델 패스가 없다.
@@ -875,7 +908,7 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | `modeling/tuning/tuning_config.py` | 백본, 행, 최적화 설정(`gradient_checkpointing` 포함), LoRA 어댑터와 QLoRA `quantize` 키 | `llm_*`, `embedding_contrastive`, `tts_*` |
 | `modeling/tuning/row_sources.py` | 행 소스 레지스트리(`delimited`, `huggingface`, `jevbench`, `local_jsonl`) | 전체 레시피 |
 | `modeling/llm/__init__.py` | LLM 패밀리 패키지 | `llm_*` |
-| `modeling/llm/llm_pipeline.py` | LLM 학습 레시피 8종 등록 | `llm_*` |
+| `modeling/llm/llm_pipeline.py` | LLM 학습 레시피 9종 등록 | `llm_*` |
 | `modeling/llm/llm_config.py` | 레시피별 config 와 head 검사 | `llm_*` |
 | `modeling/llm/methods/__init__.py` | LLM 학습 방법 패키지 | `llm_*` |
 | `modeling/llm/methods/llm_method.py` | 대화를 토큰 id 와 채점 위치로 | `llm_sft`, `llm_instruction`, `llm_dpo`, `llm_orpo`, `llm_simpo`, `llm_grpo`, `llm_decision_*`, `llm_quantize` |
@@ -905,4 +938,4 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | `compose.gpu.yaml` | NVIDIA GPU 를 서비스에 붙이고 `quantize` extra 로 빌드하는 compose 덧붙임 파일 | 전체, QLoRA, `llm_quantize` |
 | `environment/.env.sample` | 환경 변수 예시 | 전체 |
 
-공통 모듈의 테스트: 단위 `tests/unit/test_framework_file_store.py`, `tests/unit/test_framework_logger.py`, `tests/unit/test_framework_recipe_registry.py`, `tests/unit/test_framework_settings.py`, `tests/unit/test_framework_config_schema.py`, `tests/unit/test_framework_modeling_stages.py`, 통합 `tests/integ/test_framework.py`. 테스트 보조: `tests/conftest.py`(외부 접속 차단, 작은 무작위 LM, 공유 fixture), `tests/recipe_inputs.py`(레시피별 config 와 입력 행), `tests/recipe_fakes.py`(가짜 wandb, lm-evaluation-harness), `tests/speech_fakes.py`(가짜 Piper, Whisper, openWakeWord 전처리).
+공통 모듈의 테스트: 단위 `tests/unit/test_framework_file_store.py`, `tests/unit/test_framework_logger.py`, `tests/unit/test_framework_recipe_registry.py`, `tests/unit/test_framework_settings.py`, `tests/unit/test_framework_config_schema.py`, `tests/unit/test_framework_modeling_stages.py`, 통합 `tests/integ/test_framework.py`. 테스트 보조: `tests/conftest.py`(외부 접속 차단, `CORPUS` 에 고정한 샘플 파일로 만든 작은 무작위 LM, 공유 fixture), `tests/recipe_inputs.py`(레시피별 config 와 입력 행), `tests/recipe_fakes.py`(가짜 wandb, lm-evaluation-harness), `tests/speech_fakes.py`(가짜 Piper, Whisper, openWakeWord 전처리).

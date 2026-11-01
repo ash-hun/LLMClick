@@ -11,7 +11,7 @@ from data.teacher_client import TEACHERS, Completion, Teacher
 from data.verify_stage import majority_keys, sorry_short
 from core.progress_reporter import StateProgress
 from data.respond_stage import BudgetExceeded
-from data.select_stage import assemble
+from data.select_stage import assemble, kto_rows
 from core import pipeline_runner
 from data.row_store import key
 
@@ -183,6 +183,23 @@ def test_select_dedup_leak_and_assembly(tmp_path: Path) -> None:
     counts = pipeline_runner.build(near).run()["stages"]["select"]["counts"]
     assert counts["near_duplicate"] >= 1 and counts["rows"] + counts["near_duplicate"] == 4  # "tides question 1" vs "tides question 2"
     assert key("a", 1) == key("a", 1) and key("a", 1) != key("a", 2)
+
+
+def test_kto_rows_label_every_judged_answer(tmp_path: Path) -> None:
+    group = [{"prompt_id": "p", "sample": 0, "instruction": "q", "text": "weak", "score": 4.0},
+             {"prompt_id": "p", "sample": 1, "instruction": "q", "text": "strong", "score": 9.0},
+             {"prompt_id": "p", "sample": 2, "instruction": "q", "text": "unjudged"}]
+    assert [(row["completion"], row["label"]) for row in kto_rows(group, 7.0)] == [("strong", True), ("weak", False)]
+    with pytest.raises(ValueError, match="kto rows are labelled by the judge"):
+        pipeline_runner.build(config(tmp_path, select={"assemble": "kto", "dedup": {"near": None}}))
+    body = config(tmp_path, seeds=[{"kind": "instruction", "values": ["Describe tides.", "Describe yeast."]}], prompts={"generator": "passthrough"},
+                  respond={"answers_per_question": 2}, verify={"schema_recipe": "llm_kto", "judge": {"rubric": "Rate it.", "min_score": 1}},
+                  select={"assemble": "kto", "kto_threshold": 7.0, "dedup": {"near": None}})
+    result = pipeline_runner.build(body).run()
+    rows = [json.loads(line) for line in Path(result["stages"]["select"]["rows"]).read_text().splitlines()]
+    assert len(rows) == result["stages"]["select"]["count"] >= 2 and {row["label"] for row in rows} == {False}  # the fake judge gives 4
+    assert set(rows[0]) == {"prompt", "completion", "label"}
+    assert pipeline_runner.build(body).fingerprint("select") != pipeline_runner.build({**body, "select": {**body["select"], "kto_threshold": 3.0}}).fingerprint("select")
 
 
 def test_the_shipped_config_validates_and_the_api_lists_the_recipe() -> None:

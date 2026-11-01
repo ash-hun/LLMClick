@@ -1,0 +1,30 @@
+# Kahneman-Tversky Optimization: answers labelled desirable or not, one at a time; no chosen-rejected pairs needed,
+# so ratings and thumbs-up/down logs train directly. data_synthetic with `select.assemble: kto` writes such rows.
+pipeline:
+  recipe: llm_kto
+  name: kto-qwen3.5-0.8b
+  seed: 20260920
+  output_dir: ./output
+
+model:
+  architecture: hybrid
+  name: Qwen/Qwen3.5-0.8B
+  revision: 2fc06364715b967f1860aea9cf38778875588b17
+
+data:
+  sources:
+    - name: local_jsonl
+      path: samples/llm_kto.jsonl   # rows: {"prompt": str | messages, "completion": ..., "label": true | false}
+  validation: 0.2
+
+method:
+  beta: 0.1
+  desirable_weight: 1.0             # with fewer desirable rows, raise this so both sides weigh about the same
+  undesirable_weight: 1.0
+
+# lr: unpaired rows share the end-of-turn tokens, which undesirable rows push down for every answer; on Qwen3.5-0.8B
+# (MPS, 6 steps) 2e-5 collapsed the model, 5e-6 lowered the desirable answers too, 1e-6 widened the gap and kept them
+training: {epochs: 1, lr: 1.0e-6, batch_size: 4, accumulation: 2, max_length: 512, max_steps: 4}
+
+validation:
+  min: {gap: 0.0}                 # held-out desirable answers more likely per token than undesirable ones
