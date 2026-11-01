@@ -64,3 +64,48 @@ def test_new_grpo_keys_stay_out_of_the_fingerprint_until_set() -> None:
 
     assert set(GRPO.Config().model_dump()) == {"group_size", "max_new_tokens", "temperature", "reward", "iterations", "clip", "beta"}
     assert GRPO.Config(scale_rewards=False).model_dump()["scale_rewards"] is False
+
+
+def surrogate_gradient(policy_loss: str, shift: float, advantage: float, **keys: Any) -> tuple[Any, float]:
+    import torch
+    from modeling.llm.methods.grpo_method import GRPO
+    from modeling.tuning.tuning_config import TrainingConfig
+
+    torch.manual_seed(0)
+    new = torch.randn(2, 4, requires_grad=True)
+    graded = torch.tensor([[1.0, 1.0, 1.0, 0.0], [1.0, 1.0, 0.0, 0.0]])
+    method = GRPO(GRPO.Config(policy_loss=policy_loss, iterations=2, **keys), TrainingConfig())
+    objective, clipped = method.surrogate(new, new.detach() - shift, torch.tensor([[advantage], [advantage]]), graded)
+    objective.backward()
+    return new.grad, float(clipped)
+
+
+def test_policy_losses_agree_on_a_groups_first_use() -> None:
+    import torch
+
+    ppo, _ = surrogate_gradient("ppo", 0.0, 1.5)
+    for other in ("gspo", "cispo"):
+        assert torch.allclose(surrogate_gradient(other, 0.0, 1.5)[0], ppo, atol=1e-6)
+
+
+def test_cispo_keeps_learning_where_ppo_and_gspo_clip() -> None:
+    ppo, ppo_clipped = surrogate_gradient("ppo", 0.5, 1.0)
+    gspo, gspo_clipped = surrogate_gradient("gspo", 0.5, 1.0)
+    cispo, cispo_clipped = surrogate_gradient("cispo", 0.5, 1.0)
+    assert float(ppo.abs().max()) == 0.0 and float(gspo.abs().max()) == 0.0
+    assert float(cispo.abs().max()) > 0 and ppo_clipped == gspo_clipped == cispo_clipped == 1.0
+
+
+def test_clip_high_widens_only_the_upper_bound() -> None:
+    narrow, _ = surrogate_gradient("ppo", 0.22, 1.0)
+    wide, clipped = surrogate_gradient("ppo", 0.22, 1.0, clip_high=0.28)
+    assert float(narrow.abs().max()) == 0.0 and float(wide.abs().max()) > 0 and clipped == 0.0
+    lower, _ = surrogate_gradient("ppo", -0.3, -1.0, clip_high=0.28)
+    assert float(lower.abs().max()) == 0.0
+
+
+def test_gspo_needs_sequence_averaging() -> None:
+    from modeling.llm.methods.grpo_method import GRPO
+
+    with pytest.raises(ValueError, match="loss_norm: sequence"):
+        GRPO.Config(policy_loss="gspo", loss_norm="token")
