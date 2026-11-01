@@ -2,10 +2,11 @@
 
 from typing import ClassVar
 
-from modeling.llm.llm_config import (DecisionCISPOConfig, DecisionSFTConfig, DistillConfig, DPOConfig, GRPOConfig,
-                                     InstructionConfig, KTOConfig, ORPOConfig, PretrainConfig, RewardConfig, SFTConfig,
-                                     SimPOConfig)
+from modeling.llm.llm_config import (AgentRLConfig, DecisionCISPOConfig, DecisionSFTConfig, DistillConfig, DPOConfig,
+                                     GRPOConfig, InstructionConfig, KTOConfig, ORPOConfig, PretrainConfig, RewardConfig,
+                                     SFTConfig, SimPOConfig)
 from modeling.tuning.tuning_pipeline import TuningPipeline
+from modeling.llm.agent.agent_environment import ENVIRONMENTS
 from modeling.llm.methods.grpo_reward import REWARDS
 from core.pipeline_runner import recipe
 
@@ -93,3 +94,13 @@ class DecisionSFTPipeline(LLMPipeline):
 class DecisionCISPOPipeline(LLMPipeline):
     kind: ClassVar[str] = "llm_decision_cispo"
     config_class = DecisionCISPOConfig
+
+
+@recipe
+class AgentRLPipeline(LLMPipeline):
+    kind: ClassVar[str] = "llm_agent_rl"
+    config_class = AgentRLConfig
+
+    @classmethod
+    def catalogue(cls) -> dict[str, list[str]]:
+        return {**super().catalogue(), "reward": REWARDS.names(), "environment": ENVIRONMENTS.names()}

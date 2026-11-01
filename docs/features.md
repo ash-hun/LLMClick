@@ -34,6 +34,7 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | `evaluation_embedding` | 임베딩 모델을 MTEB 태스크로 채점 | `llmclick run configs/evaluation/embedding.yaml`, `POST /api/jobs` | 구현됨 |
 | `evaluation_wakeword` | 웨이크워드 검출기의 미검출률과 시간당 오수락 측정 | `llmclick run configs/evaluation/wakeword.yaml`, `POST /api/jobs` | 구현됨 |
 | `job_api` | config 검증, 백그라운드 Job 실행과 조회, 평가 리포트 조회, 레시피 목록 | `POST /api/jobs` 외 [job_api](#job_api-http-job-api) 참조 | 구현됨 |
+| `llm_agent_rl` | 여러 턴 동안 환경의 도구를 호출하며 답하는 agentic RL(궤적 단위 GRPO) | `llmclick run configs/llm/agent_rl.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_decision_cispo` | decision 헤드 LLM 의 추론 강화(CISPO) | `llmclick run configs/llm/decision_cispo.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_decision_sft` | decision 헤드 LLM 지도 학습 | `llmclick run configs/llm/decision_pointer.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_distill` | 큰 교사 모델이 학생의 답을 토큰마다 채점하는 on-policy distillation | `llmclick run configs/llm/distill.yaml`, `POST /api/jobs` | 구현됨 |
@@ -421,6 +422,41 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 - 끝난 Job 은 취소할 수 없다(409). 취소는 다음 진행률 보고 시점에 멈춘다(`core/api/routers/job_channel.py`).
 - `# ponytail:` `tts_piper` 의 fit 중에는 Piper 가 진행률을 보내지 않아 취소된 Job 이 fit 이 끝나야 멈춘다(`modeling/tts/tts_stages.py`).
 - 서버가 Job 이 끝나기 전에 멈추면 그 Job 은 `interrupted` 로 표시되고 다시 제출해야 한다(`core/api/job_store.py`).
+
+---
+
+### llm_agent_rl: 여러 턴 agentic RL
+
+**설명**: 정책 모델이 여러 턴에 걸쳐 답한다. 한 턴에 도구를 호출하면 환경이 실행한 결과를 tool 턴으로 붙이고 다음 턴으로 넘어가며, 호출 없는 턴이 최종 답이다. 최종 답에 보상을 매기고 같은 프롬프트의 궤적끼리 GRPO 로 비교한다. 각 턴은 모델이 실제로 본 프롬프트와 그 턴에 쓴 토큰을 별도 시퀀스로 학습하고, 궤적의 advantage 를 받는다. 그래서 template 이 이전 턴을 나중에 다르게 렌더링해도(Qwen3 의 thinking 블록) 학습한 내용이 어긋나지 않는다. GRPO 의 `policy_loss`, `clip`, `beta`, `iterations`, `loss_norm`, `scale_rewards` 를 그대로 받는다.
+
+**진입점**: `llmclick run configs/llm/agent_rl.yaml`, `POST /api/jobs`.
+
+**입력과 결과**
+
+| 입력 | 결과 |
+|---|---|
+| 행 `{"prompt", ...보상이 읽는 키(예: "answer")}`(예: `samples/llm_agent_rl.jsonl`), `method.environment`(`calculator`, `lookup` + `path`), `method.max_turns`, `method.max_new_tokens`(턴마다), `method.reward`, GRPO 키 | `train` 체크포인트, `validation.json`(reward: greedy 궤적의 평균 보상, turns, tool_calls, malformed: 읽을 수 없는 호출로 끝난 비율, answered: 최종 답을 낸 비율) |
+
+**처리 흐름**: `AgentRLPipeline` 에서 `data`, `train`, `validate` 순. 학습 스텝마다 프롬프트당 `group_size` 개 궤적을 한 배치로 한 턴씩 진행한다.
+
+**구현 파일**
+
+| 파일 | 층 | 역할 |
+|---|---|---|
+| `modeling/llm/methods/agent_method.py` | method | 롤아웃, 궤적 보상과 advantage, 턴별 시퀀스, 평가 |
+| `modeling/llm/agent/agent_environment.py` | environment | `ENVIRONMENTS` 레지스트리, `calculator`(ast 로 산술만 해석, 실행하지 않음), `lookup`(로컬 문서 검색) |
+| `modeling/llm/agent/tool_call_parser.py` | parser | 생성문에서 tool call 읽기(Qwen3 JSON, Qwen3.5 XML 형식) |
+
+**테스트**
+
+| 종류 | 파일 |
+|---|---|
+| 단위 | `tests/unit/test_llm_agent_rl_agent_method.py` |
+| 단위 | `tests/unit/test_llm_agent_rl_agent_environment.py` |
+| 단위 | `tests/unit/test_llm_agent_rl_tool_call_parser.py` |
+| 통합 | `tests/integ/test_llm_agent_rl.py` |
+
+**제약과 미구현**: 생성문은 신뢰하지 않는 입력이다. 읽을 수 없는 호출 블록이 나오면 궤적을 끝내고 빈 답으로 채점한다. 도구 오류(없는 도구, 잘못된 인자, 계산 오류)는 오류 문장을 결과로 돌려줘 정책이 읽게 한다. 계산기는 숫자와 사칙연산, `//`, `%`, `**`(지수 64 이하, 결과 1e30 이하), 괄호만 받고 식은 200자까지다. 도구 결과는 1000자에서 자른다. 다음 턴 프롬프트가 `training.max_length` 를 넘으면 그 궤적은 거기서 끝난다. `max_turns` 안에 최종 답이 없으면 빈 답으로 채점한다. 턴이 많은 궤적일수록 학습 시퀀스가 많다(`loss_norm: sequence` 는 턴마다 같은 무게). 롤아웃은 HF `generate` 라 느리고, 코드 실행 환경과 외부 API 도구는 없다. `lookup` 의 `path` 내용은 train 지문에 들어간다. MPS 에서 Qwen3-0.6B 는 샘플 문제에서 처음부터 계산기를 한 번 호출하고 맞혀(reward 1.0, turns 2.0) 그룹 안 보상 차이가 없었고, 계산기 사용 힌트를 뺀 문제로 16 스텝을 돌려도 같았다. 이 샘플로는 학습 신호가 생기지 않는다. 롤아웃, 도구 실행, 턴별 학습 경로는 실제 모델에서 돌았다. 더 어려운 과제(여러 번의 호출이 필요한 문제, 검색)가 필요하다. Qwen3.5-0.8B 의 XML 형식 호출도 실제 생성문에서 읽혔다(greedy 6 문항 reward 0.83, 한 문항은 계산기 없이 답함).
 
 ---
 
