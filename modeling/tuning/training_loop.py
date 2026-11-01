@@ -9,6 +9,7 @@ from typing import Any
 
 import torch
 
+from modeling.tuning.data_parallel import World, reduce_gradients, reduce_mean
 from modeling.tuning.training_method import Row, TrainingMethod
 from modeling.tuning.tuning_config import TrainingConfig
 from modeling.tuning.tuning_backbone import Backbone
@@ -70,14 +71,18 @@ def tracked(event: dict[str, Any]) -> dict[str, float]:
 
 def fit(backbone: Backbone, method: TrainingMethod[Any], rows: list[Row], training: TrainingConfig, workdir: Path,
         seed: int, progress: Progress, on_step: Callable[[int, dict[str, float]], None] | None = None,
-        evaluation: Evaluation | None = None) -> dict[str, Any]:
+        evaluation: Evaluation | None = None, world: World | None = None) -> dict[str, Any]:
     """Train `backbone` in place and write `checkpoint/` and `summary.json`; a rerun continues from `resume.pt`.
     Every `training.eval_every` steps `evaluation` (the method's metrics on held-out rows) runs with the weights as
     they are, and its numbers join that step's event as `eval/<metric>`: the curve a run is judged by, next to the
     loss, in `training.jsonl` and in the tracker.
     Resume snapshots are taken only between groups of repeated steps (`method.repeats`): a method that reuses what it
     sampled keeps those samples in memory, so a snapshot inside a group would resume with fresh samples and a
-    different run. Between groups nothing is kept, and the resumed run repeats the uninterrupted one exactly."""
+    different run. Between groups nothing is kept, and the resumed run repeats the uninterrupted one exactly.
+    With `world`, this is one of several processes: each takes its share of every batch and the gradients are averaged
+    across them, so all hold the same weights; only the first writes files, evaluates and reports."""
+    world = world or World(0, 1)
+    primary = world.rank == 0
     steps = schedule(len(rows), training, seed, method.repeats)
     optimizer = torch.optim.AdamW(method.parameter_groups(backbone), lr=training.lr, weight_decay=training.weight_decay)
     peaks = [group["lr"] for group in optimizer.param_groups]
@@ -90,7 +95,8 @@ def fit(backbone: Backbone, method: TrainingMethod[Any], rows: list[Row], traini
         start = int(state["step"])
         events = [event for event in history(workdir) if event["step"] <= start]
         logger.info("training_resumed", step=start, steps=len(steps))
-    (workdir / LOG).write_text("".join(json.dumps(event) + "\n" for event in events))
+    if primary:
+        (workdir / LOG).write_text("".join(json.dumps(event) + "\n" for event in events))
     autocast = torch.autocast("cuda", dtype=torch.bfloat16, enabled=backbone.device.startswith("cuda"))
     backbone.model.train()
     every = training.resume_every or 0  # 0: no snapshots
@@ -103,16 +109,26 @@ def fit(backbone: Backbone, method: TrainingMethod[Any], rows: list[Row], traini
             group["lr"] = peak * rate / training.lr
         total = 0.0
         for batch in steps[index]:
+            share = batch[world.rank::world.size]
+            if not share:
+                continue  # a batch smaller than the world: this process adds nothing, the others carry it
+            # a share's mean loss weighted by its size, so averaging over processes gives the batch's mean exactly
+            weight = len(share) * world.size / len(batch)
             with autocast:
-                loss = method.loss(backbone, [rows[i] for i in batch]) / len(steps[index])
+                loss = method.loss(backbone, [rows[i] for i in share]) * weight / len(steps[index])
             loss.backward()  # type: ignore[no-untyped-call]
             total += float(loss.detach())
+        if world.size > 1:
+            reduce_gradients(backbone.trainable(), world)
+            total = reduce_mean(total, backbone.device)
         torch.nn.utils.clip_grad_norm_(backbone.trainable(), training.max_grad_norm)
         optimizer.step()
         optimizer.zero_grad(set_to_none=True)
         if not math.isfinite(total):
             raise RuntimeError(f"Loss became {total} at step {index + 1}; lower training.lr")
         done = index + 1
+        if not primary:
+            continue
         event = {"step": done, "loss": total, "lr": rate, **method.metrics}
         if evaluation is not None and training.eval_every and done % training.eval_every == 0:
             event.update({f"eval/{key}": value for key, value in evaluating(backbone, evaluation).items()})
@@ -125,6 +141,8 @@ def fit(backbone: Backbone, method: TrainingMethod[Any], rows: list[Row], traini
             with atomic_path(resume) as temporary:
                 torch.save({"step": done, "model": backbone.snapshot(), "optimizer": optimizer.state_dict()}, temporary)
             next_snapshot = done + every
+    if not primary:
+        return {}
     backbone.model.eval()
     finished = method.finish(backbone, progress)
     progress.update(len(steps), len(steps), "saving checkpoint")

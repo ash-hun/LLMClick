@@ -2,16 +2,19 @@
 
 from pathlib import Path
 from typing import Any, ClassVar
+from collections.abc import Callable
 
 from modeling.tuning.training_loop import CHECKPOINT, SUMMARY, fit, history, tracked
+from modeling.tuning.data_parallel import World, spawn
 from modeling.modeling_stages import TrainStage, ValidateStage, held_out_positions
 from modeling.tuning.row_sources import SOURCES
 from modeling.tuning.tuning_config import TuningConfig
 from modeling.tuning.training_method import Row, fitting
 from modeling.modeling_config import keyed_identity
-from core.device_selector import resolve_device
+from core.device_selector import Device, resolve_device
 from core.file_store import directory_signature, read_json, read_jsonl, write_jsonl
 from modeling.metric_tracker import History
+from core.progress_reporter import Progress
 from core.stage_base import Outputs, Stage
 
 MINIMUM_ROWS = 2
@@ -64,27 +67,44 @@ class TuneStage(TrainStage[TuningConfig]):
     def train(self, workdir: Path, inputs: dict[str, Outputs]) -> Outputs:
         checkpoint, summary = workdir / CHECKPOINT, workdir / SUMMARY
         if not (summary.exists() and checkpoint.is_dir()):
-            backbone, method, training = self.config.build_backbone(), self.config.build_method(), self.config.training
-            self.progress.update(0, None, "loading model")
-            with backbone.loaded(resolve_device(self.config.device)):
-                # Both folds are checked now: a held-out row that does not fit would otherwise fail after training.
-                held_out = fitting(backbone, method, read_jsonl(Path(inputs["data"]["validation"])), training, self.progress, "validation")
-                rows = fitting(backbone, method, read_jsonl(Path(inputs["data"]["train"])), training, self.progress, "training")
-                rows = method.prepare(backbone, rows, workdir, self.progress)
-                backbone.adapt(training.adapter)
-                if training.gradient_checkpointing:
-                    backbone.checkpoint_activations()
-                sample, batch_size = held_out[: training.eval_rows], self.config.validation.batch_size
-
-                def evaluation() -> dict[str, float]:  # the validate stage's measurement, on the weights as they are
-                    return method.evaluate(backbone, sample, batch_size, self.progress)
-
-                with self.tracking(workdir) as log:
-                    fit(backbone, method, rows, training, workdir, self.config.seed, self.progress, log, evaluation)
+            device = resolve_device(self.config.device)
+            with self.tracking(workdir) as log:
+                if self.config.training.devices > 1:
+                    spawn(self.config, inputs, workdir, device, self.progress, log)
+                else:
+                    tune(self.config, inputs, workdir, self.progress, log, None, device)
         return {"checkpoint": str(checkpoint), "run": str(workdir), **read_json(summary)}
 
     def history(self, outputs: Outputs) -> History:
         return [(int(event["step"]), tracked(event)) for event in history(Path(outputs["run"]))]
+
+
+def tune(config: TuningConfig, inputs: dict[str, Outputs], workdir: Path, progress: Progress,
+         log: Callable[[int, dict[str, float]], None] | None, world: World | None, device: Device) -> None:
+    """Load the backbone, let the method prepare, run the loop: in this process, or as one of `training.devices`.
+    With several, the first process prepares (DPO and KTO cache reference values) and the others read its cache."""
+    backbone, method, training = config.build_backbone(), config.build_method(), config.training
+    progress.update(0, None, "loading model")
+    with backbone.loaded(device):
+        # Both folds are checked now: a held-out row that does not fit would otherwise fail after training.
+        held_out = fitting(backbone, method, read_jsonl(Path(inputs["data"]["validation"])), training, progress, "validation")
+        rows = fitting(backbone, method, read_jsonl(Path(inputs["data"]["train"])), training, progress, "training")
+        if world is None or world.rank == 0:
+            rows = method.prepare(backbone, rows, workdir, progress)
+        if world is not None:
+            import torch.distributed as distributed
+            distributed.barrier()
+            if world.rank > 0:
+                rows = method.prepare(backbone, rows, workdir, progress)
+        backbone.adapt(training.adapter)
+        if training.gradient_checkpointing:
+            backbone.checkpoint_activations()
+        sample, batch_size = held_out[: training.eval_rows], config.validation.batch_size
+
+        def evaluation() -> dict[str, float]:  # the validate stage's measurement, on the weights as they are
+            return method.evaluate(backbone, sample, batch_size, progress)
+
+        fit(backbone, method, rows, training, workdir, config.seed, progress, log, evaluation, world)
 
 
 class MeasureStage(ValidateStage[TuningConfig]):

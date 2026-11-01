@@ -443,6 +443,15 @@ training:
   adapter: {name: lora, r: 16, alpha: 32, quantize: nf4}
 ```
 
+`training.devices: N` trains on N GPUs of one server, one process each: every batch is split between them, the
+gradients are averaged, and the first process writes the log, the snapshots and the checkpoint. `batch_size` is the
+whole batch, not a share. The cards are the N after the one the job owns (`cuda:0` and up from the CLI). Each process
+holds the whole model, so this speeds a model that fits one card; it does not fit a larger one.
+
+```yaml
+training: {batch_size: 16, devices: 4}   # 4 rows per GPU per micro-batch
+```
+
 ### Decision recipes
 
 A decision model answers `choice`, `noul` (yes/no) and `score` questions about a `state` with a probability per
