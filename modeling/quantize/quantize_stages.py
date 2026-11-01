@@ -42,7 +42,7 @@ class QuantizeStage(TuneStage):
                 rows = fitting(backbone, method, read_jsonl(Path(inputs["data"]["train"])), config.training,
                                self.progress, "training")[: config.quantization.rows]
                 base = method.evaluate(backbone, held_out, config.validation.batch_size, self.progress)
-                calibration = [backbone.render(method.messages(row), False) for row in rows]
+                calibration = [backbone.render(method.messages(row), False, method.tools(row)) for row in rows]
             origin, revision = backbone.origin(None)
             ignore = ["lm_head", *(f"re:.*{fragment}.*" for fragment in backbone.frozen)]
             self.progress.update(0, None, f"quantizing ({config.quantization.name})")

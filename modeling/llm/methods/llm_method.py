@@ -37,18 +37,36 @@ def token_log_probabilities(backbone: LLMBackbone, encoded: list[Encoded], tempe
 
 
 class LLMMethod(TrainingMethod[LLMBackbone]):
-    def encode(self, backbone: LLMBackbone, messages: list[Message], last_only: bool = False) -> Encoded:
+    def encode(self, backbone: LLMBackbone, messages: list[Message], last_only: bool = False,
+               tools: list[dict[str, Any]] | None = None) -> Encoded:
         """Targets are the assistant turns (or only the last): the tokens between a turn's generation prompt and
-        its end, found by rendering the conversation up to each turn."""
-        full = backbone.render(messages, False)
-        targets = [False] * len(full)
+        its end, found by rendering the conversation up to each turn. A turn the template renders differently once
+        it is no longer the last one gets no targets here; `encode_turns` grades it on its own."""
+        return self.encoded_turns(backbone, messages, last_only, tools)[0]
+
+    def encoded_turns(self, backbone: LLMBackbone, messages: list[Message], last_only: bool,
+                      tools: list[dict[str, Any]] | None) -> tuple[Encoded, list[int]]:
+        """The conversation with its assistant turns marked, and the turns that could not be marked in it."""
+        full = backbone.render(messages, False, tools)
+        targets, apart = [False] * len(full), []
         turns = [i for i, message in enumerate(messages) if message["role"] == "assistant"]
         for turn in turns[-1:] if last_only else turns:
-            start = common_prefix(backbone.render(messages[:turn], True), full)
-            end = common_prefix(backbone.render(messages[:turn + 1], False), full)
+            start = common_prefix(backbone.render(messages[:turn], True, tools), full)
+            end = common_prefix(backbone.render(messages[:turn + 1], False, tools), full)
+            if end <= start:
+                apart.append(turn)
             targets[start:end] = [True] * max(end - start, 0)
         limit = self.training.max_length  # rows that do not fit never get here: `fitting` stops or skips them first
-        return full[:limit], targets[:limit]
+        return (full[:limit], targets[:limit]), apart
+
+    def encode_turns(self, backbone: LLMBackbone, messages: list[Message], tools: list[dict[str, Any]] | None = None) -> list[Encoded]:
+        """Every assistant turn graded once, as the model sees the conversation when it writes that turn. Most
+        templates render a turn the same in the middle of a conversation and at its end, and all turns share one
+        sequence. Some do not (Qwen3 opens an empty thinking block on the final turn only, which is also what its
+        generation prompt opens): such a turn becomes a sequence of its own that ends with it, or the model would learn
+        it after one prompt and be asked for it after another."""
+        whole, apart = self.encoded_turns(backbone, messages, False, tools)
+        return [whole, *(self.encode(backbone, messages[:turn + 1], last_only=True, tools=tools) for turn in apart)]
 
     def log_probabilities(self, backbone: LLMBackbone, encoded: list[Encoded],
                           temperature: float = 1.0) -> tuple[torch.Tensor, torch.Tensor]:

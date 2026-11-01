@@ -188,6 +188,7 @@ the same job, and `docs/api_spec.md` describes every endpoint.
 | `llm/kto.yaml` | KTO of Qwen3.5-0.8B on labelled single answers |
 | `llm/reward.yaml` | a LoRA reward model on Qwen3.5-0.8B from the DPO pairs, for the `reward_model` GRPO reward |
 | `llm/orpo.yaml`, `llm/simpo.yaml` | ORPO and SimPO of Qwen3.5-0.8B on the DPO pairs |
+| `llm/sft_tools.yaml` | tool calling: SFT of Qwen3.5-0.8B on conversations with three made-up tools |
 | `llm/sft_lora.yaml` | the SFT recipe with a LoRA adapter instead of full fine-tuning |
 | `llm/sft_qlora.yaml` | the SFT recipe on Qwen3-1.7B with QLoRA: 4-bit base, LoRA adapter (CUDA, `--extra quantize`) |
 | `llm/grpo.yaml` | GRPO of Qwen3.5-0.8B with the `exact_match` reward |
@@ -412,7 +413,7 @@ pipeline:
 
 | Recipe | Row keys | Metrics for `validation.min`/`max` |
 |---|---|---|
-| `llm_sft` | `messages` | `loss`, `perplexity` |
+| `llm_sft` | `messages`, `tools`? (assistant turns may carry `tool_calls`, `tool` turns hold results) | `loss`, `perplexity`, `tool_call_exact` (held-out tool calls written token for token; only when the rows call tools) |
 | `llm_instruction` | `instruction`, `input`?, `output` | `loss`, `perplexity` |
 | `llm_dpo` | `prompt`, `chosen`, `rejected` | `accuracy` (chosen more likely than rejected), `margin` |
 | `llm_orpo` | the same | `accuracy`, `margin` (log-odds of chosen over rejected) |

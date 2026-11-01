@@ -1,0 +1,24 @@
+# Tool calling: SFT on conversations where the assistant calls a function, reads its result and answers.
+# Rows carry `tools` (JSON schemas) and assistant turns with `tool_calls`; the model's chat template writes both in
+# its own format (Qwen3.5: XML-style <function=...>). Calls are trained, tool results are context only.
+pipeline:
+  recipe: llm_sft
+  name: sft-tools-qwen3.5-0.8b
+  seed: 20260920
+  output_dir: ./output
+
+model:
+  architecture: hybrid              # Qwen3.5: linear-attention + full-attention layers, vision tower frozen
+  name: Qwen/Qwen3.5-0.8B
+  revision: 2fc06364715b967f1860aea9cf38778875588b17
+
+data:
+  sources:
+    - name: local_jsonl
+      path: samples/llm_tool_sft.jsonl  # rows: {"tools": [...], "messages": [..., {"role": "assistant", "content": "", "tool_calls": [...]}, {"role": "tool", ...}, ...]}
+  validation: 0.1
+
+training: {epochs: 1, lr: 1.0e-5, batch_size: 4, accumulation: 2, max_length: 1024, max_steps: 8}
+
+validation:
+  min: {tool_call_exact: 0.5}       # share of held-out tool calls written token for token, greedily
