@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 import torch
 from pydantic import Field
 
-from modeling.llm.methods.llm_method import Encoded, LLMMethod, Reuse, conversation
+from modeling.llm.methods.llm_method import Encoded, LLMMethod, Reuse, completion, conversation, token_log_probabilities
 from modeling.llm.models.llm_backbone import LLMBackbone
 from modeling.tuning.training_method import Row, chunks
 from modeling.llm.methods.grpo_reward import REWARDS
@@ -58,11 +58,7 @@ class GRPO(LLMMethod):
         return [len(backbone.render(conversation(row["prompt"]), True)) + self.config.max_new_tokens + 1]
 
     def graded(self, backbone: LLMBackbone, prompt: list[int], tokens: list[int]) -> Encoded:
-        """A sampled completion as a graded sequence. The end token is appended and graded only when the model
-        produced it: a completion cut off at `max_new_tokens` did not choose to stop, and grading a stop there
-        would teach it to stop early whenever a truncated answer happened to be rewarded."""
-        ended = [int(backbone.tokenizer.eos_token_id)] if len(tokens) < self.config.max_new_tokens else []
-        return prompt + tokens + ended, [False] * len(prompt) + [True] * (len(tokens) + len(ended))
+        return completion(backbone, prompt, tokens, self.config.max_new_tokens)
 
     def sample(self, backbone: LLMBackbone, rows: list[Row]) -> dict[str, Any]:
         """Completions, their rewards and advantages; fixed for as long as the batch is reused."""
@@ -96,10 +92,7 @@ class GRPO(LLMMethod):
 
     def token_scores(self, backbone: LLMBackbone, encoded: list[Encoded]) -> tuple[torch.Tensor, torch.Tensor]:
         """Per-token log-probabilities of the graded tokens under the sampling temperature, and their mask."""
-        hidden, ids, mask = backbone.hidden([ids for ids, _ in encoded])
-        targets, _ = backbone.padded([[int(flag) for flag in flags] for _, flags in encoded])
-        graded = targets * mask
-        return backbone.next_token_log_probabilities(hidden, ids, graded, self.config.temperature), graded[:, 1:].float()
+        return token_log_probabilities(backbone, encoded, self.config.temperature)
 
     @torch.no_grad()
     def reference(self, backbone: LLMBackbone, encoded: list[Encoded]) -> torch.Tensor:

@@ -106,6 +106,11 @@ class TuningConfig(ModelingConfig):
         return [*super().paths(), self.model.name, *([self.model.init] if self.model.init else []),
                 *local_paths(self.data.sources)]
 
+    def local_models(self) -> list[str]:
+        """Local model directories the method reads besides `model` (a distillation teacher); their content joins
+        the train fingerprint like `model.init`'s."""
+        return []
+
     def versions(self) -> dict[str, int]:
         """Code versions of the parts this config selects; they join the train fingerprint, so bumping one part's
         `version` rebuilds the experiments that use that part and no others."""

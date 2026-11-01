@@ -36,6 +36,7 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | `job_api` | config 검증, 백그라운드 Job 실행과 조회, 평가 리포트 조회, 레시피 목록 | `POST /api/jobs` 외 [job_api](#job_api-http-job-api) 참조 | 구현됨 |
 | `llm_decision_cispo` | decision 헤드 LLM 의 추론 강화(CISPO) | `llmclick run configs/llm/decision_cispo.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_decision_sft` | decision 헤드 LLM 지도 학습 | `llmclick run configs/llm/decision_pointer.yaml`, `POST /api/jobs` | 구현됨 |
+| `llm_distill` | 큰 교사 모델이 학생의 답을 토큰마다 채점하는 on-policy distillation | `llmclick run configs/llm/distill.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_dpo` | LLM 선호 최적화(DPO) | `llmclick run configs/llm/dpo.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_grpo` | LLM 보상 기반 강화 학습(GRPO) | `llmclick run configs/llm/grpo.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_instruction` | instruction/input/output 레코드로 LLM 지시 튜닝 | `llmclick run configs/llm/instruction.yaml`, `POST /api/jobs` | 구현됨 |
@@ -482,6 +483,38 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 
 ---
 
+### llm_distill: on-policy distillation
+
+**설명**: 학생 모델이 프롬프트에 직접 답을 샘플링하고, 같은 어휘를 쓰는 큰 교사 모델이 그 답의 토큰마다 로그 확률을 매긴다. 토큰마다 학생과 교사의 로그 확률 차(reverse KL 추정)를 그 토큰의 손실 가중치로 써서, 학생이 쓰지 않을 텍스트를 흉내 내는 대신 자기 답이 교사와 갈라지는 자리를 고친다(Qwen3 보고서, Thinking Machines 의 on-policy distillation).
+
+**진입점**: `llmclick run configs/llm/distill.yaml`, `POST /api/jobs`.
+
+**입력과 결과**
+
+| 입력 | 결과 |
+|---|---|
+| 행 `{"prompt"}`(예: `samples/llm_grpo.jsonl`, 다른 키는 읽지 않음), `method.teacher`(`architecture`, `name`, `revision`), `method.samples`, `method.max_new_tokens`, `method.temperature` | `train` 체크포인트, `validation.json`(teacher_logp: 학생 greedy 답의 교사 토큰 평균 로그 확률, reverse_kl: 같은 토큰의 학생과 교사 로그 확률 차 평균) |
+
+**처리 흐름**: `DistillPipeline` 에서 `data`, `train`, `validate` 순. `train` 이 학습 전에 교사를 학생과 같은 장치에 올리고 학습이 끝나면 내린다. validate 단계는 교사를 다시 올려 채점한 뒤 내린다.
+
+**구현 파일**
+
+| 파일 | 층 | 역할 |
+|---|---|---|
+| `modeling/llm/methods/distill_method.py` | method | 교사 로드와 어휘 검사, 샘플링, reverse KL 손실, 평가 |
+
+**테스트**
+
+| 종류 | 파일 |
+|---|---|
+| 단위 | `tests/unit/test_llm_distill_distill_method.py` |
+| 통합 | `tests/integ/test_llm_distill.py` |
+| 통합 | `tests/integ/test_tuning.py` |
+
+**제약과 미구현**: 교사와 학생의 토크나이저 어휘가 다르면 로드할 때 거부한다(Qwen3-0.6B 와 Qwen3-1.7B 는 같고, Qwen3 와 Qwen3.5 는 다르다). 교사는 학생의 `model.template` 으로 같은 토큰을 읽는다. 교사는 학습 내내 학생 옆 메모리에 있다(Qwen3-1.7B FP32 약 7GB). 교사 `name` 이 로컬 디렉터리면 그 내용이 train 지문에 들어간다(`modeling/tuning/tuning_config.py` 의 `local_models`). 토큰마다 자기 차이만 가중치로 쓰고 뒤 토큰의 차이를 앞으로 할인해 더하지 않는다. MPS 에서 Qwen3-0.6B 를 Qwen3-1.7B 로 18 스텝(lr 5e-6, 샘플 프롬프트) 학습하자 held-out reverse_kl 이 1.65 에서 0.59 로, teacher_logp 가 -1.79 에서 -0.60 으로 움직였다.
+
+---
+
 ### llm_dpo: 선호 최적화
 
 **설명**: 건드리지 않은 기준 모델보다 `chosen` 을 `rejected` 보다 더 선호하도록 학습한다. 기준 모델의 로그 확률은 캐시한다.
@@ -908,13 +941,13 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | `modeling/tuning/data_parallel.py` | `training.devices` 프로세스 실행, 장치 배정, gradient 평균, 첫 프로세스의 진행 전달 | `llm_*`, `embedding_contrastive` |
 | `modeling/tuning/training_method.py` | 학습 방법 기반: 행 검사, 손실, 평가 | `llm_*`, `embedding_contrastive`, `evaluation_custom`, `evaluation_decision` |
 | `modeling/tuning/tuning_backbone.py` | 모델 카탈로그 기반: 로드, 저장, 학습 가중치 | `llm_*`, `embedding_contrastive`, `evaluation_*`(wakeword 제외) |
-| `modeling/tuning/tuning_config.py` | 백본, 행, 최적화 설정(`gradient_checkpointing` 포함), LoRA 어댑터와 QLoRA `quantize` 키 | `llm_*`, `embedding_contrastive`, `tts_*` |
+| `modeling/tuning/tuning_config.py` | 백본, 행, 최적화 설정(`gradient_checkpointing` 포함), LoRA 어댑터와 QLoRA `quantize` 키, 지문에 들어가는 추가 로컬 모델(`local_models`) | `llm_*`, `embedding_contrastive`, `tts_*` |
 | `modeling/tuning/row_sources.py` | 행 소스 레지스트리(`delimited`, `huggingface`, `jevbench`, `local_jsonl`) | 전체 레시피 |
 | `modeling/llm/__init__.py` | LLM 패밀리 패키지 | `llm_*` |
 | `modeling/llm/llm_pipeline.py` | LLM 학습 레시피 9종 등록 | `llm_*` |
 | `modeling/llm/llm_config.py` | 레시피별 config 와 head 검사 | `llm_*` |
 | `modeling/llm/methods/__init__.py` | LLM 학습 방법 패키지 | `llm_*` |
-| `modeling/llm/methods/llm_method.py` | 대화를 토큰 id 와 채점 위치로 | `llm_sft`, `llm_instruction`, `llm_dpo`, `llm_orpo`, `llm_simpo`, `llm_grpo`, `llm_decision_*`, `llm_quantize` |
+| `modeling/llm/methods/llm_method.py` | 대화를 토큰 id 와 채점 위치로, 샘플링한 완성문의 채점 표시와 토큰별 로그 확률 | `llm_sft`, `llm_instruction`, `llm_dpo`, `llm_orpo`, `llm_simpo`, `llm_grpo`, `llm_distill`, `llm_decision_*`, `llm_quantize` |
 | `modeling/llm/models/__init__.py` | `LLM_BACKBONES` 카탈로그 | `llm_*`, `evaluation_*` |
 | `modeling/llm/models/llm_backbone.py` | LLM 백본 기반: 채팅 렌더링, 로짓, 생성, QLoRA 4/8bit 로드와 병합 저장, 양자화된 체크포인트 로드 | `llm_*`, `data_synthetic`, `evaluation_benchmark`, `evaluation_decision` |
 | `modeling/llm/models/backbone_config.py` | LLM `model:` 섹션 | `llm_*`, `evaluation_*` |

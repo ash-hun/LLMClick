@@ -178,7 +178,7 @@ $ curl -s -X POST http://localhost:8000/api/config/validate -H 'content-type: ap
   -d '{"pipeline":{"recipe":"llm_sft","name":"x"},"model":{"architecture":"nope","name":"Qwen/Qwen3.5-0.8B","revision":"2fc06364715b967f1860aea9cf38778875588b17"},"data":{"sources":[{"name":"local_jsonl","path":"samples/llm_sft.jsonl"}]}}'
 {"detail":"1 validation error for SFTConfig\n  Value error, Unknown architecture 'nope'; registered: ['hybrid', 'transformer'] [type=value_error, input_value={'recipe': 'llm_sft', 'na...mples/llm_sft.jsonl'}]}}, input_type=dict] ..."}
 $ curl -s -X POST http://localhost:8000/api/config/validate -H 'content-type: application/json' -d '{"pipeline":{"name":"x"}}'
-{"detail":"pipeline.recipe is None; registered: ['data_speech', 'data_synthetic', 'embedding_contrastive', 'evaluation_benchmark', 'evaluation_compare', 'evaluation_custom', 'evaluation_decision', 'evaluation_embedding', 'evaluation_wakeword', 'llm_decision_cispo', 'llm_decision_sft', 'llm_dpo', 'llm_grpo', 'llm_instruction', 'llm_kto', 'llm_orpo', 'llm_quantize', 'llm_sft', 'llm_simpo', 'tts_piper', 'tts_qwen', 'wakeword']"}
+{"detail":"pipeline.recipe is None; registered: ['data_speech', 'data_synthetic', 'embedding_contrastive', 'evaluation_benchmark', 'evaluation_compare', 'evaluation_custom', 'evaluation_decision', 'evaluation_embedding', 'evaluation_wakeword', 'llm_decision_cispo', 'llm_decision_sft', 'llm_distill', 'llm_dpo', 'llm_grpo', 'llm_instruction', 'llm_kto', 'llm_orpo', 'llm_quantize', 'llm_sft', 'llm_simpo', 'tts_piper', 'tts_qwen', 'wakeword']"}
 ```
 
 #### 특이사항
@@ -573,7 +573,7 @@ GET /api/system/recipes
 
 레시피 키(`pipeline.recipe` 값)마다 객체 하나. 모든 레시피에 `stages` 가 있고, 나머지 필드는 레시피가 정한다.
 
-LLM, Embedding 계열 레시피(`llm_sft`, `llm_instruction`, `llm_dpo`, `llm_kto`, `llm_orpo`, `llm_simpo`, `llm_grpo`, `llm_decision_sft`,
+LLM, Embedding 계열 레시피(`llm_sft`, `llm_instruction`, `llm_dpo`, `llm_kto`, `llm_orpo`, `llm_simpo`, `llm_grpo`, `llm_distill`, `llm_decision_sft`,
 `llm_decision_cispo`, `llm_quantize`, `embedding_contrastive`)의 필드:
 
 | 필드 | 타입 | 널 허용 | 설명 |
@@ -615,7 +615,7 @@ Wake word 레시피(`wakeword`)의 필드: `stages`(`["data","features","train",
 
 ```bash
 $ curl -s http://localhost:8000/api/system/recipes
-{"embedding_contrastive":{"stages":["data","train","validate"],"architecture":["bi_encoder"],"source":["delimited","huggingface","jevbench","local_jsonl"],"method_keys":["query_instruction","temperature"]},"llm_dpo":{"stages":["data","train","validate"],"architecture":["hybrid","transformer"],"source":["delimited","huggingface","jevbench","local_jsonl"],"method_keys":["beta"]},"llm_grpo":{...,"method_keys":["group_size","max_new_tokens","reward","temperature"],"reward":["contains","exact_match","last_number"]},"llm_decision_sft":{...,"method_keys":["calibration","eval_think","head_lr","max_think","think_fraction"],"head":["pointer","readout"]},"llm_decision_cispo":{...,"head":["pointer","readout"]},"llm_instruction":{...,"method_keys":["system"]},"llm_sft":{...,"method_keys":[]},"tts_piper":{"stages":["data","train","validate"],"quality":["high","medium"],"source":["delimited","huggingface","jevbench","local_jsonl"]},"wakeword":{"stages":["data","features","train","validate"],"source":["delimited","huggingface","jevbench","local_jsonl"]},"data_speech":{"stages":["seeds","prompts","synthesize","verify","select"],...}}
+{"embedding_contrastive":{"stages":["data","train","validate"],"architecture":["bi_encoder"],"source":["delimited","huggingface","jevbench","local_jsonl"],"method_keys":["query_instruction","temperature"]},"llm_distill":{"stages":["data","train","validate"],"architecture":["hybrid","transformer"],"source":["delimited","huggingface","jevbench","local_jsonl"],"method_keys":["max_new_tokens","samples","teacher","temperature"]},"llm_dpo":{"stages":["data","train","validate"],"architecture":["hybrid","transformer"],"source":["delimited","huggingface","jevbench","local_jsonl"],"method_keys":["beta"]},"llm_grpo":{...,"method_keys":["group_size","max_new_tokens","reward","temperature"],"reward":["contains","exact_match","last_number"]},"llm_decision_sft":{...,"method_keys":["calibration","eval_think","head_lr","max_think","think_fraction"],"head":["pointer","readout"]},"llm_decision_cispo":{...,"head":["pointer","readout"]},"llm_instruction":{...,"method_keys":["system"]},"llm_sft":{...,"method_keys":[]},"tts_piper":{"stages":["data","train","validate"],"quality":["high","medium"],"source":["delimited","huggingface","jevbench","local_jsonl"]},"wakeword":{"stages":["data","features","train","validate"],"source":["delimited","huggingface","jevbench","local_jsonl"]},"data_speech":{"stages":["seeds","prompts","synthesize","verify","select"],...}}
 ```
 
 #### 특이사항

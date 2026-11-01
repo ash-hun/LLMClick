@@ -14,6 +14,7 @@ RECIPES = {  # recipe -> (sample file, method section, metric the validate stage
     "llm_simpo": ("llm_dpo", {"beta": 2.0, "gamma": 1.0}, "accuracy"),
     "llm_kto": ("llm_kto", {"beta": 0.1}, "gap"),
     "llm_grpo": ("llm_grpo", {"group_size": 3, "max_new_tokens": 3, "reward": {"name": "contains"}}, "reward"),
+    "llm_distill": ("llm_grpo", {"max_new_tokens": 3, "teacher": {"architecture": "transformer"}}, "reverse_kl"),
     "embedding_contrastive": ("embedding_contrastive", {"temperature": 0.1}, "mrr"),
 }
 SFT_ROWS = [json.loads(line) for line in Path("samples/llm_sft.jsonl").read_text().splitlines()][:12]
@@ -25,12 +26,15 @@ TEXTS = ["Good evening, sir.", "All systems are online.", "Shall I run the diagn
 
 
 def raw(recipe: str, model: Path, out: Path, **training: Any) -> dict[str, Any]:
-    sample, method, _ = RECIPES[recipe]
+    sample, shared, _ = RECIPES[recipe]
+    method = json.loads(json.dumps(shared))  # a copy: tests change it, and RECIPES is shared
+    if "teacher" in method:
+        method["teacher"]["name"] = str(model)  # `llm_distill`: the tiny model teaches itself unless a test says otherwise
     return {
         "pipeline": {"recipe": recipe, "name": "tiny", "seed": 3, "output_dir": str(out), "device": "cpu"},
         "model": {"architecture": "bi_encoder" if recipe.startswith("embedding") else "transformer", "name": str(model)},
         "data": {"sources": [{"name": "local_jsonl", "path": f"samples/{sample}.jsonl"}], "validation": 0.2},
-        "method": dict(method),  # a copy: tests change it, and RECIPES is shared
+        "method": method,
         "training": {"lr": 1e-3, "batch_size": 4, "max_length": 64, "max_steps": 3, **training},
     }
 

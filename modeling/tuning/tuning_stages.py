@@ -60,9 +60,10 @@ class TuneStage(TrainStage[TuningConfig]):
     def identity(self) -> Any:
         """Local weights count by content, not by path: `model.init` usually goes through an experiment's link,
         which points somewhere else once that experiment is rebuilt."""
-        model = self.config.model
+        model, others = self.config.model, self.config.local_models()
         return [super().identity(), directory_signature(Path(model.init)) if model.init else None,
-                directory_signature(Path(model.name)), self.config.versions()]
+                directory_signature(Path(model.name)), self.config.versions(),
+                *([[directory_signature(Path(path)) for path in others]] if others else [])]
 
     def train(self, workdir: Path, inputs: dict[str, Outputs]) -> Outputs:
         checkpoint, summary = workdir / CHECKPOINT, workdir / SUMMARY
