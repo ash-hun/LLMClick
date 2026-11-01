@@ -37,6 +37,7 @@ released checkpoints do not load here.
 ```
 LLMClick/
 ├── compose.yaml                  # `docker compose up -d`: the API in a container, tagged by commit
+├── compose.gpu.yaml              #   added with -f on an NVIDIA GPU server
 ├── main.py                       # `uvicorn main:app` from the repository root; the app itself is core/api/api_app.py
 ├── configs/                      # one YAML = one custom model; a directory per family (llm/, embedding/)
 ├── samples/                      # tiny rows per recipe so the shipped configs run offline
@@ -471,11 +472,36 @@ curl -X POST localhost:8000/api/jobs -H 'content-type: application/json' \
 The `llm/` and `embedding/` configs ship as pilots: sample rows from `samples/` and `max_steps: 4`. Point
 `data.sources` at your rows and remove `max_steps` for a real run.
 
-Docker: `IMAGE_TAG=$(git rev-parse --short HEAD) docker compose up -d --build`.
+Docker: `IMAGE_TAG=$(git rev-parse --short HEAD) docker compose up -d --build`. The API listens on the host's
+loopback only; from another machine, `ssh -L 8000:localhost:8000 <server>`.
 
 Installed as a package (`uv build`, then `pip install dist/llmclick-*.whl`), `llmclick` runs from any directory:
 config paths, `output_dir` and `environment/.env` are relative to the working directory, and `LLMCLICK_ENV` names a
 different settings file.
+
+### NVIDIA GPU server
+
+The locked torch 2.14.0 is built against CUDA 13.0: the server needs a Linux x86_64 or aarch64 host, an NVIDIA
+driver of 580 or newer (`nvidia-smi` shows it) and an Ampere or newer GPU. Qwen3.5's linear-attention layers run
+through flash-linear-attention's Triton kernels, so the hybrid configs (`llm/sft.yaml` and the other Qwen3.5 ones)
+need that GPU; on a CPU-only Linux host only the `architecture: transformer` configs train.
+
+On a VM with Docker and nvidia-container-toolkit:
+
+```bash
+git clone https://github.com/ash-hun/LLMClick.git && cd LLMClick
+IMAGE_TAG=$(git rev-parse --short HEAD) docker compose -f compose.yaml -f compose.gpu.yaml up -d --build
+docker exec llmclick python -c "import torch; print(torch.cuda.is_available())"
+```
+
+On a provider that hands you a container instead (no Docker inside), run uv directly: install it
+(`curl -LsSf https://astral.sh/uv/install.sh | sh`), then `uv sync --frozen` and the Quick start commands.
+`environment/.env` is optional; copy the sample to set `HF_TOKEN`, `API_TOKEN` or the teacher keys.
+
+Not in the image: the `eval` and `data` extras (`uv sync --frozen --extra eval --extra data` for the benchmark,
+embedding and synthetic-data configs), and `tts_qwen`, which runs on MLX and needs Apple silicon. The recorded
+audio the TTS and wake word configs read (`recordings/`) is not in the repository, and `output/` stays on the
+machine that made it: copy either over when a config needs it.
 
 ### Apple silicon
 

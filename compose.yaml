@@ -7,7 +7,9 @@ services:
     image: llmclick:${IMAGE_TAG:?set IMAGE_TAG to the git commit}
     container_name: llmclick
     env_file:
-      - environment/.env
+      # optional: a fresh clone runs on the defaults; copy environment/.env.sample to set tokens and keys
+      - path: environment/.env
+        required: false
     environment:
       LOG_FORMAT: json   # collectors read it; a value's newline cannot forge a log line
     volumes:
@@ -15,20 +17,14 @@ services:
       - ./output:/app/output
       - llmclick-hf-cache:/root/.cache/huggingface
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"   # loopback only: on a remote server, reach it through ssh -L 8000:localhost:8000
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 30s
       timeout: 5s
       retries: 3
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu]
+    # GPU: add compose.gpu.yaml (docker compose -f compose.yaml -f compose.gpu.yaml up -d)
 
 volumes:
   llmclick-hf-cache:

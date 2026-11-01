@@ -794,7 +794,8 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | `environment/piper/uv.lock` | Piper 환경 잠금 파일 | `tts_piper`, `data_speech` |
 | `environment/piper/setup.sh` | `PIPER_PYTHON` 환경 구성 | `tts_piper`, `data_speech` |
 | `environment/Dockerfile` | 서비스 이미지 빌드 | 전체 |
-| `compose.yaml` | 커밋 태그 이미지로 서비스 실행, `/health` 헬스체크 | 전체 |
+| `compose.yaml` | 커밋 태그 이미지로 서비스 실행, `/health` 헬스체크, 포트는 loopback 만 | 전체 |
+| `compose.gpu.yaml` | NVIDIA GPU 를 서비스에 붙이는 compose 덧붙임 파일 | 전체 |
 | `environment/.env.sample` | 환경 변수 예시 | 전체 |
 
 공통 모듈의 테스트: 단위 `tests/unit/test_framework_file_store.py`, `tests/unit/test_framework_logger.py`, `tests/unit/test_framework_recipe_registry.py`, `tests/unit/test_framework_settings.py`, `tests/unit/test_framework_modeling_stages.py`, 통합 `tests/integ/test_framework.py`. 테스트 보조: `tests/conftest.py`(외부 접속 차단, 작은 무작위 LM, 공유 fixture), `tests/recipe_inputs.py`(레시피별 config 와 입력 행), `tests/recipe_fakes.py`(가짜 wandb, lm-evaluation-harness), `tests/speech_fakes.py`(가짜 Piper, Whisper, openWakeWord 전처리).
