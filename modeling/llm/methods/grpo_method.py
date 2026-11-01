@@ -1,54 +1,20 @@
 """Group Relative Policy Optimization: sample a group of completions per prompt, score them with a reward function,
 and raise the likelihood of the ones that beat their own group's average."""
 
-import re
 from typing import Any
 
 import torch
 from pydantic import Field
 
 from modeling.llm.methods.llm_method import Encoded, LLMMethod, Reuse, conversation
-from modeling.tuning.training_method import Row, chunks
 from modeling.llm.models.llm_backbone import LLMBackbone
-from modeling.modeling_config import Keyed
-from core.recipe_registry import Registry
+from modeling.tuning.training_method import Row, chunks
+from modeling.llm.methods.grpo_reward import REWARDS
 from core.config.config_schema import Section
 from core.progress_reporter import Progress
+from modeling.modeling_config import Keyed
 
-REWARDS = Registry("reward")  # (completion text, row, params) -> float
 EPSILON = 1e-4
-NUMBER = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
-
-
-def normalized(text: str) -> str:
-    return " ".join(text.lower().split())
-
-
-@REWARDS.register("exact_match")
-def exact_match(completion: str, row: Row, params: dict[str, Any]) -> float:
-    """1 when the completion is the row's `answer` (case and spacing ignored)."""
-    return float(normalized(completion) == normalized(str(row["answer"])))
-
-
-@REWARDS.register("contains")
-def contains(completion: str, row: Row, params: dict[str, Any]) -> float:
-    """1 when the row's `answer` appears in the completion."""
-    return float(normalized(str(row["answer"])) in normalized(completion))
-
-
-def last_number(text: str) -> float | None:
-    found = NUMBER.findall(text)
-    return float(found[-1].replace(",", "")) if found else None
-
-
-@REWARDS.register("last_number")
-def last_number_match(completion: str, row: Row, params: dict[str, Any]) -> float:
-    """1 when the last number in the completion equals the last number in the row's `answer`; this reads worked
-    solutions that end with their result, such as GSM8K's "... #### 18"."""
-    expected = last_number(str(row["answer"]))
-    if expected is None:
-        raise ValueError("answer holds no number")
-    return float(last_number(completion) == expected)
 
 
 class GRPO(LLMMethod):

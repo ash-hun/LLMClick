@@ -9,9 +9,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends git build-essen
 WORKDIR /app
 ENV UV_PROJECT_ENVIRONMENT=/app/.venv PATH="/app/.venv/bin:$PATH"
 
-# dependency layer: only the lock and project metadata
+# dependency layer: only the lock and project metadata. EXTRAS names optional groups, e.g. "quantize" (compose.gpu.yaml)
+ARG EXTRAS=""
 COPY pyproject.toml uv.lock README.md ./
-RUN uv sync --frozen --no-dev --no-install-project
+RUN uv sync --frozen --no-dev --no-install-project $(for extra in $EXTRAS; do printf -- '--extra %s ' "$extra"; done)
 
 # the Piper program (tts_piper, data_speech) in its own environment, at PIPER_PYTHON's default path
 COPY environment/piper/pyproject.toml environment/piper/uv.lock environment/piper/setup.sh ./environment/piper/
@@ -24,6 +25,6 @@ COPY evaluation/ ./evaluation/
 COPY data/ ./data/
 COPY samples/ ./samples/
 COPY configs/ ./configs/
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev $(for extra in $EXTRAS; do printf -- '--extra %s ' "$extra"; done)
 
 CMD ["llmclick", "serve", "--host", "0.0.0.0", "--port", "8000"]

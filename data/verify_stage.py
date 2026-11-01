@@ -12,7 +12,7 @@ from data.respond_stage import CANDIDATES
 from data.select_stage import decision_row
 from data.row_store import Row, cached, keep, key, normalized, read_rows, trail, write_rows
 from data.teacher_client import Teacher, teacher_from
-from modeling.llm.methods.grpo_method import REWARDS, last_number
+from modeling.llm.methods.grpo_reward import REWARDS, last_number
 
 VERIFIED = "verified.jsonl"
 REJECTED = "rejected.jsonl"

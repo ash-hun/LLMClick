@@ -1,0 +1,36 @@
+# GRPO with a reward made of parts: correctness, a format term and a length term, summed with their weights.
+# A `judge` part (a teacher scoring against a rubric) is shown commented out: it calls the teacher once per new
+# completion, group_size x batch_size calls a step, so start with the rule rewards.
+pipeline:
+  recipe: llm_grpo
+  name: grpo-weighted-qwen3.5-0.8b
+  seed: 20260920
+  output_dir: ./output
+
+model:
+  architecture: hybrid
+  name: Qwen/Qwen3.5-0.8B
+  revision: 2fc06364715b967f1860aea9cf38778875588b17
+
+data:
+  sources:
+    - name: local_jsonl
+      path: samples/llm_grpo.jsonl  # rows: {"prompt": str | messages, "answer": ...}
+  validation: 0.1
+
+method:
+  group_size: 4
+  max_new_tokens: 16
+  reward:
+    name: weighted
+    parts:
+      - {name: contains, weight: 1.0}
+      - {name: regex, pattern: "^\\S", weight: 0.2}       # starts with the answer, not with blank space
+      - {name: length, max_chars: 40, weight: 0.2}         # full marks up to 40 characters, none from 80
+      # - {name: judge, weight: 0.5, rubric: "Score how directly the answer addresses the question.",
+      #    teacher: {name: anthropic, model: claude-haiku-4-5}}
+
+training: {epochs: 1, lr: 2.0e-6, batch_size: 2, accumulation: 2, max_length: 256, max_steps: 4}
+
+validation:
+  min: {reward: 0.0}

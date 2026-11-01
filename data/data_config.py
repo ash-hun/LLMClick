@@ -132,12 +132,13 @@ class SyntheticConfig(SeedConfig):
     def _registered(self) -> "SyntheticConfig":
         from data.evolve_stage import EVOLVERS
         from data.teacher_client import TEACHERS
-        from modeling.llm.methods.grpo_method import REWARDS
+        from modeling.llm.methods.grpo_reward import REWARDS, reward_names
         if self.evolve is not None:
             unknown = [name for name in self.evolve.operators if name not in EVOLVERS]
             if unknown:
                 raise ValueError(f"Unknown evolve operators {unknown}; registered: {EVOLVERS.names()}")
-        REWARDS.check(*([self.verify.reward.name] if self.verify.reward is not None else []))
+        if self.verify.reward is not None:
+            REWARDS.check(*reward_names(self.verify.reward.name, self.verify.reward.params))
         if self.verify.judge is not None and self.verify.judge.teacher is not None and self.verify.judge.teacher.name not in TEACHERS:
             raise ValueError(f"Unknown judge teacher {self.verify.judge.teacher.name!r}; registered: {TEACHERS.names()}")
         if (self.select.assemble == "decision" or self.verify.schema_recipe == "llm_decision_sft") and self.select.decision is None:

@@ -2,6 +2,9 @@
 # The host needs the NVIDIA driver (580 or newer for the CUDA 13 torch wheels) and nvidia-container-toolkit.
 services:
   llmclick:
+    build:
+      args:
+        EXTRAS: quantize   # bitsandbytes and llm-compressor: QLoRA and llm_quantize run on CUDA only
     deploy:
       resources:
         reservations:

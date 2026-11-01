@@ -22,6 +22,8 @@ class Backbone:
     # The one place the dtype is decided; a catalog entry that loads quantized or bf16 weights overrides `load`.
     dtype: ClassVar[torch.dtype] = torch.float32
     version: ClassVar[int] = 1  # bump when this class's code changes what the same config trains
+    quantizable: ClassVar[bool] = False  # whether `training.adapter.quantize` (QLoRA) is offered
+    quantize: str | None = None  # set from `training.adapter.quantize`; applies to the base weights only, never a checkpoint
     model: Any
     tokenizer: Any
     device: Device

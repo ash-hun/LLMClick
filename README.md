@@ -11,7 +11,10 @@ what is already built, shows progress, and never hands on a trained model that h
 | LLM | `llm_sft` | conversations, loss on every assistant turn | `transformer` (Qwen3-0.6B, 1.7B), `hybrid` (Qwen3.5-0.8B, 2B) |
 | LLM | `llm_instruction` | instruction/input/output records | same |
 | LLM | `llm_dpo` | chosen/rejected preference pairs | same |
-| LLM | `llm_grpo` | prompts scored by a reward function | same |
+| LLM | `llm_orpo` | the same pairs: SFT on chosen plus an odds-ratio term, no reference model | same |
+| LLM | `llm_simpo` | the same pairs: a margin on the mean token log-probability, no reference model | same |
+| LLM | `llm_grpo` | prompts scored by a reward function (answer match, regex, length, a teacher judge, or a weighted sum) | same |
+| LLM | `llm_quantize` | nothing: a trained checkpoint or Hub model quantized (AWQ, GPTQ, W8A8, FP8, bitsandbytes NF4/INT8), its held-out loss against the base | same |
 | LLM | `llm_decision_sft` | decision questions: a head scores the options (Jev, jeff, Jeeves stage 1) | same, plus `model.head`: `readout` or `pointer` |
 | LLM | `llm_decision_cispo` | the same questions with reasoning before the decision, by reinforcement (Jeeves stage 2) | same |
 | Embedding | `embedding_contrastive` | query/positive/negative triples (InfoNCE) | `bi_encoder` (Qwen3-Embedding-0.6B) |
@@ -178,8 +181,12 @@ the same job, and `docs/api_spec.md` describes every endpoint.
 | `llm/sft_transformer.yaml` | the same recipe on Qwen3-0.6B (transformer) |
 | `llm/instruction.yaml` | instruction tuning of Qwen3.5-0.8B |
 | `llm/dpo.yaml` | DPO of Qwen3.5-0.8B on preference pairs |
+| `llm/orpo.yaml`, `llm/simpo.yaml` | ORPO and SimPO of Qwen3.5-0.8B on the DPO pairs |
 | `llm/sft_lora.yaml` | the SFT recipe with a LoRA adapter instead of full fine-tuning |
+| `llm/sft_qlora.yaml` | the SFT recipe on Qwen3-1.7B with QLoRA: 4-bit base, LoRA adapter (CUDA, `--extra quantize`) |
 | `llm/grpo.yaml` | GRPO of Qwen3.5-0.8B with the `exact_match` reward |
+| `llm/grpo_weighted.yaml` | GRPO with a weighted reward: answer match, a format regex and a length term |
+| `llm/quantize_awq.yaml` | 4-bit AWQ of Qwen3-0.6B with llm-compressor and the loss it costs (CUDA, `--extra quantize`) |
 | `llm/grpo_gsm8k.yaml` | GRPO on GSM8K word problems from the Hub with the `last_number` reward |
 | `llm/decision_readout.yaml` | one-pass decision model: full fine-tuning, readout head (Jev, jeff) |
 | `llm/decision_pointer.yaml` | reasoning decision model, stage 1: LoRA, pointer head, reasoning chains as context (Jeeves SFT) |
@@ -398,6 +405,9 @@ pipeline:
 | `llm_sft` | `messages` | `loss`, `perplexity` |
 | `llm_instruction` | `instruction`, `input`?, `output` | `loss`, `perplexity` |
 | `llm_dpo` | `prompt`, `chosen`, `rejected` | `accuracy` (chosen more likely than rejected), `margin` |
+| `llm_orpo` | the same | `accuracy`, `margin` (log-odds of chosen over rejected) |
+| `llm_simpo` | the same | `accuracy`, `margin` (mean token log-probability of chosen over rejected) |
+| `llm_quantize` | `messages` | `loss`, `perplexity`, `base_loss`, `loss_delta` (quantized minus base), `size_mb` |
 | `llm_grpo` | `prompt` + what the reward reads (`answer`) | `reward` (greedy completion) |
 | `llm_decision_sft` | `state`, `questions` (Jev records) or `state`, `question`, `label` (one question per row) | `accuracy`, `nll`, `ece` |
 | `llm_decision_cispo` | same | `accuracy`, `nll`, `ece`, `think_accuracy` (after reasoning) |
@@ -419,6 +429,16 @@ those plus the linear-attention projections) unless `targets` names others. The 
 weights when the checkpoint is written, so a LoRA checkpoint and a fully trained one load the same way: a plain
 `save_pretrained` directory at `output/<experiment>/train/checkpoint/` (and, once validation passed, at
 `output/<experiment>/validate/checkpoint`).
+
+`quantize: nf4` (or `int8`) in the adapter section is QLoRA: the frozen base weights load in 4 or 8 bits with
+bitsandbytes, which needs a CUDA GPU and `uv sync --extra quantize` (`compose.gpu.yaml` builds the image with it).
+The checkpoint is still a plain full-precision model: the adapter is merged into the base reloaded in FP32 on the
+CPU, never into the 4-bit weights.
+
+```yaml
+training:
+  adapter: {name: lora, r: 16, alpha: 32, quantize: nf4}
+```
 
 ### Decision recipes
 
@@ -728,7 +748,7 @@ training: {adapter: {name: lora, r: 16, alpha: 32}}
 ### A reward for `llm_grpo`
 
 ```python
-@REWARDS.register("json_valid")                 # modeling/llm/methods/grpo_method.py
+@REWARDS.register("json_valid")                 # modeling/llm/methods/grpo_reward.py
 def json_valid(completion: str, row: dict, params: dict) -> float: ...
 ```
 

@@ -1,4 +1,4 @@
-"""The tuning family (`llm_sft`, `llm_instruction`, `llm_dpo`, `llm_grpo`, `embedding_contrastive`) end to end: what every recipe shares."""
+"""The tuning family (`llm_sft`, `llm_instruction`, `llm_dpo`, `llm_orpo`, `llm_simpo`, `llm_grpo`, `embedding_contrastive`) end to end: what every recipe shares."""
 
 import json
 from typing import Any
@@ -52,6 +52,19 @@ def test_adapter_config_rules(tiny_model: Path, tmp_path: Path) -> None:
     assert full.fingerprint("train") != lora.fingerprint("train") and full.fingerprint("data") == lora.fingerprint("data")
     with pytest.raises(ValueError, match="Target modules"):
         pipeline_runner.build(raw("llm_sft", tiny_model, tmp_path, adapter={})).run()  # GPT-2 has no q_proj
+
+
+def test_qlora_key_keeps_earlier_fingerprints_and_needs_an_llm(tiny_model: Path, tmp_path: Path) -> None:
+    from modeling.tuning.tuning_config import AdapterConfig
+    lora = {"name": "lora", "targets": ["c_attn"]}
+    assert "quantize" not in AdapterConfig(**lora).model_dump()
+    plain = pipeline_runner.build(raw("llm_sft", tiny_model, tmp_path, adapter=lora))
+    qlora = pipeline_runner.build(raw("llm_sft", tiny_model, tmp_path, adapter={**lora, "quantize": "nf4"}))
+    assert plain.fingerprint("train") != qlora.fingerprint("train")
+    with pytest.raises(ValueError, match="cannot load quantized weights"):
+        pipeline_runner.build(raw("embedding_contrastive", tiny_model, tmp_path, adapter={**lora, "quantize": "nf4"}))
+    with pytest.raises(ValueError, match="needs a CUDA device"):
+        qlora.run()
 
 
 def test_training_change_reuses_the_data_stage(tiny_model: Path, tmp_path: Path) -> None:

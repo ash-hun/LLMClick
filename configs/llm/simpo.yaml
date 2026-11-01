@@ -1,0 +1,27 @@
+# Simple Preference Optimization: the mean token log-probability of `chosen` must beat that of `rejected` by a margin.
+# The mean rather than the sum keeps long answers from winning by length, and there is no reference model.
+pipeline:
+  recipe: llm_simpo
+  name: simpo-qwen3.5-0.8b
+  seed: 20260920
+  output_dir: ./output
+
+model:
+  architecture: hybrid              # Qwen3.5: linear-attention + full-attention layers, vision tower frozen
+  name: Qwen/Qwen3.5-0.8B
+  revision: 2fc06364715b967f1860aea9cf38778875588b17
+
+data:
+  sources:
+    - name: local_jsonl
+      path: samples/llm_dpo.jsonl   # the DPO rows: {"prompt": str | messages, "chosen": ..., "rejected": ...}
+  validation: 0.1
+
+method:
+  beta: 2.0                         # SimPO wants a larger beta than DPO: it scales a per-token mean, not a sum
+  gamma: 1.0                        # the margin; gamma / beta near 0.5 is the usual start
+
+training: {epochs: 1, lr: 5.0e-7, batch_size: 4, accumulation: 2, max_length: 512, max_steps: 4}
+
+validation:
+  min: {accuracy: 0.5}            # share of held-out pairs where chosen has the higher mean log-probability

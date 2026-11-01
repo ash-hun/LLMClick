@@ -3,9 +3,9 @@
 from typing import ClassVar
 
 from modeling.llm.llm_config import (DecisionCISPOConfig, DecisionSFTConfig, DPOConfig, GRPOConfig, InstructionConfig,
-                                 SFTConfig)
+                                     ORPOConfig, SFTConfig, SimPOConfig)
 from modeling.tuning.tuning_pipeline import TuningPipeline
-from modeling.llm.methods.grpo_method import REWARDS
+from modeling.llm.methods.grpo_reward import REWARDS
 from core.pipeline_runner import recipe
 
 
@@ -34,6 +34,18 @@ class InstructionPipeline(LLMPipeline):
 class DPOPipeline(LLMPipeline):
     kind: ClassVar[str] = "llm_dpo"
     config_class = DPOConfig
+
+
+@recipe
+class ORPOPipeline(LLMPipeline):
+    kind: ClassVar[str] = "llm_orpo"
+    config_class = ORPOConfig
+
+
+@recipe
+class SimPOPipeline(LLMPipeline):
+    kind: ClassVar[str] = "llm_simpo"
+    config_class = SimPOConfig
 
 
 @recipe
