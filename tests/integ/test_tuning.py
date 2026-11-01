@@ -1,4 +1,4 @@
-"""The tuning family (`llm_sft`, `llm_instruction`, `llm_dpo`, `llm_orpo`, `llm_simpo`, `llm_grpo`, `embedding_contrastive`) end to end: what every recipe shares."""
+"""The tuning family (`llm_*` training recipes, `embedding_contrastive`) end to end: what every recipe shares, adapters, data parallelism."""
 
 import json
 from typing import Any
@@ -280,3 +280,46 @@ def test_eval_every_records_held_out_metrics_in_the_history(tiny_model: Path, tm
     assert [sorted(k for k in event if k.startswith("eval/")) for event in log] == [[], [], ["eval/accuracy", "eval/margin"]]
     stage = pipeline_runner.build(raw("llm_dpo", tiny_model, tmp_path, eval_every=3, eval_rows=8)).stages["train"]
     assert stage.history(result["stages"]["train"])[-1][1].keys() >= {"train/loss", "train/accuracy", "eval/accuracy"}
+
+def parallel_weights(result: dict[str, Any]) -> dict[str, torch.Tensor]:
+    from safetensors.torch import load_file
+    return load_file(Path(result["stages"]["train"]["checkpoint"]) / "model.safetensors")
+
+
+def test_two_processes_train_the_weights_one_process_trains(tiny_model: Path, tmp_path: Path) -> None:
+    one = pipeline_runner.build(raw("llm_dpo", tiny_model, tmp_path, max_steps=2)).run()
+    progress = StateProgress()
+    two = pipeline_runner.build(raw("llm_dpo", tiny_model, tmp_path, max_steps=2, devices=2), progress).run()
+    single, parallel = parallel_weights(one), parallel_weights(two)
+    assert all(torch.allclose(single[name], parallel[name], atol=1e-5) for name in single)
+    log = [json.loads(line) for line in (Path(two["stages"]["train"]["run"]) / "training.jsonl").read_text().splitlines()]
+    first = [json.loads(line) for line in (Path(one["stages"]["train"]["run"]) / "training.jsonl").read_text().splitlines()]
+    assert [event["step"] for event in log] == [1, 2] and log[0]["loss"] == pytest.approx(first[0]["loss"], abs=1e-5)
+    assert two["stages"]["validate"]["passed"] is True and progress.snapshot()["stages"]["train"] == "done"
+
+
+def test_a_cancelled_job_stops_every_process(tiny_model: Path, tmp_path: Path) -> None:
+    import multiprocessing
+    from core.progress_reporter import Cancelled
+
+    class CancelInTraining(StateProgress):
+        def update(self, done: int, total: int | None = None, note: str = "") -> None:
+            if self.state["current"] == "train" and done >= 1:
+                self.cancel()
+            super().update(done, total, note)
+
+    with pytest.raises(Cancelled):
+        pipeline_runner.build(raw("llm_dpo", tiny_model, tmp_path, max_steps=40, devices=2), CancelInTraining()).run()
+    assert not [child for child in multiprocessing.active_children() if child.is_alive()]
+
+
+def test_devices_rules(tiny_model: Path, tmp_path: Path) -> None:
+    plain = pipeline_runner.build(raw("llm_sft", tiny_model, tmp_path))
+    assert "devices" not in plain.config.training.model_dump()
+    assert plain.fingerprint("train") != pipeline_runner.build(raw("llm_sft", tiny_model, tmp_path, devices=2)).fingerprint("train")
+    with pytest.raises(ValueError, match="exceeds batch_size"):
+        pipeline_runner.build(raw("llm_sft", tiny_model, tmp_path, devices=8))
+    config = raw("llm_sft", tiny_model, tmp_path, devices=2)
+    config["pipeline"]["device"] = "mps"
+    with pytest.raises(ValueError, match="needs CUDA GPUs"):
+        pipeline_runner.build(config).run()

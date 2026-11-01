@@ -684,7 +684,7 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 
 ### llm_sft: 지도 미세조정
 
-**설명**: 대화 데이터의 모든 assistant 턴에 교차 엔트로피를 걸어 LLM 을 미세조정한다. 하이브리드(Qwen3.5)와 일반 트랜스포머(Qwen3) 백본, 전체 미세조정, LoRA 어댑터, QLoRA(`training.adapter.quantize: nf4 | int8`), gradient checkpointing(`training.gradient_checkpointing`)을 config 로 고른다. QLoRA 는 모든 `llm_*` 학습 레시피에 같은 키로 적용된다.
+**설명**: 대화 데이터의 모든 assistant 턴에 교차 엔트로피를 걸어 LLM 을 미세조정한다. 하이브리드(Qwen3.5)와 일반 트랜스포머(Qwen3) 백본, 전체 미세조정, LoRA 어댑터, QLoRA(`training.adapter.quantize: nf4 | int8`), gradient checkpointing(`training.gradient_checkpointing`), 한 서버 여러 GPU 의 데이터 병렬 학습(`training.devices`)을 config 로 고른다. QLoRA 는 모든 `llm_*` 학습 레시피에 같은 키로 적용된다.
 
 **진입점**: `llmclick run configs/llm/sft.yaml`, `llmclick run configs/llm/sft_lora.yaml`, `llmclick run configs/llm/sft_qlora.yaml`, `llmclick run configs/llm/sft_transformer.yaml`, `POST /api/jobs`.
 
@@ -710,10 +710,11 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | 단위 | `tests/unit/test_llm_sft_training_loop.py` |
 | 단위 | `tests/unit/test_llm_sft_training_method.py` |
 | 단위 | `tests/unit/test_llm_sft_tuning_backbone.py` |
+| 단위 | `tests/unit/test_llm_sft_data_parallel.py` |
 | 통합 | `tests/integ/test_llm_sft.py` |
 | 통합 | `tests/integ/test_tuning.py` |
 
-**제약과 미구현**: 대화는 assistant 턴으로 끝나야 하고 모든 메시지는 허용된 role 과 문자열 content 를 가져야 한다(`modeling/llm/methods/sft_method.py`). decision 이 아닌 레시피에 `model.head` 를 주면 거부한다(`modeling/llm/llm_config.py`). QLoRA 는 CUDA 에서만 로드하고(다른 장치는 학습 전에 거부), 저장할 때 기준 모델을 `dtype`(FP32)로 CPU 에 다시 올려 어댑터를 병합하므로 체크포인트는 일반 모델이다. 병합하는 동안 기준 모델 전체가 호스트 메모리에 올라간다(`modeling/llm/models/llm_backbone.py`). QLoRA 는 `quantize` extra(bitsandbytes)가 필요하다. 키를 비워 두면 config 지문에서 빠져 이전 LoRA 실험의 지문이 그대로다(`modeling/tuning/tuning_config.py`). gradient checkpointing 은 non-reentrant 방식이라 LoRA, QLoRA 에서도 그대로 동작하고, 같은 config 의 가중치는 켜고 끈 것이 같다. Qwen3-0.6B LoRA, 1832 토큰 배치의 MPS 측정에서 forward activation 메모리가 9645MB 에서 2011MB 로 줄었다. 모든 `llm_*` 학습 레시피와 `embedding_contrastive` 에 같은 키로 적용된다(`modeling/tuning/tuning_backbone.py`).
+**제약과 미구현**: 대화는 assistant 턴으로 끝나야 하고 모든 메시지는 허용된 role 과 문자열 content 를 가져야 한다(`modeling/llm/methods/sft_method.py`). decision 이 아닌 레시피에 `model.head` 를 주면 거부한다(`modeling/llm/llm_config.py`). QLoRA 는 CUDA 에서만 로드하고(다른 장치는 학습 전에 거부), 저장할 때 기준 모델을 `dtype`(FP32)로 CPU 에 다시 올려 어댑터를 병합하므로 체크포인트는 일반 모델이다. 병합하는 동안 기준 모델 전체가 호스트 메모리에 올라간다(`modeling/llm/models/llm_backbone.py`). QLoRA 는 `quantize` extra(bitsandbytes)가 필요하다. 키를 비워 두면 config 지문에서 빠져 이전 LoRA 실험의 지문이 그대로다(`modeling/tuning/tuning_config.py`). gradient checkpointing 은 non-reentrant 방식이라 LoRA, QLoRA 에서도 그대로 동작하고, 같은 config 의 가중치는 켜고 끈 것이 같다. Qwen3-0.6B LoRA, 1832 토큰 배치의 MPS 측정에서 forward activation 메모리가 9645MB 에서 2011MB 로 줄었다. 모든 `llm_*` 학습 레시피와 `embedding_contrastive` 에 같은 키로 적용된다(`modeling/tuning/tuning_backbone.py`). `training.devices` 가 1보다 크면 train 단계가 장치마다 프로세스를 띄운다(CUDA 는 NCCL, CPU 는 gloo, MPS 는 거부). 각 프로세스가 배치를 `rows[rank::devices]` 로 나눠 받고, 손실에 몫의 행 수 비율을 곱한 뒤 gradient 를 평균한다. 그래서 행 평균 손실(DPO, ORPO, SimPO)은 단일 프로세스와 같은 가중치가 나오고(CPU 2 프로세스, DPO 로 확인), 토큰 평균(SFT, instruction, GRPO `loss_norm: token`)이나 배치 통계(KTO 의 KL 기준점)를 쓰는 손실은 근사다. 준비(DPO, KTO 기준값)와 파일 쓰기, 중간 평가, 진행 보고는 첫 프로세스만 하고 진행과 스텝 지표는 큐로 부모에 전달한다. 취소하면 모든 프로세스를 멈춘다. 프로세스마다 모델 전체를 올리므로 한 장에 들어가는 모델만 빨라진다. NCCL 경로와 다중 프로세스 재개는 확인하지 않았다(`modeling/tuning/data_parallel.py`).
 
 ---
 
@@ -901,8 +902,9 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | `modeling/metric_tracker.py` | wandb 로 학습 지표와 평가 리포트 전송 | `llm_*`, `embedding_contrastive`, `tts_*`, `wakeword`, `evaluation_*` |
 | `modeling/tuning/__init__.py` | 프로세스 내 미세조정 패키지 | `llm_*`, `embedding_contrastive` |
 | `modeling/tuning/tuning_pipeline.py` | `TuningPipeline`: `data`, `train`, `validate` | `llm_*`, `embedding_contrastive` |
-| `modeling/tuning/tuning_stages.py` | `DataStage`, `TuneStage`, `MeasureStage` | `llm_*`, `embedding_contrastive` |
-| `modeling/tuning/training_loop.py` | 결정적 배치, 누적, 워밍업 후 선형 감쇠, 재개 스냅샷 | `llm_*`, `embedding_contrastive` |
+| `modeling/tuning/tuning_stages.py` | `DataStage`, `TuneStage`, `MeasureStage`, 한 프로세스나 여러 프로세스에서 같은 학습 본문 `tune` | `llm_*`, `embedding_contrastive` |
+| `modeling/tuning/training_loop.py` | 결정적 배치, 누적, 워밍업 후 선형 감쇠, 재개 스냅샷, 프로세스별 배치 몫과 gradient 평균 | `llm_*`, `embedding_contrastive` |
+| `modeling/tuning/data_parallel.py` | `training.devices` 프로세스 실행, 장치 배정, gradient 평균, 첫 프로세스의 진행 전달 | `llm_*`, `embedding_contrastive` |
 | `modeling/tuning/training_method.py` | 학습 방법 기반: 행 검사, 손실, 평가 | `llm_*`, `embedding_contrastive`, `evaluation_custom`, `evaluation_decision` |
 | `modeling/tuning/tuning_backbone.py` | 모델 카탈로그 기반: 로드, 저장, 학습 가중치 | `llm_*`, `embedding_contrastive`, `evaluation_*`(wakeword 제외) |
 | `modeling/tuning/tuning_config.py` | 백본, 행, 최적화 설정(`gradient_checkpointing` 포함), LoRA 어댑터와 QLoRA `quantize` 키 | `llm_*`, `embedding_contrastive`, `tts_*` |

@@ -65,7 +65,14 @@ class TrainingConfig(Section):
     eval_rows: int | None = Field(default=None, ge=1, description="How many held-out rows the in-training evaluation uses; null: all of them")
     adapter: AdapterConfig | None = Field(default=None, description="null trains every weight; set it to train LoRA")
     gradient_checkpointing: bool = Field(default=False, description="Recompute activations in the backward pass: less memory, about a third more compute")
-    added_keys: ClassVar[frozenset[str]] = frozenset({"gradient_checkpointing"})
+    devices: int = Field(default=1, ge=1, le=64, description="Data-parallel processes, one per GPU; each takes a share of every batch")
+    added_keys: ClassVar[frozenset[str]] = frozenset({"gradient_checkpointing", "devices"})
+
+    @model_validator(mode="after")
+    def _shares(self) -> "TrainingConfig":
+        if self.devices > self.batch_size:
+            raise ValueError(f"training.devices={self.devices} exceeds batch_size={self.batch_size}: some processes would get no rows")
+        return self
 
 
 class TuningValidationConfig(ValidationConfig):
