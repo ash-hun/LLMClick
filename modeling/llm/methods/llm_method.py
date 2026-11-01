@@ -62,9 +62,9 @@ class LLMMethod(TrainingMethod[LLMBackbone]):
     def encode_turns(self, backbone: LLMBackbone, messages: list[Message], tools: list[dict[str, Any]] | None = None) -> list[Encoded]:
         """Every assistant turn graded once, as the model sees the conversation when it writes that turn. Most
         templates render a turn the same in the middle of a conversation and at its end, and all turns share one
-        sequence. Some do not (Qwen3 opens an empty thinking block on the final turn only, which is also what its
-        generation prompt opens): such a turn becomes a sequence of its own that ends with it, or the model would learn
-        it after one prompt and be asked for it after another."""
+        sequence. Some do not: Qwen3 and Qwen3.5 open an empty thinking block on the final turn only, which is also
+        what their generation prompt opens. Such a turn becomes a sequence of its own that ends with it, or the model
+        would learn it after one prompt and be asked for it after another."""
         whole, apart = self.encoded_turns(backbone, messages, False, tools)
         return [whole, *(self.encode(backbone, messages[:turn + 1], last_only=True, tools=tools) for turn in apart)]
 

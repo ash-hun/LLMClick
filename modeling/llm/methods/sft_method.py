@@ -62,7 +62,7 @@ class SFT(LLMMethod):
     """Rows: {"messages": [{"role": "system"|"user"|"assistant"|"tool", "content": str, "tool_calls"?: [...],
     "reasoning_content"?: str}, ...], "tools"?: [...]} ending with an assistant turn. Tool results are context, never
     targets; reasoning is a target, written by the template where the model writes it (Qwen: a <think> block)."""
-    version: ClassVar[int] = 2  # 2: earlier assistant turns are graded under templates that mark only the final turn (Qwen3)
+    version: ClassVar[int] = 2  # 2: earlier assistant turns are graded under templates that mark only the final turn (Qwen3, Qwen3.5)
 
     def messages(self, row: Row) -> list[Message]:
         messages: list[Message] = row["messages"]
