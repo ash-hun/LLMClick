@@ -40,6 +40,19 @@ def prequantized(origin: Path) -> dict[str, Any] | None:
     return {}
 
 
+def local_snapshot(origin: str, revision: str | None) -> Path:
+    """A model as a directory of files: a local one as it is, a Hub one from the Hugging Face cache, downloaded if
+    missing. For tools that read the files rather than load the model (the GGUF converter, merging)."""
+    if Path(origin).is_dir():
+        return Path(origin)
+    from huggingface_hub import snapshot_download
+    from huggingface_hub.errors import LocalEntryNotFoundError
+    try:  # a model this run loaded is normally in the cache already; this also works offline
+        return Path(snapshot_download(origin, revision=revision, local_files_only=True))
+    except LocalEntryNotFoundError:
+        return Path(snapshot_download(origin, revision=revision))
+
+
 def quantization_config(scheme: str) -> Any:
     """bitsandbytes settings of a QLoRA base: NF4 with double quantization and bf16 compute, or LLM.int8()."""
     try:

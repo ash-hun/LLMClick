@@ -18,6 +18,7 @@ what is already built, shows progress, and never hands on a trained model that h
 | LLM | `llm_grpo` | prompts scored by a reward function (answer match, regex, length, a teacher judge, an `llm_reward` model, or a weighted sum) | same |
 | LLM | `llm_distill` | prompts the student answers itself, every token graded by a larger teacher with the same vocabulary (on-policy distillation) | same |
 | LLM | `llm_quantize` | nothing: a trained checkpoint or Hub model quantized (AWQ, GPTQ, W8A8, FP8, bitsandbytes NF4/INT8) or exported to GGUF, its held-out loss against the base | same |
+| LLM | `llm_merge` | nothing: fine-tunes of one base merged into one model (linear, slerp, task arithmetic, TIES, DARE), its held-out loss against the base | same |
 | LLM | `llm_decision_sft` | decision questions: a head scores the options (Jev, jeff, Jeeves stage 1) | same, plus `model.head`: `readout` or `pointer` |
 | LLM | `llm_decision_cispo` | the same questions with reasoning before the decision, by reinforcement (Jeeves stage 2) | same |
 | Embedding | `embedding_contrastive` | query/positive/negative triples (InfoNCE) | `bi_encoder` (Qwen3-Embedding-0.6B) |
@@ -195,6 +196,7 @@ the same job, and `docs/api_spec.md` describes every endpoint.
 | `llm/distill.yaml` | on-policy distillation of Qwen3-0.6B from Qwen3-1.7B on the sample prompts |
 | `llm/quantize_awq.yaml` | 4-bit AWQ of Qwen3-0.6B with llm-compressor and the loss it costs (CUDA, `--extra quantize`) |
 | `llm/quantize_gguf.yaml` | Qwen3-0.6B as a q8_0 GGUF file for llama.cpp and Ollama (`--extra quantize`, then `environment/llama_cpp/setup.sh`) |
+| `llm/merge_ties.yaml` | TIES merge of the `sft_transformer.yaml` and `distill.yaml` checkpoints of Qwen3-0.6B (run those first) |
 | `llm/grpo_gsm8k.yaml` | GRPO on GSM8K word problems from the Hub with the `last_number` reward |
 | `llm/decision_readout.yaml` | one-pass decision model: full fine-tuning, readout head (Jev, jeff) |
 | `llm/decision_pointer.yaml` | reasoning decision model, stage 1: LoRA, pointer head, reasoning chains as context (Jeeves SFT) |
@@ -418,6 +420,7 @@ pipeline:
 | `llm_reward` | `prompt`, `chosen`, `rejected` | `accuracy` (chosen scored higher), `margin` (mean score difference) |
 | `llm_kto` | `prompt`, `completion`, `label` | `desirable_logp`, `undesirable_logp`, `gap` (desirable minus undesirable, per token) |
 | `llm_quantize` | `messages` | `loss`, `perplexity`, `base_loss`, `loss_delta` (quantized minus base), `size_mb` |
+| `llm_merge` | `messages` | `loss`, `perplexity`, `base_loss`, `loss_delta` (merged minus base) |
 | `llm_grpo` | `prompt` + what the reward reads (`answer`) | `reward` (greedy completion) |
 | `llm_distill` | `prompt` | `teacher_logp` (teacher's mean token log-probability of the greedy answer), `reverse_kl` (student minus teacher on those tokens) |
 | `llm_decision_sft` | `state`, `questions` (Jev records) or `state`, `question`, `label` (one question per row) | `accuracy`, `nll`, `ece` |
