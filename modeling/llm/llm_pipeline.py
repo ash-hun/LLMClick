@@ -3,7 +3,8 @@
 from typing import ClassVar
 
 from modeling.llm.llm_config import (DecisionCISPOConfig, DecisionSFTConfig, DistillConfig, DPOConfig, GRPOConfig,
-                                     InstructionConfig, KTOConfig, ORPOConfig, RewardConfig, SFTConfig, SimPOConfig)
+                                     InstructionConfig, KTOConfig, ORPOConfig, PretrainConfig, RewardConfig, SFTConfig,
+                                     SimPOConfig)
 from modeling.tuning.tuning_pipeline import TuningPipeline
 from modeling.llm.methods.grpo_reward import REWARDS
 from core.pipeline_runner import recipe
@@ -22,6 +23,12 @@ class LLMPipeline(TuningPipeline):
 class SFTPipeline(LLMPipeline):
     kind: ClassVar[str] = "llm_sft"
     config_class = SFTConfig
+
+
+@recipe
+class PretrainPipeline(LLMPipeline):
+    kind: ClassVar[str] = "llm_pretrain"
+    config_class = PretrainConfig
 
 
 @recipe

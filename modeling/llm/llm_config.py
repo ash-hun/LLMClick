@@ -11,6 +11,7 @@ from modeling.llm.methods.decision.decision_sft_method import DecisionSFT
 from modeling.llm.methods.grpo_reward import REWARDS, reward_names
 from modeling.llm.methods.distill_method import Distill
 from modeling.llm.methods.reward_method import RewardModel
+from modeling.llm.methods.pretrain_method import Pretrain
 from modeling.llm.methods.grpo_method import GRPO
 from modeling.tuning.tuning_config import TuningConfig
 from modeling.llm.models.llm_backbone import LLMBackbone
@@ -54,6 +55,11 @@ class LLMConfig(TuningConfig):
 class SFTConfig(LLMConfig):
     method_class: ClassVar = SFT
     method: SFT.Config = Field(default_factory=SFT.Config)
+
+
+class PretrainConfig(LLMConfig):
+    method_class: ClassVar = Pretrain
+    method: Pretrain.Config = Field(default_factory=Pretrain.Config)
 
 
 class InstructionConfig(LLMConfig):

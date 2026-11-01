@@ -1,0 +1,28 @@
+# Continued pretraining on Korean text, after adding the Korean words `configs/llm/tokenizer_ko.yaml` picks: the new
+# tokens' embedding rows train beside a LoRA adapter, so the model learns to use the words it now reads whole.
+# Run tokenizer_ko.yaml first. Mix in text of the model's original kind as a second source (replay) on long runs.
+pipeline:
+  recipe: llm_pretrain
+  name: pretrain-ko-qwen3-0.6b
+  seed: 20260920
+  output_dir: ./output
+
+model:
+  architecture: transformer
+  name: Qwen/Qwen3-0.6B
+  revision: c1899de289a04d12100db370d81485cdf75e47ca
+  tokenizer:
+    tokens_file: output/tokenizer-ko-qwen3-f9a813ad/train/tokens.txt
+
+data:
+  sources:
+    - name: local_jsonl
+      path: samples/llm_pretrain_ko.jsonl   # rows: {"text": str}, documents of any length; packed into max_length blocks
+  validation: 0.2
+
+training:
+  {epochs: 1, lr: 2.0e-4, batch_size: 4, accumulation: 1, max_length: 256, max_steps: 12,
+   adapter: {name: lora, r: 16, alpha: 32}}   # the added tokens' rows train too
+
+validation:
+  max: {nll_per_char: 2.0}         # loss per character: comparable across tokenizers, unlike loss per token

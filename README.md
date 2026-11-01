@@ -17,6 +17,7 @@ what is already built, shows progress, and never hands on a trained model that h
 | LLM | `llm_reward` | the same pairs: a reward model, one score per answer (Bradley-Terry), saved as a sequence classifier | same |
 | LLM | `llm_grpo` | prompts scored by a reward function (answer match, regex, length, a teacher judge, an `llm_reward` model, or a weighted sum) | same |
 | LLM | `llm_distill` | prompts the student answers itself, every token graded by a larger teacher with the same vocabulary (on-policy distillation) | same |
+| LLM | `llm_pretrain` | plain text, documents packed into full-length blocks, loss on every token (continued pretraining) | same |
 | LLM | `llm_tokenizer` | nothing: the words of a corpus worth adding to a tokenizer, and the tokens they save; training recipes apply them with `model.tokenizer` (also special tokens and a chat template) | same |
 | LLM | `llm_quantize` | nothing: a trained checkpoint or Hub model quantized (AWQ, GPTQ, W8A8, FP8, bitsandbytes NF4/INT8) or exported to GGUF, its held-out loss against the base | same |
 | LLM | `llm_merge` | nothing: fine-tunes of one base merged into one model (linear, slerp, task arithmetic, TIES, DARE), its held-out loss against the base | same |
@@ -197,6 +198,7 @@ the same job, and `docs/api_spec.md` describes every endpoint.
 | `llm/grpo_gspo.yaml` | GRPO with GSPO's sequence-level clip on groups reused for two steps |
 | `llm/grpo_weighted.yaml` | GRPO with a weighted reward: answer match, a format regex and a length term; `loss_norm: token`, `reward_workers` for a judge |
 | `llm/distill.yaml` | on-policy distillation of Qwen3-0.6B from Qwen3-1.7B on the sample prompts |
+| `llm/pretrain_ko.yaml` | continued pretraining of Qwen3-0.6B on Korean text with the words `tokenizer_ko.yaml` picks, LoRA plus the new tokens' rows |
 | `llm/tokenizer_ko.yaml` | the Korean words worth adding to Qwen3's tokenizer, from the Korean sample rows |
 | `llm/quantize_awq.yaml` | 4-bit AWQ of Qwen3-0.6B with llm-compressor and the loss it costs (CUDA, `--extra quantize`) |
 | `llm/quantize_gguf.yaml` | Qwen3-0.6B as a q8_0 GGUF file for llama.cpp and Ollama (`--extra quantize`, then `environment/llama_cpp/setup.sh`) |
@@ -423,6 +425,7 @@ pipeline:
 | `llm_simpo` | the same | `accuracy`, `margin` (mean token log-probability of chosen over rejected) |
 | `llm_reward` | `prompt`, `chosen`, `rejected` | `accuracy` (chosen scored higher), `margin` (mean score difference) |
 | `llm_kto` | `prompt`, `completion`, `label` | `desirable_logp`, `undesirable_logp`, `gap` (desirable minus undesirable, per token) |
+| `llm_pretrain` | `text` | `loss`, `perplexity`, `nll_per_char` (loss per character: comparable across tokenizers) |
 | `llm_tokenizer` | `text` | `base_chars_per_token`, `chars_per_token`, `token_reduction` (share of held-out tokens saved), `words` |
 | `llm_quantize` | `messages` | `loss`, `perplexity`, `base_loss`, `loss_delta` (quantized minus base), `size_mb` |
 | `llm_merge` | `messages` | `loss`, `perplexity`, `base_loss`, `loss_delta` (merged minus base) |

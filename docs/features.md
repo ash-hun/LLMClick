@@ -45,6 +45,7 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | `llm_orpo` | 기준 모델 없는 선호 최적화(ORPO): chosen SFT 와 odds 비 항 | `llmclick run configs/llm/orpo.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_quantize` | 학습된 체크포인트나 Hub 모델 양자화(AWQ, GPTQ, W8A8, FP8, bitsandbytes NF4/INT8, GGUF)와 기준 대비 손실 검증 | `llmclick run configs/llm/quantize_awq.yaml`, `llmclick run configs/llm/quantize_gguf.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_reward` | chosen/rejected 짝으로 답마다 점수 하나를 내는 보상 모델(Bradley-Terry) 학습 | `llmclick run configs/llm/reward.yaml`, `POST /api/jobs` | 구현됨 |
+| `llm_pretrain` | 평문 텍스트로 continued pretraining(문서를 블록으로 packing, 모든 토큰에 loss) | `llmclick run configs/llm/pretrain_ko.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_tokenizer` | 코퍼스에서 토크나이저에 추가할 단어를 골라 토큰 절감을 측정(학습 없음), 학습 레시피의 `model.tokenizer` 가 적용 | `llmclick run configs/llm/tokenizer_ko.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_sft` | 대화 데이터로 LLM 지도 미세조정 | `llmclick run configs/llm/sft.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_simpo` | 기준 모델 없는 선호 최적화(SimPO): 토큰 평균 로그 확률 마진 | `llmclick run configs/llm/simpo.yaml`, `POST /api/jobs` | 구현됨 |
@@ -790,6 +791,37 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 
 ---
 
+### llm_pretrain: continued pretraining
+
+**설명**: 평문 문서로 다음 토큰 예측을 이어서 학습한다. 문서를 끝 토큰으로 이어 붙여 `training.max_length` 블록으로 잘라 학습하므로 너무 긴 행이나 패딩으로 버리는 토큰이 없다. 모든 토큰이 학습 대상이다. `model.tokenizer` 로 어휘를 넓힌 뒤 새 토큰을 익히는 단계로 쓴다([llm_tokenizer](#llm_tokenizer-토크나이저-어휘-확장)).
+
+**진입점**: `llmclick run configs/llm/pretrain_ko.yaml`, `POST /api/jobs`.
+
+**입력과 결과**
+
+| 입력 | 결과 |
+|---|---|
+| 행 `{"text"}`(예: `samples/llm_pretrain_ko.jsonl`, 길이 제한 없음), `model.tokenizer`(선택), `training.adapter`(선택) | `train` 체크포인트, `validation.json`(loss, perplexity, tokens, nll_per_char: 글자당 손실로 토크나이저가 달라도 비교 가능) |
+
+**처리 흐름**: `PretrainPipeline` 에서 `data`, `train`(학습 행을 블록으로 묶은 뒤 학습), `validate`(held-out 행을 같은 방식으로 묶어 측정) 순.
+
+**구현 파일**
+
+| 파일 | 층 | 역할 |
+|---|---|---|
+| `modeling/llm/methods/pretrain_method.py` | method | 텍스트 행 검사, packing, 모든 토큰 loss, nll_per_char 평가(`llm_tokenizer` 가 행 검사를 같이 씀) |
+
+**테스트**
+
+| 종류 | 파일 |
+|---|---|
+| 단위 | `tests/unit/test_llm_pretrain_pretrain_method.py` |
+| 통합 | `tests/integ/test_llm_pretrain.py` |
+
+**제약과 미구현**: 코퍼스 전체의 토큰을 메모리에 올린다(스트리밍 없음). 한 블록 안의 문서끼리 attention 을 막지 않는다. 원래 분포의 데이터를 섞는 replay 는 `data.sources` 에 소스를 더해 하고, 비율은 소스별 `limit` 으로 정한다. 행 길이 검사(`overflow`)는 적용되지 않는다. MPS 에서 Qwen3-0.6B 를 LoRA(r 16)로 12 스텝 학습하자 한국어 held-out 의 글자당 NLL 이 토크나이저 그대로 1.82 에서 1.25, 단어 91 개를 추가한 경우 1.63 에서 1.27 이었고, 같은 텍스트의 토큰은 1768 에서 676 으로 줄었다.
+
+---
+
 ### llm_tokenizer: 토크나이저 어휘 확장
 
 **설명**: 한국어나 도메인 코퍼스에서 기준 토크나이저가 여러 조각으로 쪼개는 단어를 세고, 줄어드는 토큰 수(빈도 x (조각 수 - 1))가 큰 순서로 고른다. 고른 단어를 BPE merge 로 덧붙인 토크나이저를 쓰고, held-out 행에서 글자당 토큰 수를 확장 전후로 잰다. 학습은 하지 않는다. 고른 단어는 학습 레시피의 `model.tokenizer` 가 적용한다.
@@ -815,7 +847,7 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 |---|---|---|
 | `modeling/vocabulary/__init__.py` | package | 패키지, import 시 레시피 등록 |
 | `modeling/vocabulary/vocabulary_pipeline.py` | pipeline | `VocabularyPipeline` 등록 |
-| `modeling/vocabulary/vocabulary_config.py` | config | `TokenizerConfig`, `vocabulary:` 섹션, 텍스트 행 검사(`TextRows`), `model.tokenizer` 와 adapter 거부 |
+| `modeling/vocabulary/vocabulary_config.py` | config | `TokenizerConfig`, `vocabulary:` 섹션, 행 검사는 `llm_pretrain` 의 것, `model.tokenizer` 와 adapter 거부 |
 | `modeling/vocabulary/vocabulary_stages.py` | stage | `VocabularyStage`, `VocabularyMeasureStage` |
 | `modeling/llm/models/vocabulary_extender.py` | model | 단어를 BPE merge 로 추가, 후보 집계, 글자당 토큰 |
 | `modeling/llm/models/backbone_config.py` | config | `model.tokenizer`(`VocabularyConfig`) |

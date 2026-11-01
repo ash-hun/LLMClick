@@ -1,29 +1,12 @@
 """Config of `llm_tokenizer`: the base model whose tokenizer is measured, text rows, and how many words to pick."""
 
-from typing import Any, ClassVar
+from typing import ClassVar
 
-import torch
 from pydantic import Field, model_validator
 
-from modeling.llm.models.llm_backbone import LLMBackbone
-from modeling.llm.methods.llm_method import LLMMethod
-from modeling.tuning.training_method import Row
+from modeling.llm.methods.pretrain_method import Pretrain
 from core.config.config_schema import Section
 from modeling.llm.llm_config import LLMConfig
-
-
-class TextRows(LLMMethod):
-    """Rows: {"text": str}. Nothing is trained; the row check is all `llm_tokenizer` needs of a method."""
-
-    def check(self, row: Row) -> None:
-        if not isinstance(row["text"], str) or not row["text"].strip():
-            raise ValueError("text must be a non-empty string")
-
-    def loss(self, backbone: LLMBackbone, rows: list[Row]) -> torch.Tensor:
-        raise NotImplementedError("llm_tokenizer trains nothing")
-
-    def evaluate(self, backbone: LLMBackbone, rows: list[Row], batch_size: int, progress: Any) -> dict[str, float]:
-        raise NotImplementedError("llm_tokenizer measures tokenizers, not models")
 
 
 class VocabularySettings(Section):
@@ -33,8 +16,8 @@ class VocabularySettings(Section):
 
 class TokenizerConfig(LLMConfig):
     """`model` names the tokenizer to extend; rows are text in the language or domain it should cover better."""
-    method_class: ClassVar = TextRows
-    method: TextRows.Config = Field(default_factory=TextRows.Config)
+    method_class: ClassVar = Pretrain  # its row check: the same text rows `llm_pretrain` trains on
+    method: Pretrain.Config = Field(default_factory=Pretrain.Config)
     vocabulary: VocabularySettings = Field(default_factory=VocabularySettings)
 
     @model_validator(mode="after")
