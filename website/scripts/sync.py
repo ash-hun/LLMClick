@@ -26,9 +26,9 @@ sys.path.insert(0, str(ROOT))
 # YAML the repository ships rather than a copy that drifts).
 PAGES: dict[str, tuple[str, list[tuple[str, str | None, bool]]]] = {
     "index": ("index", [("README.md", None, False)]),
-    "quick-start": ("quick-start", [("README.md", "03. Quick start", False)]),
-    "project-structure": ("project-structure", [("README.md", "01. Project structure", False)]),
-    "concepts/how-a-run-works": ("concepts/how-a-run-works", [("README.md", "02. How a run works", True)]),
+    "quick-start": ("quick-start", [("README.md", "01. Quick start", False)]),
+    "project-structure": ("project-structure", [("README.md", "02. Project structure", False)]),
+    "concepts/how-a-run-works": ("concepts/how-a-run-works", [("README.md", "03. How a run works", True)]),
     "concepts/stages": ("concepts/stages", [("README.md", "Stages", False)]),
     "concepts/idempotency": ("concepts/idempotency", []),
     "modeling/overview": ("modeling/overview", []),

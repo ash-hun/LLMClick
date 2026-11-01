@@ -32,7 +32,211 @@ The decision recipes follow the Jev request format. The readout head and one-pas
 [Jeeves](https://github.com/PostHog/jeeves). Both are reimplemented on this framework's training loop, so their
 released checkpoints do not load here.
 
-## 01. Project structure
+## 01. Quick start
+
+From a fresh machine to a trained, validated checkpoint you can load. The shipped configs are pilots: they train
+four steps on the sample rows in `samples/`, so a first run takes minutes and shows every stage before you point a
+config at your own data.
+
+### What you need
+
+- `git` and [uv](https://docs.astral.sh/uv/) (`curl -LsSf https://astral.sh/uv/install.sh | sh`). uv installs
+  Python 3.12 itself; nothing else is installed by hand.
+- One of: an Apple silicon Mac (training runs on MPS), or a Linux server with an NVIDIA GPU (see
+  [NVIDIA GPU server](#nvidia-gpu-server)). A CPU-only machine trains the `architecture: transformer` configs only.
+- Disk for the model cache: Qwen3.5-0.8B and Qwen3-0.6B take about 1.5 GB each under `~/.cache/huggingface`.
+
+### 1. Install
+
+```bash
+git clone https://github.com/ash-hun/LLMClick.git
+cd LLMClick
+uv sync --frozen                                           # the locked environment in .venv
+cp environment/.env.sample environment/.env                # optional: HF_TOKEN, API_TOKEN, teacher keys
+```
+
+The shipped models are public, so the `.env` file can stay empty. Fill `HF_TOKEN` for gated or private models,
+`API_TOKEN` before you run the API on a server others can reach.
+
+### 2. Check a config
+
+```bash
+uv run llmclick recipes                                    # recipes, their stages and the names a config may use
+uv run llmclick validate configs/llm/sft.yaml              # experiment key and stage plan; builds nothing
+```
+
+```json
+{
+  "valid": true,
+  "recipe": "llm_sft",
+  "experiment": "sft-qwen3.5-0.8b-14fc97a0",
+  "directory": "output/sft-qwen3.5-0.8b-14fc97a0",
+  "stages": ["data", "train", "validate"]
+}
+```
+
+### 3. Run it
+
+```bash
+uv run llmclick run configs/llm/sft.yaml                   # Mac or NVIDIA GPU
+uv run llmclick run configs/llm/sft_transformer.yaml       # CPU only: Qwen3-0.6B
+```
+
+The first run downloads the model, then shows a progress bar per stage. Logs go to stderr, the result to stdout as
+JSON: the rows each stage made, the training loss, the held-out metrics and whether validation passed
+(`validation.max` in the config is the bar). A run that misses it stops with `ValidationFailed` and hands on no
+checkpoint.
+
+Run the same command again and every stage reports `cached` within seconds. Change `training.lr` and only `train`
+and `validate` run again; the data stage is shared.
+
+### 4. Find and use the model
+
+Each config gets one experiment directory:
+
+```
+output/sft-qwen3.5-0.8b-14fc97a0/
+├── config.yaml          # the config as it ran
+├── manifest.json        # every stage's fingerprint and outputs
+├── pipeline.log
+├── data -> ../_stages/data-<fingerprint>/        # train.jsonl, validation.jsonl
+├── train -> ../_stages/train-<fingerprint>/
+└── validate -> ../_stages/validate-<fingerprint>/
+    ├── validation.json  # the metrics and the verdict
+    └── checkpoint/      # the validated model: a Hugging Face directory (LoRA adapters merged in)
+```
+
+The checkpoint loads with transformers like any Hub model:
+
+```python
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+path = "output/sft-qwen3.5-0.8b-14fc97a0/validate/checkpoint"
+tokenizer = AutoTokenizer.from_pretrained(path)
+model = AutoModelForCausalLM.from_pretrained(path)
+
+messages = [{"role": "user", "content": "What is 3 plus 4?"}]
+inputs = tokenizer.apply_chat_template(messages, add_generation_prompt=True, return_tensors="pt", return_dict=True)
+output = model.generate(**inputs, max_new_tokens=20)
+print(tokenizer.decode(output[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True))   # 3 plus 4 is 7.
+```
+
+### 5. Train on your own data
+
+1. Write your rows as JSON Lines in the recipe's shape (`samples/README.md` lists every shape). For `llm_sft`, one
+   conversation per line:
+
+   ```json
+   {"messages": [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]}
+   ```
+
+2. Copy the closest config and edit it:
+
+   ```bash
+   cp configs/llm/sft.yaml configs/llm/my_model.yaml
+   ```
+
+   - `pipeline.name`: your model's name, the start of the experiment directory's name;
+   - `data.sources`: `path:` to your file (or a `huggingface` source, as in `configs/llm/grpo_gsm8k.yaml`);
+   - `training`: remove `max_steps` for a full run, set `epochs`, `lr`, `batch_size`;
+   - `validation.max`: the held-out loss your model must reach to be handed on.
+
+3. `uv run llmclick validate configs/llm/my_model.yaml`, then `uv run llmclick run configs/llm/my_model.yaml`.
+
+If a run stops halfway (out of memory, a lost connection), run the same command again: finished stages are reused
+and training resumes from its last saved step.
+
+### 6. Run it as a server
+
+```bash
+uv run llmclick serve --host 127.0.0.1 --port 8000         # API, with Swagger at http://localhost:8000/docs
+curl -s -X POST localhost:8000/api/jobs -H 'content-type: application/json' \
+  -d '{"config_path": "configs/llm/sft.yaml"}'             # returns a job_id; the job runs in the background
+curl -s localhost:8000/api/jobs/<job_id>                   # status, per-stage progress, then the result
+```
+
+Or in Docker: `IMAGE_TAG=$(git rev-parse --short HEAD) docker compose up -d --build`. The API listens on the host's
+loopback only; from another machine, `ssh -L 8000:localhost:8000 <server>`. Sending the same config again returns
+the same job, and `docs/api_spec.md` describes every endpoint.
+
+### When something goes wrong
+
+| What you see | What to do |
+|---|---|
+| `RuntimeError: 0 active drivers ([]). There should only be one.` | a Qwen3.5 (`hybrid`) config on Linux without a GPU: use an NVIDIA GPU, or a `transformer` config |
+| `torch.cuda.is_available()` is `False` on a GPU server | NVIDIA driver older than 580, or (Docker) `compose.gpu.yaml` not added or nvidia-container-toolkit missing |
+| 401 or 403 from the Hub while loading a model | a gated model: accept its terms on the Hub and set `HF_TOKEN` in `environment/.env` |
+| out of memory | lower `training.batch_size` (raise `accumulation` to keep the effective batch), or add `training.adapter` (LoRA) |
+| `ValidationFailed: Validation failed for ...` | the model missed `validation.max`: train longer or change the data; no checkpoint is handed on |
+| 403 `outside API_PATHS` from the API | configs, rows and `output_dir` must sit under `API_PATHS` (default: the working directory) |
+
+### Shipped configs
+
+| Config | What it builds |
+|---|---|
+| `llm/sft.yaml` | SFT of Qwen3.5-0.8B (hybrid) on conversations |
+| `llm/sft_transformer.yaml` | the same recipe on Qwen3-0.6B (transformer) |
+| `llm/instruction.yaml` | instruction tuning of Qwen3.5-0.8B |
+| `llm/dpo.yaml` | DPO of Qwen3.5-0.8B on preference pairs |
+| `llm/sft_lora.yaml` | the SFT recipe with a LoRA adapter instead of full fine-tuning |
+| `llm/grpo.yaml` | GRPO of Qwen3.5-0.8B with the `exact_match` reward |
+| `llm/grpo_gsm8k.yaml` | GRPO on GSM8K word problems from the Hub with the `last_number` reward |
+| `llm/decision_readout.yaml` | one-pass decision model: full fine-tuning, readout head (Jev, jeff) |
+| `llm/decision_pointer.yaml` | reasoning decision model, stage 1: LoRA, pointer head, reasoning chains as context (Jeeves SFT) |
+| `llm/decision_cispo.yaml` | reasoning decision model, stage 2: CISPO from the stage-1 checkpoint |
+| `embedding/contrastive.yaml` | contrastive learning of Qwen3-Embedding-0.6B |
+| `evaluation/custom.yaml` | the `llm/sft.yaml` experiment's validated checkpoint scored on the sample rows |
+| `evaluation/benchmark.yaml` | the same checkpoint on the `small_general` preset plus KMMLU, 100 items each (needs `uv sync --extra eval`) |
+| `evaluation/compare.yaml` | base model against the trained checkpoint on the preset and the sample rows, with a four-axis chart |
+| `evaluation/decision.yaml` | the `llm/decision_pointer.yaml` checkpoint on the JevBench tiers, without and with reasoning |
+| `evaluation/embedding.yaml` | the `embedding/contrastive.yaml` checkpoint on three MTEB tasks (needs `uv sync --extra eval`) |
+| `data/synthetic.yaml` | Korean conversation rows for `llm_sft` from four topic seeds through a local Ollama model, evolved, judged, deduplicated |
+| `data/speech.yaml` | a Piper training set: assistant lines written by a local Ollama model, read by the `jgkawell/jarvis` high voice, checked by Whisper (needs `environment/piper/setup.sh`) |
+| `tts/piper_jarvis.yaml` | fine-tuning from the `jgkawell/jarvis` high checkpoint on that set, with the agent's nine read-backs; replace `<hash>` with the `data/speech.yaml` experiment's |
+| `tts/qwen_jarvis.yaml` | the Jarvis voice cloned by Qwen3-TTS 1.7B from the most natural clip of that set, with the same read-backs (needs Apple silicon and `environment/qwen/setup.sh`) |
+| `data/wake_phrase.yaml` | "Jarvis." (statement, question, call) read by 300 speakers of the `libritts_r` Piper voice, kept if Whisper hears it exactly |
+| `data/wake_negatives.yaml` | near misses of the name, the commands said alone, and ordinary lines, read by 40 speakers of the same voice |
+| `data/wake_nearmiss.yaml` | 20 near misses of the name ("Travis", "Jars", "Jarrett", ...) by 120 more speakers, kept without a listening check |
+| `wakeword/jarvis.yaml` | the "Jarvis" wake word detector from those three sets; replace each `<hash>` |
+
+The `llm/` and `embedding/` configs ship as pilots: sample rows from `samples/` and `max_steps: 4`. Point
+`data.sources` at your rows and remove `max_steps` for a real run.
+
+Installed as a package (`uv build`, then `pip install dist/llmclick-*.whl`), `llmclick` runs from any directory:
+config paths, `output_dir` and `environment/.env` are relative to the working directory, and `LLMCLICK_ENV` names a
+different settings file.
+
+### NVIDIA GPU server
+
+The locked torch 2.14.0 is built against CUDA 13.0: the server needs a Linux x86_64 or aarch64 host, an NVIDIA
+driver of 580 or newer (`nvidia-smi` shows it) and an Ampere or newer GPU. Qwen3.5's linear-attention layers run
+through flash-linear-attention's Triton kernels, so the hybrid configs (`llm/sft.yaml` and the other Qwen3.5 ones)
+need that GPU; on a CPU-only Linux host only the `architecture: transformer` configs train.
+
+On a VM with Docker and nvidia-container-toolkit:
+
+```bash
+git clone https://github.com/ash-hun/LLMClick.git && cd LLMClick
+IMAGE_TAG=$(git rev-parse --short HEAD) docker compose -f compose.yaml -f compose.gpu.yaml up -d --build
+docker exec llmclick python -c "import torch; print(torch.cuda.is_available())"
+```
+
+On a provider that hands you a container instead (no Docker inside), run uv directly: install it
+(`curl -LsSf https://astral.sh/uv/install.sh | sh`), then follow the steps above from `git clone`.
+`environment/.env` is optional; copy the sample to set `HF_TOKEN`, `API_TOKEN` or the teacher keys.
+
+Not in the image: the `eval` and `data` extras (`uv sync --frozen --extra eval --extra data` for the benchmark,
+embedding and synthetic-data configs), and `tts_qwen`, which runs on MLX and needs Apple silicon. The recorded
+audio the TTS and wake word configs read (`recordings/`) is not in the repository, and `output/` stays on the
+machine that made it: copy either over when a config needs it.
+
+### Apple silicon
+
+Training and validation run on MPS; `device` in the config (or auto-detection: cuda, then mps, then cpu) decides.
+Weights are trained in FP32: fully fine-tuning Qwen3.5-0.8B needs roughly 13 GB of unified memory at the shipped
+batch sizes, and `training.adapter` (LoRA) cuts that to little more than the weights themselves.
+
+## 02. Project structure
 
 ```
 LLMClick/
@@ -120,7 +324,7 @@ wandb with `tracker.enabled`, and are listed by `GET /api/evaluations` (`evaluat
 package that registers recipes; it joins by adding its name to `CHANNELS` in `core/recipe_registry.py` and reuses `Stage`,
 `Pipeline`, `Progress` and `Experiment` as they are.
 
-## 02. How a run works
+## 03. How a run works
 
 ```yaml
 pipeline:
@@ -426,88 +630,6 @@ Analysis.: a full stop so the voice pauses), `focus_mode_enter` (Activate Focus 
 (Change to KAREN.) and `persona_jarvis` (Change to JARVIS.). The voice's training set (`data/speech.yaml`) reads them
 too. Which utterance means which command is the agent's to decide: no recipe here maps "enter the focus mode" to
 `focus_mode_enter` yet.
-
-## 03. Quick start
-
-```bash
-uv sync                                                    # Python 3.12
-cp environment/.env.sample environment/.env                # HF_TOKEN for gated models; API_TOKEN, API_PATHS for a shared server
-
-uv run llmclick recipes                                    # recipes, their stages and registry keys
-uv run llmclick validate configs/llm/sft.yaml              # experiment key and stage plan
-uv run llmclick run configs/llm/sft.yaml                   # the stages the config asks for
-
-uv run llmclick serve --host 0.0.0.0 --port 8000           # API + Swagger at /docs (or: uvicorn core.api.api_app:app)
-curl -X POST localhost:8000/api/jobs -H 'content-type: application/json' \
-  -d '{"config_path": "configs/llm/sft.yaml"}'
-```
-
-| Config | What it builds |
-|---|---|
-| `llm/sft.yaml` | SFT of Qwen3.5-0.8B (hybrid) on conversations |
-| `llm/sft_transformer.yaml` | the same recipe on Qwen3-0.6B (transformer) |
-| `llm/instruction.yaml` | instruction tuning of Qwen3.5-0.8B |
-| `llm/dpo.yaml` | DPO of Qwen3.5-0.8B on preference pairs |
-| `llm/sft_lora.yaml` | the SFT recipe with a LoRA adapter instead of full fine-tuning |
-| `llm/grpo.yaml` | GRPO of Qwen3.5-0.8B with the `exact_match` reward |
-| `llm/grpo_gsm8k.yaml` | GRPO on GSM8K word problems from the Hub with the `last_number` reward |
-| `llm/decision_readout.yaml` | one-pass decision model: full fine-tuning, readout head (Jev, jeff) |
-| `llm/decision_pointer.yaml` | reasoning decision model, stage 1: LoRA, pointer head, reasoning chains as context (Jeeves SFT) |
-| `llm/decision_cispo.yaml` | reasoning decision model, stage 2: CISPO from the stage-1 checkpoint |
-| `embedding/contrastive.yaml` | contrastive learning of Qwen3-Embedding-0.6B |
-| `evaluation/custom.yaml` | the `llm/sft.yaml` experiment's validated checkpoint scored on the sample rows |
-| `evaluation/benchmark.yaml` | the same checkpoint on the `small_general` preset plus KMMLU, 100 items each (needs `uv sync --extra eval`) |
-| `evaluation/compare.yaml` | base model against the trained checkpoint on the preset and the sample rows, with a four-axis chart |
-| `evaluation/decision.yaml` | the `llm/decision_pointer.yaml` checkpoint on the JevBench tiers, without and with reasoning |
-| `evaluation/embedding.yaml` | the `embedding/contrastive.yaml` checkpoint on three MTEB tasks (needs `uv sync --extra eval`) |
-| `data/synthetic.yaml` | Korean conversation rows for `llm_sft` from four topic seeds through a local Ollama model, evolved, judged, deduplicated |
-| `data/speech.yaml` | a Piper training set: assistant lines written by a local Ollama model, read by the `jgkawell/jarvis` high voice, checked by Whisper (needs `environment/piper/setup.sh`) |
-| `tts/piper_jarvis.yaml` | fine-tuning from the `jgkawell/jarvis` high checkpoint on that set, with the agent's nine read-backs; replace `<hash>` with the `data/speech.yaml` experiment's |
-| `tts/qwen_jarvis.yaml` | the Jarvis voice cloned by Qwen3-TTS 1.7B from the most natural clip of that set, with the same read-backs (needs Apple silicon and `environment/qwen/setup.sh`) |
-| `data/wake_phrase.yaml` | "Jarvis." (statement, question, call) read by 300 speakers of the `libritts_r` Piper voice, kept if Whisper hears it exactly |
-| `data/wake_negatives.yaml` | near misses of the name, the commands said alone, and ordinary lines, read by 40 speakers of the same voice |
-| `data/wake_nearmiss.yaml` | 20 near misses of the name ("Travis", "Jars", "Jarrett", ...) by 120 more speakers, kept without a listening check |
-| `wakeword/jarvis.yaml` | the "Jarvis" wake word detector from those three sets; replace each `<hash>` |
-
-The `llm/` and `embedding/` configs ship as pilots: sample rows from `samples/` and `max_steps: 4`. Point
-`data.sources` at your rows and remove `max_steps` for a real run.
-
-Docker: `IMAGE_TAG=$(git rev-parse --short HEAD) docker compose up -d --build`. The API listens on the host's
-loopback only; from another machine, `ssh -L 8000:localhost:8000 <server>`.
-
-Installed as a package (`uv build`, then `pip install dist/llmclick-*.whl`), `llmclick` runs from any directory:
-config paths, `output_dir` and `environment/.env` are relative to the working directory, and `LLMCLICK_ENV` names a
-different settings file.
-
-### NVIDIA GPU server
-
-The locked torch 2.14.0 is built against CUDA 13.0: the server needs a Linux x86_64 or aarch64 host, an NVIDIA
-driver of 580 or newer (`nvidia-smi` shows it) and an Ampere or newer GPU. Qwen3.5's linear-attention layers run
-through flash-linear-attention's Triton kernels, so the hybrid configs (`llm/sft.yaml` and the other Qwen3.5 ones)
-need that GPU; on a CPU-only Linux host only the `architecture: transformer` configs train.
-
-On a VM with Docker and nvidia-container-toolkit:
-
-```bash
-git clone https://github.com/ash-hun/LLMClick.git && cd LLMClick
-IMAGE_TAG=$(git rev-parse --short HEAD) docker compose -f compose.yaml -f compose.gpu.yaml up -d --build
-docker exec llmclick python -c "import torch; print(torch.cuda.is_available())"
-```
-
-On a provider that hands you a container instead (no Docker inside), run uv directly: install it
-(`curl -LsSf https://astral.sh/uv/install.sh | sh`), then `uv sync --frozen` and the Quick start commands.
-`environment/.env` is optional; copy the sample to set `HF_TOKEN`, `API_TOKEN` or the teacher keys.
-
-Not in the image: the `eval` and `data` extras (`uv sync --frozen --extra eval --extra data` for the benchmark,
-embedding and synthetic-data configs), and `tts_qwen`, which runs on MLX and needs Apple silicon. The recorded
-audio the TTS and wake word configs read (`recordings/`) is not in the repository, and `output/` stays on the
-machine that made it: copy either over when a config needs it.
-
-### Apple silicon
-
-Training and validation run on MPS; `device` in the config (or auto-detection: cuda, then mps, then cpu) decides.
-Weights are trained in FP32: fully fine-tuning Qwen3.5-0.8B needs roughly 13 GB of unified memory at the shipped
-batch sizes, and `training.adapter` (LoRA) cuts that to little more than the weights themselves.
 
 ## 04. Extending
 
