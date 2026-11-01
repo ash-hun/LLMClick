@@ -87,5 +87,5 @@ python_version = "3.12"
 strict = true
 
 [[tool.mypy.overrides]]
-module = ["datasets.*", "wandb.*", "lm_eval.*", "mteb.*", "anthropic.*", "onnxruntime.*"]
+module = ["datasets.*", "wandb.*", "lm_eval.*", "mteb.*", "anthropic.*", "onnxruntime.*", "bitsandbytes.*", "llmcompressor.*"]
 ignore_missing_imports = true
