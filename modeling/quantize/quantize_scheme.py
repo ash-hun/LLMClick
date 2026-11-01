@@ -1,14 +1,19 @@
 """Quantization schemes `llm_quantize` offers: a `quantization.name` resolves here to a function that writes the model."""
 
-from dataclasses import dataclass
-from pathlib import Path
+import os
+import sys
+import json
+import subprocess
 from typing import Any
+from pathlib import Path
+from dataclasses import dataclass
 
 import torch
 
-from modeling.llm.models.llm_backbone import quantization_config
+from modeling.llm.models.llm_backbone import GGUF_FILE, quantization_config
 from core.recipe_registry import Registry
 from core.device_selector import Device
+from core.settings import get_settings
 
 SCHEMES = Registry("quantization scheme")
 MISSING_COMPRESSOR = "this scheme needs llm-compressor: `uv sync --extra quantize`"
@@ -16,6 +21,8 @@ MISSING_COMPRESSOR = "this scheme needs llm-compressor: `uv sync --extra quantiz
 COMPRESSOR = {"awq": "W4A16_ASYM", "gptq": "W4A16", "w8a8": "W8A8", "fp8": "FP8_DYNAMIC"}
 CALIBRATED = {"awq", "gptq", "w8a8"}
 DAMPENING = 0.01
+GGUF_TYPES = {"q8_0", "f16", "bf16"}  # what the Python converter writes itself; k-quants need llama.cpp's C++ tools
+CONVERT_SECONDS = 4 * 3600
 
 
 @dataclass(frozen=True)
@@ -139,5 +146,51 @@ def fp8(job: QuantizeJob) -> None:
     compressor_scheme(job, "fp8")
 
 
+def llama_cpp() -> Path:
+    directory = Path(get_settings().LLAMA_CPP_DIR)
+    if not (directory / "convert_hf_to_gguf.py").is_file():
+        raise FileNotFoundError(f"LLAMA_CPP_DIR {str(directory)!r} has no convert_hf_to_gguf.py; fetch it with environment/llama_cpp/setup.sh")
+    return directory
+
+
+def gguf_version() -> str | None:
+    """The llama.cpp commit that writes GGUF files, so changing the pin rebuilds them; None before setup."""
+    commit = Path(get_settings().LLAMA_CPP_DIR) / "COMMIT"
+    return commit.read_text().strip() if commit.is_file() else None
+
+
+def local_source(job: QuantizeJob) -> Path:
+    """The converter reads a directory: a Hub model is taken from the Hugging Face cache, downloaded if missing."""
+    if Path(job.origin).is_dir():
+        return Path(job.origin)
+    from huggingface_hub import snapshot_download
+    from huggingface_hub.errors import LocalEntryNotFoundError
+    try:  # the base model was just loaded from the cache, so it is normally there; this also works offline
+        return Path(snapshot_download(job.origin, revision=job.revision, local_files_only=True))
+    except LocalEntryNotFoundError:
+        return Path(snapshot_download(job.origin, revision=job.revision))
+
+
+@SCHEMES.register("gguf")
+def gguf(job: QuantizeJob) -> None:
+    """A GGUF file for llama.cpp and Ollama (`type`: q8_0, the default, f16 or bf16), written by llama.cpp's converter
+    in its own process. Only architectures transformers can read back from GGUF are accepted, so validation measures
+    the file that was written."""
+    from transformers.integrations.ggml import GGUF_CONFIG_MAPPING
+    kind = str(job.params.get("type", "q8_0"))
+    if kind not in GGUF_TYPES:
+        raise ValueError(f"gguf type {kind!r}; one of {sorted(GGUF_TYPES)} (k-quants need llama.cpp's compiled tools)")
+    source, directory = local_source(job), llama_cpp()
+    family = json.loads((source / "config.json").read_text()).get("model_type")
+    if family not in GGUF_CONFIG_MAPPING:
+        raise ValueError(f"model_type {family!r} cannot be read back from GGUF by transformers, so it could not be validated")
+    completed = subprocess.run([sys.executable, str(directory / "convert_hf_to_gguf.py"), str(source), "--outfile",
+                                str(job.out / GGUF_FILE), "--outtype", kind], capture_output=True, text=True, timeout=CONVERT_SECONDS,
+                               env={**os.environ, "PYTHONPATH": str(directory / "gguf-py")})
+    if completed.returncode != 0:
+        raise RuntimeError(f"llama.cpp's converter failed: {completed.stderr.strip().splitlines()[-1:]}")
+    job.tokenizer.save_pretrained(job.out)
+
+
 def size_mb(directory: Path) -> float:
-    return sum(path.stat().st_size for path in directory.glob("*.safetensors")) / 1_000_000
+    return sum(path.stat().st_size for pattern in ("*.safetensors", "*.gguf") for path in directory.glob(pattern)) / 1_000_000

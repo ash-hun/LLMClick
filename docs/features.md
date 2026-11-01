@@ -41,7 +41,7 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | `llm_instruction` | instruction/input/output 레코드로 LLM 지시 튜닝 | `llmclick run configs/llm/instruction.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_kto` | 짝 없이 바람직함/아님 라벨만으로 하는 선호 최적화(KTO) | `llmclick run configs/llm/kto.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_orpo` | 기준 모델 없는 선호 최적화(ORPO): chosen SFT 와 odds 비 항 | `llmclick run configs/llm/orpo.yaml`, `POST /api/jobs` | 구현됨 |
-| `llm_quantize` | 학습된 체크포인트나 Hub 모델 양자화(AWQ, GPTQ, W8A8, FP8, bitsandbytes NF4/INT8)와 기준 대비 손실 검증 | `llmclick run configs/llm/quantize_awq.yaml`, `POST /api/jobs` | 구현됨 |
+| `llm_quantize` | 학습된 체크포인트나 Hub 모델 양자화(AWQ, GPTQ, W8A8, FP8, bitsandbytes NF4/INT8, GGUF)와 기준 대비 손실 검증 | `llmclick run configs/llm/quantize_awq.yaml`, `llmclick run configs/llm/quantize_gguf.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_sft` | 대화 데이터로 LLM 지도 미세조정 | `llmclick run configs/llm/sft.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_simpo` | 기준 모델 없는 선호 최적화(SimPO): 토큰 평균 로그 확률 마진 | `llmclick run configs/llm/simpo.yaml`, `POST /api/jobs` | 구현됨 |
 | `tts_piper` | Piper(VITS) 음성 미세조정과 청취 검증 | `llmclick run configs/tts/piper_jarvis.yaml`, `POST /api/jobs` | 구현됨 |
@@ -651,13 +651,13 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 
 **설명**: 학습된 체크포인트나 Hub 모델을 양자화하고, 같은 held-out 행에서 양자화 전후 loss 를 비교한다. 양자화하는 스테이지 이름이 `train` 이라 `validate/checkpoint` 링크, `evaluation_*` 레시피, 다른 실험의 `model.name` 이 학습된 모델처럼 읽는다.
 
-**진입점**: `llmclick run configs/llm/quantize_awq.yaml`, `POST /api/jobs`.
+**진입점**: `llmclick run configs/llm/quantize_awq.yaml`, `llmclick run configs/llm/quantize_gguf.yaml`, `POST /api/jobs`.
 
 **입력과 결과**
 
 | 입력 | 결과 |
 |---|---|
-| `model`(디렉터리나 Hub ID+revision), SFT 대화 행(`data.sources`: train 몫이 보정, held-out 몫이 측정), `quantization.name`(`awq`, `gptq`, `w8a8`, `fp8`, `bnb_nf4`, `bnb_int8`), `quantization.rows`, 그 밖의 키는 scheme 인자(`scheme`, `smoothing`, gptq 와 w8a8 의 `dampening`) | `train/checkpoint` 양자화 모델(compressed-tensors 또는 bitsandbytes 직렬화), `summary.json`(base_loss, base_perplexity, size_mb), `validation.json`(loss, perplexity, tokens, base_loss, loss_delta, size_mb) |
+| `model`(디렉터리나 Hub ID+revision), SFT 대화 행(`data.sources`: train 몫이 보정, held-out 몫이 측정), `quantization.name`(`awq`, `gptq`, `w8a8`, `fp8`, `bnb_nf4`, `bnb_int8`, `gguf`), `quantization.rows`, 그 밖의 키는 scheme 인자(`scheme`, `smoothing`, gptq 와 w8a8 의 `dampening`, gguf 의 `type`) | `train/checkpoint` 양자화 모델(compressed-tensors, bitsandbytes 직렬화, 또는 `model.gguf` 와 tokenizer), `summary.json`(base_loss, base_perplexity, size_mb), `validation.json`(loss, perplexity, tokens, base_loss, loss_delta, size_mb) |
 
 **처리 흐름**: `QuantizePipeline` 에서 `data`(`DataStage` 재사용), `train`(기준 모델 held-out loss 측정 후 scheme 실행, 결과는 임시 디렉터리에 쓰고 끝나면 이름 변경), `validate`(양자화 모델 loss 와 `loss_delta`) 순.
 
@@ -668,7 +668,8 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | `modeling/quantize/__init__.py` | package | 양자화 패키지, import 시 레시피 등록 |
 | `modeling/quantize/quantize_pipeline.py` | pipeline | `QuantizePipeline` 등록, catalogue 에 scheme 목록 |
 | `modeling/quantize/quantize_config.py` | config | `QuantizeConfig`(SFT 행, `quantization:` 섹션), adapter 거부 |
-| `modeling/quantize/quantize_scheme.py` | scheme | `SCHEMES` 레지스트리, llm-compressor 레시피(AWQ, GPTQ, SmoothQuant+GPTQ, FP8), bitsandbytes 직렬화 |
+| `modeling/quantize/quantize_scheme.py` | scheme | `SCHEMES` 레지스트리, llm-compressor 레시피(AWQ, GPTQ, SmoothQuant+GPTQ, FP8), bitsandbytes 직렬화, llama.cpp 변환기 호출(GGUF) |
+| `environment/llama_cpp/setup.sh` | environment | llama.cpp v0.7.0 소스를 sha256 확인 후 `LLAMA_CPP_DIR` 에 받는다. 다시 실행하면 아무것도 하지 않는다 |
 | `modeling/quantize/quantize_stages.py` | stage | `QuantizeStage`, `QuantizeMeasureStage` |
 
 **테스트**
@@ -678,7 +679,7 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | 단위 | `tests/unit/test_llm_quantize_quantize_scheme.py` |
 | 통합 | `tests/integ/test_llm_quantize.py` |
 
-**제약과 미구현**: `quantize` extra(llm-compressor, bitsandbytes)가 필요하다. `bnb_nf4`, `bnb_int8`, `fp8` 은 CUDA 에서만 돈다(다른 장치는 시작할 때 거부). `awq`, `gptq`, `w8a8` 은 보정 행이 필요하고 순서를 섞지 않는다. GPTQ(`gptq`, `w8a8`)는 레이어 Hessian 이 양의 정부호가 아니면 `quantization.dampening` 을 올리라는 에러로 멈춘다: Qwen3-0.6B 는 샘플 행에서 기본값 0.01 로 실패하고 0.1 로 통과한다. `evaluation_benchmark`, `evaluation_compare` 는 lm-eval 이 compressed-tensors 체크포인트를 직접 읽어 따로 처리하지 않는다(MPS, CPU 에서 AWQ 로 확인). validate 단계는 compressed-tensors 체크포인트를 dense 로 풀어 로드하므로 측정 loss 는 양자화 오차를 반영하지만 속도는 반영하지 않는다(`modeling/llm/models/llm_backbone.py`). 출력층(`lm_head`)과 백본의 `frozen` 모듈(Qwen3.5 비전 타워)은 양자화하지 않는다. GGUF 내보내기는 없다. `training.adapter` 는 거부한다.
+**제약과 미구현**: `quantize` extra(llm-compressor, bitsandbytes)가 필요하다. `bnb_nf4`, `bnb_int8`, `fp8` 은 CUDA 에서만 돈다(다른 장치는 시작할 때 거부). `awq`, `gptq`, `w8a8` 은 보정 행이 필요하고 순서를 섞지 않는다. GPTQ(`gptq`, `w8a8`)는 레이어 Hessian 이 양의 정부호가 아니면 `quantization.dampening` 을 올리라는 에러로 멈춘다: Qwen3-0.6B 는 샘플 행에서 기본값 0.01 로 실패하고 0.1 로 통과한다. `evaluation_benchmark`, `evaluation_compare` 는 lm-eval 이 compressed-tensors 체크포인트를 직접 읽어 따로 처리하지 않는다(MPS, CPU 에서 AWQ 로 확인). validate 단계는 compressed-tensors 체크포인트를 dense 로 풀어 로드하므로 측정 loss 는 양자화 오차를 반영하지만 속도는 반영하지 않는다(`modeling/llm/models/llm_backbone.py`). 출력층(`lm_head`)과 백본의 `frozen` 모듈(Qwen3.5 비전 타워)은 양자화하지 않는다. `gguf` 는 llama.cpp 의 Python 변환기를 앱 환경의 별도 프로세스로 실행하고(`environment/llama_cpp/setup.sh` 가 고정 릴리스를 받음), `type` 은 `q8_0`, `f16`, `bf16` 이다. k-quant(q4_k_m 등)는 llama.cpp 의 C++ 도구가 필요해 없다. transformers 가 GGUF 를 다시 읽어 validate 하므로 그 목록에 없는 아키텍처(Qwen3.5 hybrid)는 거부한다. 고정한 llama.cpp 커밋이 지문에 들어간다. `evaluation_benchmark` 와 `evaluation_compare` 는 `gguf_file` 로 GGUF 체크포인트를 읽는다(MPS 에서 q8_0 의 arc_challenge 40 문항 acc_norm 0.40, 원본 0.425). `training.adapter` 는 거부한다.
 
 ---
 
@@ -879,7 +880,7 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | `core/pipeline_runner.py` | 스테이지를 순서대로 실행하고 이미 만든 것은 건너뛰는 러너, `@recipe` 등록 | 전체 |
 | `core/progress_reporter.py` | 진행률 보고(터미널 바, Job 상태), 취소 | 전체 |
 | `core/recipe_registry.py` | 이름 레지스트리, `RECIPES`, `catalogue()` | 전체 |
-| `core/settings.py` | 환경 변수와 `LLMCLICK_ENV` 파일 설정 | 전체 |
+| `core/settings.py` | 환경 변수와 `LLMCLICK_ENV` 파일 설정(`PIPER_PYTHON`, `LLAMA_CPP_DIR` 등) | 전체 |
 | `core/stage_base.py` | 입력으로 지문을 매기고 두 번 실행해도 안전한 스테이지 단위 | 전체 |
 | `core/device_selector.py` | cuda, mps, cpu 순 장치 선택 | 전체 |
 | `core/file_store.py` | 내용 해시, 원자적 쓰기, JSON, 잠금 | 전체 |
@@ -935,7 +936,7 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | `environment/piper/pyproject.toml` | Piper 실행 환경 의존성 | `tts_piper`, `data_speech` |
 | `environment/piper/uv.lock` | Piper 환경 잠금 파일 | `tts_piper`, `data_speech` |
 | `environment/piper/setup.sh` | `PIPER_PYTHON` 환경 구성 | `tts_piper`, `data_speech` |
-| `environment/Dockerfile` | 서비스 이미지 빌드, `EXTRAS` 빌드 인자로 선택 의존성 그룹 설치 | 전체 |
+| `environment/Dockerfile` | 서비스 이미지 빌드, `EXTRAS` 빌드 인자로 선택 의존성 그룹 설치(`quantize` 면 llama.cpp 변환기도) | 전체 |
 | `compose.yaml` | 커밋 태그 이미지로 서비스 실행, `/health` 헬스체크, 포트는 loopback 만 | 전체 |
 | `compose.gpu.yaml` | NVIDIA GPU 를 서비스에 붙이고 `quantize` extra 로 빌드하는 compose 덧붙임 파일 | 전체, QLoRA, `llm_quantize` |
 | `environment/.env.sample` | 환경 변수 예시 | 전체 |

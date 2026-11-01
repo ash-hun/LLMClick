@@ -16,7 +16,7 @@ from core.file_store import write_json
 from evaluation.evaluation_config import MeasureSettings, SourceModel
 from evaluation.source_model import SourceExperiment
 from evaluation.custom_stages import contamination, named
-from modeling.llm.models.llm_backbone import LLMBackbone
+from modeling.llm.models.llm_backbone import GGUF_FILE, LLMBackbone
 
 HARNESS = "lm_eval"
 RESULTS = "results.json"
@@ -192,7 +192,8 @@ class BenchmarkStage(Stage[HarnessSettings]):
             raise ValueError(f"{source.model.experiment!r} is not a language model; benchmarks need one")
         origin, revision = source.origin()
         thinking = self.config.thinking if self.chat_template else None
-        return {"pretrained": origin, **({"revision": revision} if revision else {}), "dtype": "float32",
+        gguf = {"gguf_file": GGUF_FILE} if (Path(origin) / GGUF_FILE).is_file() else {}  # an llm_quantize gguf checkpoint
+        return {"pretrained": origin, **({"revision": revision} if revision else {}), "dtype": "float32", **gguf,
                 **({"enable_thinking": thinking} if thinking is not None else {}), **({"think_end_token": THINK_END} if thinking else {})}
 
     def run(self, workdir: Path, inputs: dict[str, Outputs]) -> Outputs:

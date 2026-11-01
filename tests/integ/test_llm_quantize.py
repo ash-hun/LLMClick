@@ -56,3 +56,20 @@ def test_quantize_config_rules(tiny_model: Path, tmp_path: Path) -> None:
     a = pipeline_runner.build(quantize_raw(tiny_model, tmp_path))
     b = pipeline_runner.build(quantize_raw(tiny_model, tmp_path, name="awq"))
     assert a.fingerprint("data") == b.fingerprint("data") and a.fingerprint("train") != b.fingerprint("train")
+
+
+def test_the_llama_cpp_release_is_part_of_a_gguf_fingerprint(tiny_model: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from core.settings import get_settings
+    directory = tmp_path / "llama.cpp"
+    directory.mkdir()
+    monkeypatch.setenv("LLAMA_CPP_DIR", str(directory))
+    get_settings.cache_clear()
+    try:
+        gguf, gptq = [], []
+        for commit in ("aaa", "bbb"):
+            (directory / "COMMIT").write_text(commit)
+            gguf.append(pipeline_runner.build(quantize_raw(tiny_model, tmp_path, name="gguf")).fingerprint("train"))
+            gptq.append(pipeline_runner.build(quantize_raw(tiny_model, tmp_path)).fingerprint("train"))
+        assert gguf[0] != gguf[1] and gptq[0] == gptq[1]
+    finally:
+        get_settings.cache_clear()

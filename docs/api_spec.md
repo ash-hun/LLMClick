@@ -584,7 +584,7 @@ LLM, Embedding 계열 레시피(`llm_sft`, `llm_instruction`, `llm_dpo`, `llm_kt
 | `method_keys` | string[] | 아니오 | `method` 섹션에 쓸 수 있는 키 |
 | `reward` | string[] | 아니오 | `llm_grpo` 에만 있음. `method.reward.name` 에 쓸 수 있는 키 |
 | `head` | string[] | 아니오 | `llm_decision_sft`, `llm_decision_cispo` 에만 있음. `model.head` 에 쓸 수 있는 키 |
-| `quantization` | string[] | 아니오 | `llm_quantize` 에만 있음. `quantization.name` 에 쓸 수 있는 키(`awq`, `bnb_int8`, `bnb_nf4`, `fp8`, `gptq`, `w8a8`) |
+| `quantization` | string[] | 아니오 | `llm_quantize` 에만 있음. `quantization.name` 에 쓸 수 있는 키(`awq`, `bnb_int8`, `bnb_nf4`, `fp8`, `gguf`, `gptq`, `w8a8`) |
 
 Evaluation 채널 레시피의 필드: `evaluation_custom` 은 `stages`(`["rows","score","report"]`), `source`, `checkpoint`
 (`model.checkpoint` 에 쓸 수 있는 값: `validate`, `train`, `base`, 또는 체크포인트 디렉토리). `evaluation_benchmark` 는

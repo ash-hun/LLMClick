@@ -27,4 +27,8 @@ COPY samples/ ./samples/
 COPY configs/ ./configs/
 RUN uv sync --frozen --no-dev $(for extra in $EXTRAS; do printf -- '--extra %s ' "$extra"; done)
 
+# llama.cpp's GGUF converter (llm_quantize's gguf scheme), at LLAMA_CPP_DIR's default path, with the quantize extra
+COPY environment/llama_cpp/setup.sh ./environment/llama_cpp/
+RUN case " $EXTRAS " in *" quantize "*) environment/llama_cpp/setup.sh ;; esac
+
 CMD ["llmclick", "serve", "--host", "0.0.0.0", "--port", "8000"]

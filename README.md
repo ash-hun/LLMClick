@@ -15,7 +15,7 @@ what is already built, shows progress, and never hands on a trained model that h
 | LLM | `llm_simpo` | the same pairs: a margin on the mean token log-probability, no reference model | same |
 | LLM | `llm_kto` | answers labelled desirable or not, no pairs needed | same |
 | LLM | `llm_grpo` | prompts scored by a reward function (answer match, regex, length, a teacher judge, or a weighted sum) | same |
-| LLM | `llm_quantize` | nothing: a trained checkpoint or Hub model quantized (AWQ, GPTQ, W8A8, FP8, bitsandbytes NF4/INT8), its held-out loss against the base | same |
+| LLM | `llm_quantize` | nothing: a trained checkpoint or Hub model quantized (AWQ, GPTQ, W8A8, FP8, bitsandbytes NF4/INT8) or exported to GGUF, its held-out loss against the base | same |
 | LLM | `llm_decision_sft` | decision questions: a head scores the options (Jev, jeff, Jeeves stage 1) | same, plus `model.head`: `readout` or `pointer` |
 | LLM | `llm_decision_cispo` | the same questions with reasoning before the decision, by reinforcement (Jeeves stage 2) | same |
 | Embedding | `embedding_contrastive` | query/positive/negative triples (InfoNCE) | `bi_encoder` (Qwen3-Embedding-0.6B) |
@@ -189,6 +189,7 @@ the same job, and `docs/api_spec.md` describes every endpoint.
 | `llm/grpo.yaml` | GRPO of Qwen3.5-0.8B with the `exact_match` reward |
 | `llm/grpo_weighted.yaml` | GRPO with a weighted reward: answer match, a format regex and a length term; `loss_norm: token`, `reward_workers` for a judge |
 | `llm/quantize_awq.yaml` | 4-bit AWQ of Qwen3-0.6B with llm-compressor and the loss it costs (CUDA, `--extra quantize`) |
+| `llm/quantize_gguf.yaml` | Qwen3-0.6B as a q8_0 GGUF file for llama.cpp and Ollama (`--extra quantize`, then `environment/llama_cpp/setup.sh`) |
 | `llm/grpo_gsm8k.yaml` | GRPO on GSM8K word problems from the Hub with the `last_number` reward |
 | `llm/decision_readout.yaml` | one-pass decision model: full fine-tuning, readout head (Jev, jeff) |
 | `llm/decision_pointer.yaml` | reasoning decision model, stage 1: LoRA, pointer head, reasoning chains as context (Jeeves SFT) |
