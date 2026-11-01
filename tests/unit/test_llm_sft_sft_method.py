@@ -74,3 +74,23 @@ def test_tool_call_exact_compares_the_written_call_with_the_rendered_one(backbon
     for written, expected in ((reference, 1.0), (reference[1:], 0.0)):
         monkeypatch.setattr(backbone, "generate", lambda prompts, *a, written=written, **k: [[written] for _ in prompts])
         assert method.tool_call_exact(backbone, turns, 4, Progress()) == expected
+
+
+THINK_TEMPLATE = ("{% for m in messages %}<|im_start|>{{ m['role'] }}\n{% if 'reasoning_content' in m and loop.last %}<think> "
+                  "{{ m['reasoning_content'] }} </think> {% endif %}{{ m['content'] }}<|im_end|>\n{% endfor %}"
+                  "{% if add_generation_prompt %}<|im_start|>assistant\n{% endif %}")
+
+
+def test_reasoning_and_answer_losses_split_the_assistant_tokens_at_the_thinking_block(backbone: TransformerBackbone) -> None:
+    backbone.tokenizer.chat_template = THINK_TEMPLATE
+    method = SFT(SFT.Config(), TrainingConfig())
+    rows = [{"messages": [{"role": "user", "content": f"What is {a} plus 3 ?"},
+                          {"role": "assistant", "content": str(a + 3), "reasoning_content": f"{a} and 3"}]} for a in (2, 4)]
+    metrics = method.evaluate(backbone, rows, 4, Progress())
+    reasoning, answer = 5, 2  # "<think> 2 and 3 </think>", then "5 <|im_end|>"
+    assert metrics["tokens"] == 2 * (reasoning + answer)
+    expected = (metrics["reasoning_loss"] * reasoning + metrics["answer_loss"] * answer) / (reasoning + answer)
+    assert metrics["loss"] == pytest.approx(expected, rel=1e-5) and metrics["reasoning_loss"] != metrics["answer_loss"]
+    assert "reasoning_loss" not in method.evaluate(backbone, [{"messages": rows[0]["messages"][:1] + [{"role": "assistant", "content": "5"}]}], 4, Progress())
+    with pytest.raises(ValueError, match="only an assistant turn"):
+        method.check({"messages": [{"role": "user", "content": "q", "reasoning_content": "r"}, {"role": "assistant", "content": "a"}]})

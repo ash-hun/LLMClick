@@ -22,7 +22,8 @@ class Fake(Teacher):
     calls: list[list[dict[str, str]]] = []
     fail_after: int | None = None
 
-    def complete(self, messages: list[dict[str, str]], *, max_tokens: int, temperature: float, seed: int) -> Completion:
+    def complete(self, messages: list[dict[str, str]], *, max_tokens: int, temperature: float, seed: int,
+                 reasoning: bool = False) -> Completion:
         if Fake.fail_after is not None and len(Fake.calls) >= Fake.fail_after:
             raise ConnectionError("the teacher went away")
         Fake.calls.append(messages)
@@ -57,7 +58,8 @@ class Fake(Teacher):
             text = "Sorry, I cannot help with that."
         else:
             text = f"Answer {seed}: {content[:40]}"
-        return Completion(text, len(content.split()), len(text.split()), self.price[1] * len(text.split()) / 1_000_000)
+        thinking = f"The user asks: {content[:20]}" if reasoning else ""
+        return Completion(text, len(content.split()), len(text.split()), self.price[1] * len(text.split()) / 1_000_000, thinking)
 
 
 @pytest.fixture(autouse=True)
@@ -200,6 +202,22 @@ def test_kto_rows_label_every_judged_answer(tmp_path: Path) -> None:
     assert len(rows) == result["stages"]["select"]["count"] >= 2 and {row["label"] for row in rows} == {False}  # the fake judge gives 4
     assert set(rows[0]) == {"prompt", "completion", "label"}
     assert pipeline_runner.build(body).fingerprint("select") != pipeline_runner.build({**body, "select": {**body["select"], "kto_threshold": 3.0}}).fingerprint("select")
+
+
+def test_kept_reasoning_becomes_the_sft_rows_reasoning_content(tmp_path: Path) -> None:
+    body = config(tmp_path, respond={"answers_per_question": 1, "keep_reasoning": True})
+    result = pipeline_runner.build(body).run()
+    rows = [json.loads(line) for line in Path(result["stages"]["select"]["rows"]).read_text().splitlines()]
+    answer = rows[0]["messages"][-1]
+    assert answer["reasoning_content"].startswith("The user asks:") and answer["content"].startswith("Answer")
+    plain = config(tmp_path, respond={"answers_per_question": 1})
+    assert "keep_reasoning" not in pipeline_runner.build(plain).config.respond.model_dump()
+    assert pipeline_runner.build(plain).fingerprint("respond") != pipeline_runner.build(body).fingerprint("respond")
+    for teacher, select, message in (({"name": "anthropic"}, {"assemble": "sft"}, "summarized thinking"),
+                                     ({"name": "ollama", "model": "m"}, {"assemble": "sft"}, "think: true"),
+                                     ({"name": "fake"}, {"assemble": "dpo"}, "select.assemble: sft")):
+        with pytest.raises(ValueError, match=message):
+            pipeline_runner.build(config(tmp_path, teacher=teacher, select=select, respond={"keep_reasoning": True}))
 
 
 def test_the_shipped_config_validates_and_the_api_lists_the_recipe() -> None:

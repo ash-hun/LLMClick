@@ -1,0 +1,24 @@
+# Thinking SFT: the assistant turns carry `reasoning_content`, which the chat template writes as a <think> block before
+# the answer; the reasoning and the answer are both trained. The validate stage also reports their losses apart.
+pipeline:
+  recipe: llm_sft
+  name: sft-thinking-qwen3.5-0.8b
+  seed: 20260920
+  output_dir: ./output
+
+model:
+  architecture: hybrid              # Qwen3.5: linear-attention + full-attention layers, vision tower frozen
+  name: Qwen/Qwen3.5-0.8B
+  revision: 2fc06364715b967f1860aea9cf38778875588b17
+  template: {enable_thinking: true}   # Qwen3.5's template closes the thinking block empty unless told otherwise
+
+data:
+  sources:
+    - name: local_jsonl
+      path: samples/llm_think_sft.jsonl  # rows: {"messages": [..., {"role": "assistant", "content": ..., "reasoning_content": ...}]}
+  validation: 0.1
+
+training: {epochs: 1, lr: 1.0e-5, batch_size: 4, accumulation: 2, max_length: 512, max_steps: 8}
+
+validation:
+  max: {answer_loss: 1.0}           # the answer after the reasoning; reasoning_loss is reported beside it

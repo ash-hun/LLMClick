@@ -27,6 +27,7 @@ class Completion:
     input_tokens: int
     output_tokens: int
     cost_usd: float
+    reasoning: str = ""  # the model's thinking before `text`, when the caller asked for it and the provider returns it
 
 
 class Teacher:
@@ -46,7 +47,9 @@ class Teacher:
     def cost(self, input_tokens: int, output_tokens: int) -> float:
         return input_tokens * self.price[0] / MILLION + output_tokens * self.price[1] / MILLION
 
-    def complete(self, messages: list[Message], *, max_tokens: int, temperature: float, seed: int) -> Completion:
+    def complete(self, messages: list[Message], *, max_tokens: int, temperature: float, seed: int,
+                 reasoning: bool = False) -> Completion:
+        """The answer; with `reasoning`, the thinking before it as well (see each provider for where it comes from)."""
         raise NotImplementedError
 
 
@@ -67,14 +70,16 @@ class Ollama(Teacher):
     def __init__(self, params: dict[str, Any]) -> None:
         super().__init__({"think": False, **params})  # explicit, so the identity says whether the model thought
 
-    def complete(self, messages: list[Message], *, max_tokens: int, temperature: float, seed: int) -> Completion:
+    def complete(self, messages: list[Message], *, max_tokens: int, temperature: float, seed: int,
+                 reasoning: bool = False) -> Completion:
         base = str(self.params.get("base_url", "http://localhost:11434")).rstrip("/")
         body = {"model": self.model, "messages": messages, "stream": False, "think": bool(self.params["think"]),
                 "options": {"temperature": temperature, "num_predict": max_tokens, "seed": seed},
                 **({"keep_alive": self.params["keep_alive"]} if "keep_alive" in self.params else {})}
         payload = post_json(f"{base}/api/chat", body, {}, float(self.params.get("timeout", 600)))
         prompt, generated = int(payload.get("prompt_eval_count", 0)), int(payload.get("eval_count", 0))
-        return Completion(str(payload["message"]["content"]), prompt, generated, self.cost(prompt, generated))
+        thinking = str(payload["message"].get("thinking") or "") if reasoning else ""
+        return Completion(str(payload["message"]["content"]), prompt, generated, self.cost(prompt, generated), thinking)
 
 
 @TEACHERS.register("openai")
@@ -85,7 +90,8 @@ class OpenAIFormat(Teacher):
     model samples at its own temperature."""
     name = "openai"
 
-    def complete(self, messages: list[Message], *, max_tokens: int, temperature: float, seed: int) -> Completion:
+    def complete(self, messages: list[Message], *, max_tokens: int, temperature: float, seed: int,
+                 reasoning: bool = False) -> Completion:
         base = str(self.params.get("base_url", "https://api.openai.com/v1")).rstrip("/")
         key = os.environ.get(str(self.params.get("api_key_env", "OPENAI_API_KEY")), "")
         body: dict[str, Any] = {"model": self.model, "messages": messages, "seed": seed}
@@ -98,7 +104,10 @@ class OpenAIFormat(Teacher):
                             float(self.params.get("timeout", 600)))
         usage = payload.get("usage") or {}
         prompt, generated = int(usage.get("prompt_tokens", 0)), int(usage.get("completion_tokens", 0))
-        return Completion(str(payload["choices"][0]["message"]["content"]), prompt, generated, self.cost(prompt, generated))
+        message = payload["choices"][0]["message"]
+        # vLLM and SGLang return the thinking as `reasoning_content`, some gateways as `reasoning`; OpenAI returns none
+        thinking = str(message.get("reasoning_content") or message.get("reasoning") or "") if reasoning else ""
+        return Completion(str(message["content"]), prompt, generated, self.cost(prompt, generated), thinking)
 
 
 @TEACHERS.register("anthropic")
@@ -111,7 +120,11 @@ class Claude(Teacher):
         super().__init__({"model": "claude-opus-5-5", **params})
         self.client: Any = None
 
-    def complete(self, messages: list[Message], *, max_tokens: int, temperature: float, seed: int) -> Completion:
+    def complete(self, messages: list[Message], *, max_tokens: int, temperature: float, seed: int,
+                 reasoning: bool = False) -> Completion:
+        if reasoning:
+            raise ValueError("the anthropic teacher returns summarized thinking, not the reasoning that led to the answer; "
+                             "use a teacher whose raw reasoning is returned (ollama with think: true, an OpenAI-format server, local)")
         if self.client is None:
             try:
                 import anthropic
@@ -165,14 +178,22 @@ class Local(Teacher):
             self.backbone = backbone
         return self.backbone
 
-    def complete(self, messages: list[Message], *, max_tokens: int, temperature: float, seed: int) -> Completion:
+    def complete(self, messages: list[Message], *, max_tokens: int, temperature: float, seed: int,
+                 reasoning: bool = False) -> Completion:
+        """With `reasoning`, a reply that closes a thinking block is split there into the reasoning and the answer."""
         from core import device_selector
         with self.lock:
             backbone = self.load()
             device_selector.seed(backbone.device, seed)
             prompt = backbone.render(messages, True)
             tokens = backbone.generate([prompt], max_tokens, 1, temperature)[0][0]
-        return Completion(backbone.text(tokens), len(prompt), len(tokens), 0.0)
+        text, thinking, markers = backbone.text(tokens), "", backbone.markers
+        end = backbone.tokenizer.convert_tokens_to_ids(markers.think_end) if markers is not None else None
+        if reasoning and markers is not None and end in tokens:  # split on the token: some tokenizers drop it from text
+            cut = tokens.index(end)
+            thinking = backbone.text(tokens[:cut]).strip().removeprefix(markers.think).strip()
+            text = backbone.text(tokens[cut + 1:]).strip()
+        return Completion(text, len(prompt), len(tokens), 0.0, thinking)
 
     def release(self) -> None:
         if self.backbone is not None:

@@ -41,6 +41,34 @@ def test_ollama_and_openai_teachers_speak_their_protocols(monkeypatch: pytest.Mo
     assert sent[-1][1]["think"] is True and teacher_client.Ollama({"model": "m"}).identity() == {"name": "ollama", "model": "m", "think": False}
 
 
+def test_teachers_return_the_reasoning_only_when_asked(monkeypatch: pytest.MonkeyPatch) -> None:
+    from data import teacher_client
+
+    def fake_post(url: str, body: dict[str, Any], headers: dict[str, str], timeout: float) -> dict[str, Any]:
+        if "/api/chat" in url:
+            return {"message": {"content": "4", "thinking": "2 and 2"}, "prompt_eval_count": 1, "eval_count": 1}
+        return {"choices": [{"message": {"content": "4", "reasoning_content": "two twos"}}], "usage": {}}
+
+    monkeypatch.setattr(teacher_client, "post_json", fake_post)
+    ask = {"max_tokens": 9, "temperature": 0.0, "seed": 0}
+    ollama, openai = teacher_client.Ollama({"model": "m", "think": True}), teacher_client.OpenAIFormat({"model": "m"})
+    assert ollama.complete([], **ask, reasoning=True).reasoning == "2 and 2" and ollama.complete([], **ask).reasoning == ""
+    assert openai.complete([], **ask, reasoning=True).reasoning == "two twos" and openai.complete([], **ask).reasoning == ""
+    with pytest.raises(ValueError, match="summarized thinking"):
+        teacher_client.Claude({}).complete([], **ask, reasoning=True)
+
+
+def test_the_local_teacher_splits_its_thinking_block(tiny_model: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    from data import teacher_client
+
+    local = teacher_client.Local({"name": str(tiny_model), "architecture": "transformer", "device": "cpu"})
+    backbone = local.load()
+    monkeypatch.setattr(backbone, "generate", lambda *a, **k: [[backbone.token_ids("<think> 2 and 2 </think> 4")]])
+    split = local.complete([{"role": "user", "content": "hi"}], max_tokens=9, temperature=0.0, seed=0, reasoning=True)
+    assert (split.reasoning, split.text) == ("2 and 2", "4")
+    assert local.complete([{"role": "user", "content": "hi"}], max_tokens=9, temperature=0.0, seed=0).reasoning == ""
+
+
 def test_the_anthropic_teacher_uses_the_sdk_and_prices_the_call(monkeypatch: pytest.MonkeyPatch) -> None:
     from data import teacher_client
 
