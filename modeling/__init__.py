@@ -1,3 +1,3 @@
 """Modeling channel: pipelines that turn a config into a trained, validated model. Importing it registers its recipes."""
 
-from modeling import embedding, llm, merge, quantize, tts, wakeword  # noqa: F401
+from modeling import embedding, llm, merge, quantize, tts, vocabulary, wakeword  # noqa: F401

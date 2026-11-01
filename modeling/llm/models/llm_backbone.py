@@ -89,6 +89,7 @@ class LLMBackbone(Backbone):
     markers: ClassVar[Markers | None] = None     # needed by decision recipes; set by architectures that support them
     config: LLMBackboneConfig
     head: "DecisionHead | None" = None           # set when `model.head` names one
+    new_tokens: list[int] = []                   # ids `model.tokenizer` names: a LoRA adapter trains their embedding rows
     scorer: bool = False                         # set by `llm_reward`: one score per sequence instead of next-token logits
 
     def __init__(self, config: LLMBackboneConfig) -> None:
@@ -112,6 +113,7 @@ class LLMBackbone(Backbone):
             self.model = loader.from_pretrained(origin, revision=revision, device_map={"": device}, **quantized, **options)
         else:
             self.model = loader.from_pretrained(origin, revision=revision, dtype=self.dtype, **options).to(device)
+        self.new_tokens = self.extend_vocabulary() if checkpoint is None and self.config.tokenizer is not None else []
         for name, parameter in self.model.named_parameters():
             if any(fragment in name for fragment in self.frozen):
                 parameter.requires_grad_(False)
@@ -144,6 +146,46 @@ class LLMBackbone(Backbone):
         set_peft_model_state_dict(merged, get_peft_model_state_dict(self.model))
         return merged.merge_and_unload()
 
+    def extend_vocabulary(self) -> list[int]:
+        """Apply `model.tokenizer`: words become merges of the BPE tokenizer, special tokens are added, the chat template
+        is replaced, and the embeddings grow to cover the new ids. A new row starts as the mean of the rows of the
+        pieces it joins, so the model reads a new token about as it read the pieces; a random row would throw the
+        first steps' loss far up. Returns the ids of the tokens the config names, which a LoRA adapter trains."""
+        from modeling.llm.models.vocabulary_extender import extend
+        edit = self.config.tokenizer
+        assert edit is not None
+        words = list(edit.tokens)
+        if edit.tokens_file is not None:
+            words += [line.strip() for line in Path(edit.tokens_file).read_text(encoding="utf-8").splitlines()
+                      if line.strip() and not line.startswith("#")]
+        created = extend(self.tokenizer, words) if words else {}
+        known = set(self.tokenizer.get_vocab())
+        parts = {token: self.tokenizer(token, add_special_tokens=False)["input_ids"] for token in edit.special_tokens}
+        self.tokenizer.add_special_tokens({"extra_special_tokens": list(edit.special_tokens)}, replace_extra_special_tokens=False)
+        created.update({token: parts[token] for token in edit.special_tokens if token not in known})
+        if edit.chat_template is not None:
+            self.tokenizer.chat_template = Path(edit.chat_template).read_text(encoding="utf-8")
+        self._tokens.clear()
+        if created:
+            self.grow_embeddings(created)
+        named = {int(self.tokenizer.convert_tokens_to_ids(token)) for token in [*created, *edit.special_tokens]}
+        for word in words:  # on a checkpoint that already has them nothing is created, yet an adapter must still train them
+            for variant in (word, f" {word}"):
+                ids = self.tokenizer(variant, add_special_tokens=False)["input_ids"]
+                named.update(ids if len(ids) == 1 else [])
+        return sorted(named)
+
+    @torch.no_grad()
+    def grow_embeddings(self, created: dict[str, list[int]]) -> None:
+        """Embedding rows for the new ids, each the mean of its pieces' rows; the output layer too unless it is tied."""
+        if len(self.tokenizer) > self.model.get_input_embeddings().weight.shape[0]:
+            self.model.resize_token_embeddings(len(self.tokenizer), mean_resizing=False)
+        inputs, outputs = self.model.get_input_embeddings().weight, self.model.get_output_embeddings().weight
+        for token, parts in created.items():
+            index = int(self.tokenizer.convert_tokens_to_ids(token))
+            for weight in (inputs, *([] if outputs is inputs else [outputs])):
+                weight[index] = weight[parts].mean(dim=0)
+
     def model_class(self) -> Any:
         """The transformers Auto class to load: the architecture's own, or a sequence classifier for a reward model."""
         if self.scorer:
@@ -153,6 +195,9 @@ class LLMBackbone(Backbone):
 
     def loader_options(self) -> dict[str, Any]:
         return {"num_labels": 1} if self.scorer else {}
+
+    def trainable_tokens(self) -> list[int]:
+        return list(self.new_tokens)
 
     def saved_modules(self) -> list[str]:
         return ["score"] if self.scorer else []  # the reward model's fresh score layer trains beside a LoRA adapter
