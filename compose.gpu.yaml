@@ -1,0 +1,11 @@
+# NVIDIA GPUs for the llmclick service: docker compose -f compose.yaml -f compose.gpu.yaml up -d --build
+# The host needs the NVIDIA driver (580 or newer for the CUDA 13 torch wheels) and nvidia-container-toolkit.
+services:
+  llmclick:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
