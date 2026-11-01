@@ -13,6 +13,7 @@ what is already built, shows progress, and never hands on a trained model that h
 | LLM | `llm_dpo` | chosen/rejected preference pairs | same |
 | LLM | `llm_orpo` | the same pairs: SFT on chosen plus an odds-ratio term, no reference model | same |
 | LLM | `llm_simpo` | the same pairs: a margin on the mean token log-probability, no reference model | same |
+| LLM | `llm_kto` | answers labelled desirable or not, no pairs needed | same |
 | LLM | `llm_grpo` | prompts scored by a reward function (answer match, regex, length, a teacher judge, or a weighted sum) | same |
 | LLM | `llm_quantize` | nothing: a trained checkpoint or Hub model quantized (AWQ, GPTQ, W8A8, FP8, bitsandbytes NF4/INT8), its held-out loss against the base | same |
 | LLM | `llm_decision_sft` | decision questions: a head scores the options (Jev, jeff, Jeeves stage 1) | same, plus `model.head`: `readout` or `pointer` |
@@ -181,6 +182,7 @@ the same job, and `docs/api_spec.md` describes every endpoint.
 | `llm/sft_transformer.yaml` | the same recipe on Qwen3-0.6B (transformer) |
 | `llm/instruction.yaml` | instruction tuning of Qwen3.5-0.8B |
 | `llm/dpo.yaml` | DPO of Qwen3.5-0.8B on preference pairs |
+| `llm/kto.yaml` | KTO of Qwen3.5-0.8B on labelled single answers |
 | `llm/orpo.yaml`, `llm/simpo.yaml` | ORPO and SimPO of Qwen3.5-0.8B on the DPO pairs |
 | `llm/sft_lora.yaml` | the SFT recipe with a LoRA adapter instead of full fine-tuning |
 | `llm/sft_qlora.yaml` | the SFT recipe on Qwen3-1.7B with QLoRA: 4-bit base, LoRA adapter (CUDA, `--extra quantize`) |
@@ -407,6 +409,7 @@ pipeline:
 | `llm_dpo` | `prompt`, `chosen`, `rejected` | `accuracy` (chosen more likely than rejected), `margin` |
 | `llm_orpo` | the same | `accuracy`, `margin` (log-odds of chosen over rejected) |
 | `llm_simpo` | the same | `accuracy`, `margin` (mean token log-probability of chosen over rejected) |
+| `llm_kto` | `prompt`, `completion`, `label` | `desirable_logp`, `undesirable_logp`, `gap` (desirable minus undesirable, per token) |
 | `llm_quantize` | `messages` | `loss`, `perplexity`, `base_loss`, `loss_delta` (quantized minus base), `size_mb` |
 | `llm_grpo` | `prompt` + what the reward reads (`answer`) | `reward` (greedy completion) |
 | `llm_decision_sft` | `state`, `questions` (Jev records) or `state`, `question`, `label` (one question per row) | `accuracy`, `nll`, `ece` |

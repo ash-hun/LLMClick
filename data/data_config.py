@@ -84,13 +84,15 @@ class DecisionQuestion(Section):
 
 
 class SelectSettings(Section):
-    assemble: Literal["sft", "dpo", "grpo", "decision"] = "sft"
+    added_keys: ClassVar[frozenset[str]] = frozenset({"kto_threshold"})
+    assemble: Literal["sft", "dpo", "grpo", "decision", "kto"] = "sft"
     decision: DecisionQuestion | None = Field(default=None, description="assemble: decision, or verify.schema_recipe: "
                                                                         "llm_decision_sft: the question every row asks")
     dedup: DedupSettings = Field(default_factory=DedupSettings)
     leak: LeakSettings | None = None
     margin: float = Field(default=1.0, ge=0, description="dpo: the judge-score gap a chosen and rejected answer must have")
     max_rows: int | None = Field(default=None, ge=1)
+    kto_threshold: float = Field(default=7.0, ge=1, le=10, description="kto: a judge score at or above this labels an answer desirable")
 
 
 class BudgetSettings(Section):
@@ -141,6 +143,8 @@ class SyntheticConfig(SeedConfig):
             REWARDS.check(*reward_names(self.verify.reward.name, self.verify.reward.params))
         if self.verify.judge is not None and self.verify.judge.teacher is not None and self.verify.judge.teacher.name not in TEACHERS:
             raise ValueError(f"Unknown judge teacher {self.verify.judge.teacher.name!r}; registered: {TEACHERS.names()}")
+        if self.select.assemble == "kto" and self.verify.judge is None:
+            raise ValueError("kto rows are labelled by the judge's score: set verify.judge (and a min_score below select.kto_threshold)")
         if (self.select.assemble == "decision" or self.verify.schema_recipe == "llm_decision_sft") and self.select.decision is None:
             raise ValueError("decision rows need select.decision: the question, its instructions and the criteria of its options")
         return self

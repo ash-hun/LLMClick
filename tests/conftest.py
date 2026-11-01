@@ -17,6 +17,9 @@ from core import pipeline_runner
 CHATML = ("{% for m in messages %}<|im_start|>{{ m['role'] }}\n{{ m['content'] }}<|im_end|>\n{% endfor %}"
           "{% if add_generation_prompt %}<|im_start|>assistant\n{% endif %}")
 LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost"}
+# the tiny model's vocabulary comes from these files only: a sample added for a new recipe must not reshuffle the
+# token ids, and with them the random weights every other test was tuned on
+CORPUS = ("embedding_contrastive", "llm_decision", "llm_dpo", "llm_grpo", "llm_instruction", "llm_sft")
 
 
 @pytest.fixture(autouse=True)
@@ -43,7 +46,7 @@ def tiny_model(tmp_path_factory: pytest.TempPathFactory) -> Path:
                "<|fim_suffix|>", "<|box_start|>", "<|box_end|>"]
     tokenizer = Tokenizer(models.WordLevel(unk_token="<unk>"))
     tokenizer.pre_tokenizer = pre_tokenizers.Whitespace()
-    corpus = [path.read_text() for path in sorted(Path("samples").glob("*.jsonl"))]
+    corpus = [Path(f"samples/{name}.jsonl").read_text() for name in CORPUS]
     corpus += ["system user assistant Context Question Options no yes A B C D E F"]
     tokenizer.train_from_iterator(corpus, trainers.WordLevelTrainer(special_tokens=special))
     fast = PreTrainedTokenizerFast(tokenizer_object=tokenizer, unk_token="<unk>", pad_token="<pad>",

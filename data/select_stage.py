@@ -74,6 +74,20 @@ def assemble(kind: str, group: list[Row], margin: float, question: DecisionQuest
     return {"prompt": content, "chosen": top["text"], "rejected": bottom["text"]}
 
 
+def kto_rows(group: list[Row], threshold: float) -> list[Row]:
+    """Pure: every judged answer of a prompt as its own row, desirable when its score reaches `threshold`. KTO needs
+    no pairs, so the weaker answers a DPO row would drop are kept as undesirable ones; verify's `min_score` still
+    rejects the worst before they get here."""
+    rows = []
+    for answer in best_first(group):
+        if answer.get("score") is None:
+            continue
+        content = f"{answer['context']}\n\n{answer['instruction']}" if answer.get("context") else answer["instruction"]
+        rows.append({"prompt": content, "completion": answer["text"], "label": float(answer["score"]) >= threshold,
+                     "_sample": answer["sample"]})
+    return rows
+
+
 class SelectStage(Stage[SyntheticConfig]):
     name: ClassVar[str] = "select"
     requires: ClassVar[tuple[str, ...]] = ("verify",)
@@ -126,6 +140,11 @@ class SelectStage(Stage[SyntheticConfig]):
             groups.setdefault(row["prompt_id"], []).append(row)
         rows: list[Row] = []
         for prompt_id in sorted(groups):
+            if settings.assemble == "kto":
+                answers = kto_rows(groups[prompt_id], settings.kto_threshold)
+                counts["unassembled"] += not answers
+                rows += [{**answer, "_prompt_id": prompt_id, "_id": key("row", "kto", prompt_id, answer["_sample"])} for answer in answers]
+                continue
             made = assemble(settings.assemble, groups[prompt_id], settings.margin, settings.decision)
             if made is None:
                 counts["unassembled"] += 1

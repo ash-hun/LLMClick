@@ -17,6 +17,7 @@ from modeling.llm.models import LLM_BACKBONES
 from modeling.llm.methods.simpo_method import SimPO
 from modeling.llm.methods.orpo_method import ORPO
 from modeling.llm.methods.dpo_method import DPO
+from modeling.llm.methods.kto_method import KTO
 from modeling.llm.methods.sft_method import SFT
 
 
@@ -62,6 +63,11 @@ class ORPOConfig(LLMConfig):
 class SimPOConfig(LLMConfig):
     method_class: ClassVar = SimPO
     method: SimPO.Config = Field(default_factory=SimPO.Config)
+
+
+class KTOConfig(LLMConfig):
+    method_class: ClassVar = KTO
+    method: KTO.Config = Field(default_factory=KTO.Config)
 
 
 class GRPOConfig(LLMConfig):
