@@ -41,6 +41,7 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | `llm_grpo` | LLM 보상 기반 강화 학습(GRPO) | `llmclick run configs/llm/grpo.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_instruction` | instruction/input/output 레코드로 LLM 지시 튜닝 | `llmclick run configs/llm/instruction.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_kto` | 짝 없이 바람직함/아님 라벨만으로 하는 선호 최적화(KTO) | `llmclick run configs/llm/kto.yaml`, `POST /api/jobs` | 구현됨 |
+| `llm_merge` | 학습 없이 여러 체크포인트를 하나로 병합(linear, slerp, task_arithmetic, ties, dare_linear, dare_ties)과 기준 대비 손실 검증 | `llmclick run configs/llm/merge_ties.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_orpo` | 기준 모델 없는 선호 최적화(ORPO): chosen SFT 와 odds 비 항 | `llmclick run configs/llm/orpo.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_quantize` | 학습된 체크포인트나 Hub 모델 양자화(AWQ, GPTQ, W8A8, FP8, bitsandbytes NF4/INT8, GGUF)와 기준 대비 손실 검증 | `llmclick run configs/llm/quantize_awq.yaml`, `llmclick run configs/llm/quantize_gguf.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_reward` | chosen/rejected 짝으로 답마다 점수 하나를 내는 보상 모델(Bradley-Terry) 학습 | `llmclick run configs/llm/reward.yaml`, `POST /api/jobs` | 구현됨 |
@@ -649,6 +650,42 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 
 ---
 
+### llm_merge: 모델 병합
+
+**설명**: 같은 기준 모델에서 갈라진 체크포인트 여럿을 학습 없이 하나로 합치고, 같은 held-out 행에서 기준 모델과 loss 를 비교한다. 규칙은 `linear`(가중 평균, model soup), `slerp`(두 모델 사이 구면 보간), `task_arithmetic`(기준 + 변화량의 가중합), `ties`(변화량을 큰 값만 남기고 부호를 선출해 같은 부호끼리 평균), `dare_linear`, `dare_ties`(변화량을 무작위로 버리고 남은 값을 키워 더하거나 TIES 로 합침)다. 병합하는 스테이지 이름이 `train` 이라 `validate/checkpoint` 링크, `evaluation_*` 레시피, 다른 실험의 `model.init` 이 학습된 모델처럼 읽는다.
+
+**진입점**: `llmclick run configs/llm/merge_ties.yaml`, `POST /api/jobs`.
+
+**입력과 결과**
+
+| 입력 | 결과 |
+|---|---|
+| `model`(기준 모델: task 규칙이 변화량을 재는 기준이고 held-out loss 비교 대상), `merge.rule`, `merge.models`(`path`: 체크포인트 디렉터리, 또는 `name`+`revision`: Hub 모델, `weight`), `merge.t`(slerp), `merge.density`(ties, dare), SFT 대화 행(held-out 몫이 측정) | `train` 체크포인트(병합 safetensors, 원본의 config 와 토크나이저), `validation.json`(loss, perplexity, base_loss, loss_delta) |
+
+**처리 흐름**: `MergePipeline` 에서 `data`(`DataStage` 재사용), `train`(기준 모델 held-out loss 측정 후 safetensors 를 텐서 단위로 읽어 병합, 임시 디렉터리에 쓰고 끝나면 이름 변경), `validate`(병합 모델 loss 와 `loss_delta`) 순.
+
+**구현 파일**
+
+| 파일 | 층 | 역할 |
+|---|---|---|
+| `modeling/merge/__init__.py` | package | 병합 패키지, import 시 레시피 등록 |
+| `modeling/merge/merge_pipeline.py` | pipeline | `MergePipeline` 등록, catalogue 에 규칙 목록 |
+| `modeling/merge/merge_config.py` | config | `MergeConfig`(`merge:` 섹션, 병합할 모델의 출처와 고정), 규칙별 모델 수 검사, adapter 거부 |
+| `modeling/merge/merge_rule.py` | rule | `RULES` 레지스트리와 여섯 규칙, 텐서 하나의 병합 |
+| `modeling/merge/merge_stages.py` | stage | `MergeStage`, `MergeMeasureStage`, 파일 단위 병합(텐서 이름 대조, tie 된 출력층, DARE 시드) |
+
+**테스트**
+
+| 종류 | 파일 |
+|---|---|
+| 단위 | `tests/unit/test_llm_merge_merge_rule.py` |
+| 통합 | `tests/integ/test_llm_merge.py` |
+| 통합 | `tests/integ/test_tuning.py`(설정 검증) |
+
+**제약과 미구현**: 병합할 모델은 같은 아키텍처라 텐서 이름과 shape 가 같아야 하고, 다르면 첫 차이를 들어 거부한다. tie 된 출력층(`lm_head.weight`)은 원본 파일에 있어도 대조와 병합에서 빼고, 불러올 때 다시 묶인다. task 규칙의 기준 모델에만 있는 텐서는 병합 결과에서 빠진다. Qwen3.5 공개 파일의 multi-token prediction 층(`mtp.*`)이 그렇다: transformers 가 읽지 않아 학습 체크포인트에 없다. 양자화된 체크포인트와 decision 헤드가 있는 체크포인트는 거부한다. 메모리에는 모델마다 텐서 하나씩만 올라오고, 출력 파일 하나 분량의 병합 결과가 쌓였다가 쓰인다. 병합 텐서는 첫 모델의 dtype(학습 체크포인트는 FP32)을 따르고 config 의 dtype 도 그렇게 바꾼다. bf16 기준 모델의 dtype 으로 쓰면 작은 변화량이 반올림으로 사라진다. DARE 가 버리는 위치는 `pipeline.seed` 와 텐서 이름으로 정해져 다시 실행해도 같다. `path` 는 실행할 때 확인하므로 아직 돌지 않은 실험을 가리킬 수 있고, 로컬 디렉터리면 그 내용이 train 지문에 들어간다. 저장소 안의 구현이고 mergekit 은 쓰지 않는다. MPS 에서 Qwen3-0.6B 의 SFT 와 distill 파일럿 체크포인트를 `ties` 로 합치자 SFT 행 held-out loss 가 9.9e-6(SFT 체크포인트 1.06e-5, 기준 0.147)이었다. Qwen3.5-0.8B 에서는 같은 체크포인트끼리의 `linear` 와 모델 하나의 `task_arithmetic` 이 그 체크포인트의 loss(0.703)를 그대로 냈다.
+
+---
+
 ### llm_orpo: 기준 모델 없는 선호 최적화(ORPO)
 
 **설명**: chosen 답의 토큰당 NLL 에 chosen 대 rejected 의 log-odds 비 항을 `lam` 만큼 더해 학습한다. SFT 와 선호 정렬을 한 손실로 하고 기준 모델 패스가 없다.
@@ -984,7 +1021,7 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | `modeling/llm/methods/__init__.py` | LLM 학습 방법 패키지 | `llm_*` |
 | `modeling/llm/methods/llm_method.py` | 대화를 토큰 id 와 채점 위치로, 샘플링한 완성문의 채점 표시와 토큰별 로그 확률 | `llm_sft`, `llm_instruction`, `llm_dpo`, `llm_orpo`, `llm_simpo`, `llm_grpo`, `llm_distill`, `llm_decision_*`, `llm_quantize` |
 | `modeling/llm/models/__init__.py` | `LLM_BACKBONES` 카탈로그 | `llm_*`, `evaluation_*` |
-| `modeling/llm/models/llm_backbone.py` | LLM 백본 기반: 채팅 렌더링, 로짓, 생성, QLoRA 4/8bit 로드와 병합 저장, 양자화된 체크포인트 로드 | `llm_*`, `data_synthetic`, `evaluation_benchmark`, `evaluation_decision` |
+| `modeling/llm/models/llm_backbone.py` | LLM 백본 기반: 채팅 렌더링, 로짓, 생성, QLoRA 4/8bit 로드와 병합 저장, 양자화된 체크포인트 로드, 보상 모델(sequence classifier) 로드, 파일을 읽는 도구용 로컬 스냅숏(`local_snapshot`) | `llm_*`, `data_synthetic`, `evaluation_benchmark`, `evaluation_decision` |
 | `modeling/llm/models/backbone_config.py` | LLM `model:` 섹션 | `llm_*`, `evaluation_*` |
 | `modeling/llm/models/hybrid_backbone.py` | 하이브리드 디코더(Qwen3.5-0.8B, 2B) | `llm_*` |
 | `modeling/llm/models/transformer_backbone.py` | 일반 디코더 트랜스포머(Qwen3-0.6B, 1.7B) | `llm_*` |

@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 import torch
 
-from modeling.llm.models.llm_backbone import GGUF_FILE, quantization_config
+from modeling.llm.models.llm_backbone import GGUF_FILE, local_snapshot, quantization_config
 from core.recipe_registry import Registry
 from core.device_selector import Device
 from core.settings import get_settings
@@ -159,18 +159,6 @@ def gguf_version() -> str | None:
     return commit.read_text().strip() if commit.is_file() else None
 
 
-def local_source(job: QuantizeJob) -> Path:
-    """The converter reads a directory: a Hub model is taken from the Hugging Face cache, downloaded if missing."""
-    if Path(job.origin).is_dir():
-        return Path(job.origin)
-    from huggingface_hub import snapshot_download
-    from huggingface_hub.errors import LocalEntryNotFoundError
-    try:  # the base model was just loaded from the cache, so it is normally there; this also works offline
-        return Path(snapshot_download(job.origin, revision=job.revision, local_files_only=True))
-    except LocalEntryNotFoundError:
-        return Path(snapshot_download(job.origin, revision=job.revision))
-
-
 @SCHEMES.register("gguf")
 def gguf(job: QuantizeJob) -> None:
     """A GGUF file for llama.cpp and Ollama (`type`: q8_0, the default, f16 or bf16), written by llama.cpp's converter
@@ -180,7 +168,7 @@ def gguf(job: QuantizeJob) -> None:
     kind = str(job.params.get("type", "q8_0"))
     if kind not in GGUF_TYPES:
         raise ValueError(f"gguf type {kind!r}; one of {sorted(GGUF_TYPES)} (k-quants need llama.cpp's compiled tools)")
-    source, directory = local_source(job), llama_cpp()
+    source, directory = local_snapshot(job.origin, job.revision), llama_cpp()
     family = json.loads((source / "config.json").read_text()).get("model_type")
     if family not in GGUF_CONFIG_MAPPING:
         raise ValueError(f"model_type {family!r} cannot be read back from GGUF by transformers, so it could not be validated")
