@@ -1,7 +1,9 @@
 """`framework` core/logger.py: one root handler however often it is set up, and secrets never reach the rendered output."""
 
 import io
+import json
 import logging
+import warnings
 
 import pytest
 
@@ -31,3 +33,19 @@ def test_sensitive_keys_are_masked_in_the_rendered_line(fresh: None) -> None:
     logger.get_logger("test").info("login_failed", password="hunter2", headers={"Authorization": "Bearer abc"})
 
     assert "hunter2" not in stream.getvalue() and "abc" not in stream.getvalue() and "login_failed" in stream.getvalue()
+
+
+def test_python_warnings_render_as_json_records(fresh: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(logging, "_warnings_showwarning", None)
+    logger.configure_logging(level="INFO", fmt="json")
+    handler, stream = logging.getLogger().handlers[0], io.StringIO()
+    assert isinstance(handler, logging.StreamHandler)
+    handler.setStream(stream)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("always")
+        warnings.warn("triton unavailable", UserWarning, stacklevel=1)
+    logging.captureWarnings(False)
+
+    record = json.loads(stream.getvalue().strip().splitlines()[-1])
+    assert record["logger"] == "py.warnings" and "triton unavailable" in record["event"]
