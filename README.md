@@ -185,7 +185,7 @@ the same job, and `docs/api_spec.md` describes every endpoint.
 | `llm/sft_lora.yaml` | the SFT recipe with a LoRA adapter instead of full fine-tuning |
 | `llm/sft_qlora.yaml` | the SFT recipe on Qwen3-1.7B with QLoRA: 4-bit base, LoRA adapter (CUDA, `--extra quantize`) |
 | `llm/grpo.yaml` | GRPO of Qwen3.5-0.8B with the `exact_match` reward |
-| `llm/grpo_weighted.yaml` | GRPO with a weighted reward: answer match, a format regex and a length term |
+| `llm/grpo_weighted.yaml` | GRPO with a weighted reward: answer match, a format regex and a length term; `loss_norm: token`, `reward_workers` for a judge |
 | `llm/quantize_awq.yaml` | 4-bit AWQ of Qwen3-0.6B with llm-compressor and the loss it costs (CUDA, `--extra quantize`) |
 | `llm/grpo_gsm8k.yaml` | GRPO on GSM8K word problems from the Hub with the `last_number` reward |
 | `llm/decision_readout.yaml` | one-pass decision model: full fine-tuning, readout head (Jev, jeff) |
@@ -739,6 +739,10 @@ samples, and `method.clip` bounds how far: GRPO clips the policy ratio to 1 +- c
 importance weight of each reasoning token at 1 + clip. `llm_grpo` also takes `method.beta`, a KL penalty towards
 the base model; it needs `training.adapter`, because the base model is then the same weights with the adapter
 switched off and no second model is loaded.
+
+`loss_norm: token` averages the clipped objective over every graded token of the batch instead of per completion first,
+so long completions are not weighed down (Dr. GRPO, DAPO); `scale_rewards: false` keeps the advantages unscaled by the
+group's standard deviation; `reward_workers` scores a batch's completions on that many threads, for a `judge` reward.
 
 ```yaml
 method: {group_size: 4, iterations: 2, clip: 0.2, beta: 0.05}

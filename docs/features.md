@@ -523,7 +523,7 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 
 | 입력 | 결과 |
 |---|---|
-| 행 `{"prompt", ...보상이 읽는 키(예: "answer")}`(예: `samples/llm_grpo.jsonl`), `method`(`reward`, `group_size`, `beta`, `clip`, `iterations`, `max_new_tokens`, `temperature`) | `train` 체크포인트, `validation.json`(reward) |
+| 행 `{"prompt", ...보상이 읽는 키(예: "answer")}`(예: `samples/llm_grpo.jsonl`), `method`(`reward`, `group_size`, `beta`, `clip`, `iterations`, `max_new_tokens`, `temperature`, `loss_norm`, `scale_rewards`, `reward_workers`) | `train` 체크포인트, `validation.json`(reward) |
 
 **처리 흐름**: `GRPOPipeline` 에서 `data`, `train`, `validate` 순.
 
@@ -545,7 +545,7 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | 통합 | `tests/integ/test_llm_grpo.py` |
 | 통합 | `tests/integ/test_tuning.py` |
 
-**제약과 미구현**: 등록되지 않은 보상은 거부하고, `weighted` 는 각 `parts` 의 이름도 검사하며 `weighted` 를 중첩하지 않는다(`modeling/llm/methods/grpo_reward.py`). `method.beta > 0` 이면 `training.adapter` 가 필요하다: KL 기준이 어댑터 아래의 기준 모델이다(`modeling/llm/llm_config.py`). `judge` 는 새 완성문마다 교사를 한 번 부른다(스텝당 최대 `group_size` x `batch_size` 회, 순차 호출). 판정 응답은 신뢰하지 않는 입력이라 1-10 범위 밖의 숫자나 숫자 없는 응답은 최저점이다.
+**제약과 미구현**: 등록되지 않은 보상은 거부하고, `weighted` 는 각 `parts` 의 이름도 검사하며 `weighted` 를 중첩하지 않는다(`modeling/llm/methods/grpo_reward.py`). `method.beta > 0` 이면 `training.adapter` 가 필요하다: KL 기준이 어댑터 아래의 기준 모델이다(`modeling/llm/llm_config.py`). `judge` 는 새 완성문마다 교사를 한 번 부른다(스텝당 최대 `group_size` x `batch_size` 회, 순차 호출). 판정 응답은 신뢰하지 않는 입력이라 1-10 범위 밖의 숫자나 숫자 없는 응답은 최저점이다. `reward_workers` 가 1보다 크면 한 배치의 보상을 스레드로 동시에 계산하고 결과 순서와 값은 순차 계산과 같다. `local` 교사는 프로세스 안의 모델 하나라 호출이 잠금으로 차례를 지킨다(`data/teacher_client.py`). `loss_norm: token` 은 배치의 채점 토큰 전체로 평균을 내 긴 완성문의 토큰이 짧은 것과 같은 무게를 갖는다(Dr. GRPO, DAPO). 평균은 마이크로 배치 안에서 내므로 `accumulation` 이 1보다 크면 스텝 전체의 토큰 평균과 조금 다르다. `scale_rewards: false` 는 그룹 표준편차로 나누지 않는다. 세 키는 기본값이면 지문에서 빠진다.
 
 ---
 

@@ -21,6 +21,8 @@ data:
 method:
   group_size: 4
   max_new_tokens: 16
+  loss_norm: token                  # every graded token counts alike, so long completions are not weighed down
+  reward_workers: 4                 # score a batch's completions concurrently; pays off with the judge part
   reward:
     name: weighted
     parts:
