@@ -1,0 +1,33 @@
+# Agentic RL: Qwen3-0.6B answers arithmetic it cannot do in its head by calling a calculator, over several turns;
+# the final answer is rewarded and GRPO compares the trajectories of each prompt. Start from a tool-calling SFT
+# checkpoint (`model.init`) when the base model does not call tools reliably.
+pipeline:
+  recipe: llm_agent_rl
+  name: agent-rl-qwen3-0.6b
+  seed: 20260920
+  output_dir: ./output
+
+model:
+  architecture: transformer
+  name: Qwen/Qwen3-0.6B
+  revision: c1899de289a04d12100db370d81485cdf75e47ca
+  template: {enable_thinking: false}   # Qwen3's chat template opens a thinking block unless told not to
+
+data:
+  sources:
+    - name: local_jsonl
+      path: samples/llm_agent_rl.jsonl  # rows: {"prompt": ..., "answer": ...}; the environment brings the tools
+  validation: 0.1
+
+method:
+  environment: {name: calculator}     # or {name: lookup, path: <docs.jsonl>}
+  max_turns: 3                        # a trajectory without a final answer by then scores as an empty answer
+  max_new_tokens: 96                  # per turn
+  group_size: 4
+  temperature: 1.0
+  reward: {name: last_number}         # the final answer's last number against the row's answer
+
+training: {epochs: 1, lr: 1.0e-6, batch_size: 2, accumulation: 2, max_length: 1024, max_steps: 6}
+
+validation:
+  min: {reward: 0.0}                # mean reward of greedy trajectories; turns, tool_calls, malformed, answered beside it

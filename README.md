@@ -15,6 +15,7 @@ what is already built, shows progress, and never hands on a trained model that h
 | LLM | `llm_simpo` | the same pairs: a margin on the mean token log-probability, no reference model | same |
 | LLM | `llm_kto` | answers labelled desirable or not, no pairs needed | same |
 | LLM | `llm_reward` | the same pairs: a reward model, one score per answer (Bradley-Terry), saved as a sequence classifier | same |
+| LLM | `llm_agent_rl` | prompts answered over several turns with an environment's tools (calculator, document lookup); trajectories rewarded by the final answer (agentic GRPO) | same |
 | LLM | `llm_grpo` | prompts scored by a reward function (answer match, regex, length, a teacher judge, an `llm_reward` model, or a weighted sum) | same |
 | LLM | `llm_distill` | prompts the student answers itself, every token graded by a larger teacher with the same vocabulary (on-policy distillation) | same |
 | LLM | `llm_pretrain` | plain text, documents packed into full-length blocks, loss on every token (continued pretraining) | same |
@@ -203,6 +204,7 @@ the same job, and `docs/api_spec.md` describes every endpoint.
 | `llm/quantize_awq.yaml` | 4-bit AWQ of Qwen3-0.6B with llm-compressor and the loss it costs (CUDA, `--extra quantize`) |
 | `llm/quantize_gguf.yaml` | Qwen3-0.6B as a q8_0 GGUF file for llama.cpp and Ollama (`--extra quantize`, then `environment/llama_cpp/setup.sh`) |
 | `llm/merge_ties.yaml` | TIES merge of the `sft_transformer.yaml` and `distill.yaml` checkpoints of Qwen3-0.6B (run those first) |
+| `llm/agent_rl.yaml` | agentic RL of Qwen3-0.6B: arithmetic with a calculator over up to three turns |
 | `llm/grpo_gsm8k.yaml` | GRPO on GSM8K word problems from the Hub with the `last_number` reward |
 | `llm/decision_readout.yaml` | one-pass decision model: full fine-tuning, readout head (Jev, jeff) |
 | `llm/decision_pointer.yaml` | reasoning decision model, stage 1: LoRA, pointer head, reasoning chains as context (Jeeves SFT) |
@@ -429,6 +431,7 @@ pipeline:
 | `llm_tokenizer` | `text` | `base_chars_per_token`, `chars_per_token`, `token_reduction` (share of held-out tokens saved), `words` |
 | `llm_quantize` | `messages` | `loss`, `perplexity`, `base_loss`, `loss_delta` (quantized minus base), `size_mb` |
 | `llm_merge` | `messages` | `loss`, `perplexity`, `base_loss`, `loss_delta` (merged minus base) |
+| `llm_agent_rl` | `prompt` + what the reward reads (`answer`) | `reward` (greedy trajectories), `turns`, `tool_calls`, `malformed`, `answered` |
 | `llm_grpo` | `prompt` + what the reward reads (`answer`) | `reward` (greedy completion) |
 | `llm_distill` | `prompt` | `teacher_logp` (teacher's mean token log-probability of the greedy answer), `reverse_kl` (student minus teacher on those tokens) |
 | `llm_decision_sft` | `state`, `questions` (Jev records) or `state`, `question`, `label` (one question per row) | `accuracy`, `nll`, `ece` |
@@ -813,6 +816,19 @@ part of `weighted`. A rule is a registered function:
 ```python
 @REWARDS.register("json_valid")                 # modeling/llm/methods/grpo_reward.py
 def json_valid(completion: str, row: dict, params: dict) -> float: ...
+```
+
+### An environment for `llm_agent_rl`
+
+An environment lists its tools as schemas and answers each call with text; an error is returned as text too, so the
+policy can read it and try again. Generated calls are untrusted input: parse arguments, never run them.
+
+```python
+@ENVIRONMENTS.register("weather")               # modeling/llm/agent/agent_environment.py
+class Weather(Environment):
+    name = "weather"
+    tools = property(lambda self: [function("forecast", "Tomorrow's weather", {"city": "A city name"})])
+    def handlers(self): return {"forecast": lambda city: f"sunny in {city}"}
 ```
 
 ### A recipe with its own stages

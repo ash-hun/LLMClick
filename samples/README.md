@@ -12,6 +12,7 @@ config under `configs/llm/` and `configs/embedding/` runs offline in minutes; th
 | `llm_instruction.jsonl` | `llm_instruction` | `instruction`, `input`, `output` |
 | `llm_dpo.jsonl` | `llm_dpo`, `llm_orpo`, `llm_simpo`, `llm_reward` | `prompt`, `chosen`, `rejected` |
 | `llm_kto.jsonl` | `llm_kto` | `prompt`, `completion`, `label` (the first forty DPO pairs, each split into a desirable and an undesirable row) |
+| `llm_agent_rl.jsonl` | `llm_agent_rl` | `prompt`, `answer`: products, sums and quotients of four-digit numbers, to work out with the calculator |
 | `llm_grpo.jsonl` | `llm_grpo`, `llm_distill` | `prompt`, `answer` (read by the `exact_match` reward; `llm_distill` reads the prompt only) |
 | `llm_decision.jsonl` | `llm_decision_sft`, `llm_decision_cispo` | `state`, `questions` (120 records, 360 questions of type choice, noul and score) |
 | `embedding_contrastive.jsonl` | `embedding_contrastive` | `query`, `positive`, `negative` |

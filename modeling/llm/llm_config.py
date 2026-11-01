@@ -12,6 +12,8 @@ from modeling.llm.methods.grpo_reward import REWARDS, reward_names
 from modeling.llm.methods.distill_method import Distill
 from modeling.llm.methods.reward_method import RewardModel
 from modeling.llm.methods.pretrain_method import Pretrain
+from modeling.llm.agent.agent_environment import ENVIRONMENTS
+from modeling.llm.methods.agent_method import AgentRL
 from modeling.llm.methods.grpo_method import GRPO
 from modeling.tuning.tuning_config import TuningConfig
 from modeling.llm.models.llm_backbone import LLMBackbone
@@ -147,3 +149,23 @@ class DecisionSFTConfig(DecisionConfig):
 class DecisionCISPOConfig(DecisionConfig):
     method_class: ClassVar = DecisionCISPO
     method: DecisionCISPO.Config = Field(default_factory=DecisionCISPO.Config)
+
+
+class AgentRLConfig(GRPOConfig):
+    method_class: ClassVar = AgentRL
+    method: AgentRL.Config = Field(default_factory=AgentRL.Config)
+
+    @model_validator(mode="after")
+    def _environment_registered(self) -> "AgentRLConfig":
+        ENVIRONMENTS.check(self.method.environment.name)
+        return self
+
+    def environment_files(self) -> list[str]:
+        path = self.method.environment.params.get("path")
+        return [path] if isinstance(path, str) else []
+
+    def paths(self) -> list[str]:
+        return [*super().paths(), *self.environment_files()]
+
+    def local_files(self) -> list[str]:
+        return [*super().local_files(), *self.environment_files()]
