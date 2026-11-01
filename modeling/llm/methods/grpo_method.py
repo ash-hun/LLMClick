@@ -5,7 +5,7 @@ from typing import Any, ClassVar, Literal
 from concurrent.futures import ThreadPoolExecutor
 
 import torch
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from modeling.llm.methods.llm_method import Encoded, LLMMethod, Reuse, completion, conversation, token_log_probabilities
 from modeling.llm.models.llm_backbone import LLMBackbone
@@ -33,7 +33,16 @@ class GRPO(LLMMethod):
                                                         "first (sequence), or every graded token of the batch at once (token)")
         scale_rewards: bool = Field(default=True, description="Divide each group's advantages by its reward standard deviation")
         reward_workers: int = Field(default=1, ge=1, le=64, description="Threads scoring a batch's completions; for slow rewards such as judge")
-        added_keys: ClassVar[frozenset[str]] = frozenset({"loss_norm", "scale_rewards", "reward_workers"})
+        policy_loss: Literal["ppo", "gspo", "cispo"] = Field(default="ppo", description="ppo: clipped per-token ratio; gspo: "
+                                                            "one clipped ratio per completion; cispo: capped, gradient-free token weights")
+        clip_high: float | None = Field(default=None, gt=0, description="Upper clip (ratio below 1 + clip_high); null: the same as clip")
+        added_keys: ClassVar[frozenset[str]] = frozenset({"loss_norm", "scale_rewards", "reward_workers", "policy_loss", "clip_high"})
+
+        @model_validator(mode="after")
+        def _sequence_level(self) -> "GRPO.Config":
+            if self.policy_loss == "gspo" and self.loss_norm == "token":
+                raise ValueError("policy_loss: gspo weighs whole completions; it takes loss_norm: sequence")
+            return self
 
     def __init__(self, config: Any, training: Any) -> None:
         super().__init__(config, training)
@@ -108,21 +117,42 @@ class GRPO(LLMMethod):
         finally:
             backbone.model.train(training)
 
+    def surrogate(self, new: torch.Tensor, old: torch.Tensor, advantage: torch.Tensor, graded: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """The policy objective to maximize and the share of clipped tokens (or completions, for gspo). On a group's first
+        use the ratio is 1 and all three give the plain policy gradient; they part only when `iterations` reuses it.
+        ppo clips each token's ratio (PPO, DAPO's clip-higher with `clip_high`). gspo takes one ratio per completion,
+        the exponent of its mean token log-ratio, and clips that (Qwen3's GSPO; it wants a far smaller clip, around
+        3e-4). cispo caps each token's ratio from above and uses it as a weight without gradient, so a clipped token
+        still learns through its own log-probability (MiniMax-M1)."""
+        config = self.config
+        low, high = 1 - config.clip, 1 + (config.clip_high if config.clip_high is not None else config.clip)
+        if config.policy_loss == "gspo":
+            ratio = torch.exp(((new - old) * graded).sum(dim=1) / graded.sum(dim=1).clamp(min=1))
+            flat = advantage[:, 0]
+            objective = torch.minimum(ratio * flat, ratio.clamp(low, high) * flat).mean()
+            return objective, ((ratio < low) | (ratio > high)).float().mean()
+        ratio = torch.exp(new - old)
+        clipped = (((ratio < low) | (ratio > high)).float() * graded).sum() / graded.sum().clamp(min=1)
+        if config.policy_loss == "cispo":
+            weight = ratio.detach().clamp(max=high)
+            clipped = ((ratio > high).float() * graded).sum() / graded.sum().clamp(min=1)
+            return self.averaged(weight * advantage * new, graded), clipped
+        return self.averaged(torch.minimum(ratio * advantage, ratio.clamp(low, high) * advantage), graded), clipped
+
     def loss(self, backbone: LLMBackbone, rows: list[Row]) -> torch.Tensor:
-        """Clipped surrogate on the tokens of each completion, plus a KL penalty towards the base model. On a
-        group's first use the ratio is 1 and the gradient is the plain policy gradient; from the second use on
-        (`iterations` > 1) the clip keeps the policy near the one that produced the samples."""
+        """The policy objective on the tokens of each completion, plus a KL penalty towards the base model."""
         config = self.config
         samples = self.reuse.get(rows, lambda: self.sample(backbone, rows))
         new, graded = self.token_scores(backbone, samples["encoded"])
         if "old" not in samples:
             samples["old"] = new.detach()
             samples["reference"] = self.reference(backbone, samples["encoded"]) if config.beta > 0 else None
-        ratio = torch.exp(new - samples["old"])
-        advantage = samples["advantages"][:, None]
-        surrogate = torch.minimum(ratio * advantage, ratio.clamp(1 - config.clip, 1 + config.clip) * advantage)
-        loss: torch.Tensor = -self.averaged(surrogate, graded)
-        self.metrics = {"reward": samples["reward"], "ratio": float((ratio.detach() * graded).sum() / graded.sum().clamp(min=1))}
+        objective, clipped = self.surrogate(new, samples["old"], samples["advantages"][:, None], graded)
+        loss: torch.Tensor = -objective
+        ratio = torch.exp(new.detach() - samples["old"])
+        self.metrics = {"reward": samples["reward"], "ratio": float((ratio * graded).sum() / graded.sum().clamp(min=1))}
+        if config.iterations > 1:
+            self.metrics["clipped"] = float(clipped)
         if samples["reference"] is not None:
             gap = samples["reference"] - new  # log(reference / policy) on the sampled tokens
             kl = self.averaged(torch.exp(gap) - gap - 1, graded)

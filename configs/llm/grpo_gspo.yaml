@@ -1,0 +1,33 @@
+# GRPO with a policy loss other than PPO's: GSPO clips one ratio per completion instead of one per token (Qwen3).
+# The loss only differs from PPO's when a sampled group is reused (`iterations` > 1); GSPO wants a far smaller clip.
+pipeline:
+  recipe: llm_grpo
+  name: grpo-gspo-qwen3.5-0.8b
+  seed: 20260920
+  output_dir: ./output
+
+model:
+  architecture: hybrid              # Qwen3.5: linear-attention + full-attention layers, vision tower frozen
+  name: Qwen/Qwen3.5-0.8B           # or Qwen/Qwen3.5-2B @ 15852e8c16360a2fea060d615a32b45270f8a8fc
+  revision: 2fc06364715b967f1860aea9cf38778875588b17
+
+data:
+  sources:
+    - name: local_jsonl
+      path: samples/llm_grpo.jsonl  # rows: {"prompt": str | messages, "answer": ...}
+  validation: 0.1
+
+method:
+  group_size: 4                     # completions sampled per prompt
+  max_new_tokens: 8
+  temperature: 1.0
+  iterations: 2                     # two optimizer steps per sampled group: the second one is off-policy
+  policy_loss: gspo                 # or ppo (the default) or cispo
+  clip: 3.0e-4                      # GSPO's sequence ratio barely moves; PPO's 0.2 would never clip it
+  clip_high: 4.0e-4
+  reward: {name: exact_match}     # or contains, regex, length, weighted, judge; add your own in modeling/llm/methods/grpo_reward.py
+
+training: {epochs: 1, lr: 2.0e-6, batch_size: 2, accumulation: 2, max_length: 256, max_steps: 4}
+
+validation:
+  min: {reward: 0.0}              # mean reward of the greedy completion on held-out prompts
