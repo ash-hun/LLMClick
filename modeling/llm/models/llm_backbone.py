@@ -20,11 +20,14 @@ if TYPE_CHECKING:
 Message = dict[str, str]
 HEAD_WEIGHTS, HEAD_CONFIG = "head.safetensors", "head.json"
 MISSING_BITSANDBYTES = "training.adapter.quantize needs bitsandbytes: `uv sync --extra quantize`"
+GGUF_FILE = "model.gguf"  # the file llm_quantize's gguf scheme writes next to the tokenizer
 
 
 def prequantized(origin: Path) -> dict[str, Any] | None:
-    """Loader arguments for a local model directory holding quantized weights (bitsandbytes or compressed-tensors),
-    or None for ordinary weights."""
+    """Loader arguments for a local model directory holding quantized weights (bitsandbytes, compressed-tensors or
+    GGUF), or None for ordinary weights."""
+    if (origin / GGUF_FILE).is_file():
+        return {"gguf_file": GGUF_FILE}  # dequantized on load: transformers reads GGUF but cannot run it quantized
     config = origin / "config.json"
     saved = json.loads(config.read_text()).get("quantization_config") if config.is_file() else None
     if saved is None:

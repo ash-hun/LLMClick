@@ -32,3 +32,7 @@ output/
 
 # evaluation sets made for an experiment stay local: the repository holds recipes and the framework
 /samples/evaluation/
+
+# llama.cpp source fetched by environment/llama_cpp/setup.sh
+/environment/llama_cpp/llama.cpp/
+/environment/llama_cpp/llama.cpp.tmp/

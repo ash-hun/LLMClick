@@ -77,6 +77,10 @@ def test_a_hub_model_is_scored_without_an_experiment(tiny_model: Path, tmp_path:
     report = json.loads(Path(result["stages"]["report"]["report"]).read_text())
     assert report["model"]["name"] == str(tiny_model) and report["model"]["checkpoint"] == "hub" and report["model"]["experiment"] is None
     assert report["benchmarks"]["hellaswag"]["contamination"] is None  # nothing trained here
+    (tmp_path / "gguf").mkdir()
+    (tmp_path / "gguf" / "model.gguf").write_bytes(b"GGUF")
+    pipeline_runner.build({**body, "model": {"name": str(tmp_path / "gguf")}}).run()
+    assert fake.calls[-1]["model_args"]["gguf_file"] == "model.gguf"  # what llm_quantize's gguf scheme writes
     hub = {**body, "model": {"name": "Qwen/Qwen3.5-0.8B", "revision": "2fc06364715b967f1860aea9cf38778875588b17"}}
     assert pipeline_runner.build(hub).fingerprint("score:hellaswag") != pipeline_runner.build(body).fingerprint("score:hellaswag")
     with pytest.raises(ValueError, match="40-character commit"):

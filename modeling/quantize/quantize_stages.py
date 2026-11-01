@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from core.file_store import read_json, read_jsonl, staged_directory, write_json
-from modeling.quantize.quantize_scheme import SCHEMES, QuantizeJob, size_mb
+from modeling.quantize.quantize_scheme import SCHEMES, QuantizeJob, gguf_version, size_mb
 from modeling.tuning.tuning_stages import MeasureStage, TuneStage
 from modeling.tuning.training_loop import CHECKPOINT, SUMMARY
 from modeling.quantize.quantize_config import QuantizeConfig
@@ -20,6 +20,12 @@ class QuantizeStage(TuneStage):
     """Measure the base model on the held-out rows, then let the scheme write the quantized model. Named `train` so
     validation, evaluation recipes and `checkpoint: validate` read it like any trained model."""
     sections: ClassVar[tuple[str, ...]] = ("seed", "recipe", "model", "training", "method", "quantization", "device")
+
+    def identity(self) -> Any:
+        """A GGUF file depends on the llama.cpp release that wrote it as well."""
+        config = self.config
+        assert isinstance(config, QuantizeConfig)
+        return [super().identity(), gguf_version()] if config.quantization.name == "gguf" else super().identity()
 
     def train(self, workdir: Path, inputs: dict[str, Outputs]) -> Outputs:
         config = self.config
