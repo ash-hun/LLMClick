@@ -2,6 +2,7 @@
 
 import os
 import json
+import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar
 from urllib.request import Request, urlopen
@@ -139,6 +140,9 @@ class Local(Teacher):
     def __init__(self, params: dict[str, Any]) -> None:
         super().__init__(params)
         self.backbone: Any = None
+        # one model in this process: concurrent callers (GRPO's reward_workers) would load it twice and interleave
+        # its generation, so calls take turns
+        self.lock = threading.Lock()
 
     def source(self) -> "SourceExperiment":
         """The model as the evaluation channel resolves it, from the params."""
@@ -163,10 +167,11 @@ class Local(Teacher):
 
     def complete(self, messages: list[Message], *, max_tokens: int, temperature: float, seed: int) -> Completion:
         from core import device_selector
-        backbone = self.load()
-        device_selector.seed(backbone.device, seed)
-        prompt = backbone.render(messages, True)
-        tokens = backbone.generate([prompt], max_tokens, 1, temperature)[0][0]
+        with self.lock:
+            backbone = self.load()
+            device_selector.seed(backbone.device, seed)
+            prompt = backbone.render(messages, True)
+            tokens = backbone.generate([prompt], max_tokens, 1, temperature)[0][0]
         return Completion(backbone.text(tokens), len(prompt), len(tokens), 0.0)
 
     def release(self) -> None:

@@ -1,7 +1,8 @@
 """Group Relative Policy Optimization: sample a group of completions per prompt, score them with a reward function,
 and raise the likelihood of the ones that beat their own group's average."""
 
-from typing import Any
+from typing import Any, ClassVar, Literal
+from concurrent.futures import ThreadPoolExecutor
 
 import torch
 from pydantic import Field
@@ -28,6 +29,11 @@ class GRPO(LLMMethod):
         iterations: int = Field(default=1, ge=1, description="Optimizer steps per sampled group")
         clip: float = Field(default=0.2, gt=0, description="The policy ratio is held within 1 +- clip when a group is reused")
         beta: float = Field(default=0.0, ge=0, description="Weight of the KL penalty towards the base model; needs training.adapter")
+        loss_norm: Literal["sequence", "token"] = Field(default="sequence", description="Average each completion's tokens "
+                                                        "first (sequence), or every graded token of the batch at once (token)")
+        scale_rewards: bool = Field(default=True, description="Divide each group's advantages by its reward standard deviation")
+        reward_workers: int = Field(default=1, ge=1, le=64, description="Threads scoring a batch's completions; for slow rewards such as judge")
+        added_keys: ClassVar[frozenset[str]] = frozenset({"loss_norm", "scale_rewards", "reward_workers"})
 
     def __init__(self, config: Any, training: Any) -> None:
         super().__init__(config, training)
@@ -62,11 +68,31 @@ class GRPO(LLMMethod):
         """Completions, their rewards and advantages; fixed for as long as the batch is reused."""
         prompts = [backbone.render(conversation(row["prompt"]), True) for row in rows]
         groups = backbone.generate(prompts, self.config.max_new_tokens, self.config.group_size, self.config.temperature)
-        rewards = torch.tensor([[self.reward(backbone.text(tokens), row) for tokens in group]
-                                for row, group in zip(rows, groups, strict=True)], device=backbone.device)
-        advantages = (rewards - rewards.mean(dim=1, keepdim=True)) / (rewards.std(dim=1, keepdim=True) + EPSILON)
+        rewards = torch.tensor(self.scores(backbone, rows, groups), device=backbone.device)
+        advantages = rewards - rewards.mean(dim=1, keepdim=True)
+        if self.config.scale_rewards:
+            advantages = advantages / (rewards.std(dim=1, keepdim=True) + EPSILON)
         encoded = [self.graded(backbone, prompt, tokens) for prompt, group in zip(prompts, groups, strict=True) for tokens in group]
         return {"encoded": encoded, "advantages": advantages.flatten(), "reward": float(rewards.mean())}
+
+    def scores(self, backbone: LLMBackbone, rows: list[Row], groups: list[list[list[int]]]) -> list[list[float]]:
+        """Each completion's reward, in order. With `reward_workers` above 1 the calls overlap, which helps a reward
+        that waits on a model or an API; the result is the same as scoring them one by one."""
+        pairs = [(backbone.text(tokens), row) for row, group in zip(rows, groups, strict=True) for tokens in group]
+        if self.config.reward_workers > 1:
+            with ThreadPoolExecutor(max_workers=self.config.reward_workers) as pool:
+                flat = list(pool.map(lambda pair: self.reward(*pair), pairs))
+        else:
+            flat = [self.reward(text, row) for text, row in pairs]
+        size = self.config.group_size
+        return [flat[start:start + size] for start in range(0, len(flat), size)]
+
+    def averaged(self, values: torch.Tensor, graded: torch.Tensor) -> torch.Tensor:
+        """Mean of per-token values over the graded tokens: per completion and then over completions (`sequence`),
+        or over all graded tokens of the batch (`token`), where a long completion's tokens count as much as a short one's."""
+        if self.config.loss_norm == "token":
+            return (values * graded).sum() / graded.sum().clamp(min=1)
+        return ((values * graded).sum(dim=1) / graded.sum(dim=1).clamp(min=1)).mean()
 
     def token_scores(self, backbone: LLMBackbone, encoded: list[Encoded]) -> tuple[torch.Tensor, torch.Tensor]:
         """Per-token log-probabilities of the graded tokens under the sampling temperature, and their mask."""
@@ -102,12 +128,11 @@ class GRPO(LLMMethod):
         ratio = torch.exp(new - samples["old"])
         advantage = samples["advantages"][:, None]
         surrogate = torch.minimum(ratio * advantage, ratio.clamp(1 - config.clip, 1 + config.clip) * advantage)
-        counts = graded.sum(dim=1).clamp(min=1)
-        loss: torch.Tensor = -((surrogate * graded).sum(dim=1) / counts).mean()
+        loss: torch.Tensor = -self.averaged(surrogate, graded)
         self.metrics = {"reward": samples["reward"], "ratio": float((ratio.detach() * graded).sum() / graded.sum().clamp(min=1))}
         if samples["reference"] is not None:
             gap = samples["reference"] - new  # log(reference / policy) on the sampled tokens
-            kl = (((torch.exp(gap) - gap - 1) * graded).sum(dim=1) / counts).mean()
+            kl = self.averaged(torch.exp(gap) - gap - 1, graded)
             self.metrics["kl"] = float(kl.detach())
             loss = loss + config.beta * kl
         return loss
