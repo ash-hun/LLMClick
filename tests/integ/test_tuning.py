@@ -4,6 +4,7 @@ import json
 from typing import Any
 from pathlib import Path
 
+import torch
 import pytest
 
 from core.progress_reporter import Progress, StateProgress
@@ -65,6 +66,19 @@ def test_qlora_key_keeps_earlier_fingerprints_and_needs_an_llm(tiny_model: Path,
         pipeline_runner.build(raw("embedding_contrastive", tiny_model, tmp_path, adapter={**lora, "quantize": "nf4"}))
     with pytest.raises(ValueError, match="needs a CUDA device"):
         qlora.run()
+
+
+@pytest.mark.parametrize("recipe, adapter", [("llm_sft", None), ("llm_sft", {"name": "lora", "r": 4, "targets": ["c_attn"]}),
+                                             ("embedding_contrastive", None)])
+def test_gradient_checkpointing_trains_the_same_weights(recipe: str, adapter: Any, tiny_model: Path, tmp_path: Path) -> None:
+    from safetensors.torch import load_file
+    plain = pipeline_runner.build(raw(recipe, tiny_model, tmp_path, adapter=adapter))
+    checkpointed = pipeline_runner.build(raw(recipe, tiny_model, tmp_path, adapter=adapter, gradient_checkpointing=True))
+    assert plain.fingerprint("data") == checkpointed.fingerprint("data") and plain.fingerprint("train") != checkpointed.fingerprint("train")
+    assert "gradient_checkpointing" not in plain.config.training.model_dump()
+    weights = [load_file(Path(p.run()["stages"]["train"]["checkpoint"]) / "model.safetensors") for p in (plain, checkpointed)]
+    assert weights[0].keys() == weights[1].keys()
+    assert all(torch.allclose(weights[0][name], weights[1][name], atol=1e-6) for name in weights[0])
 
 
 def test_training_change_reuses_the_data_stage(tiny_model: Path, tmp_path: Path) -> None:

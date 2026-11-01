@@ -4,7 +4,7 @@ import string
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
-from pydantic import Field, SerializerFunctionWrapHandler, model_serializer, model_validator
+from pydantic import Field, model_validator
 
 from modeling.modeling_config import Keyed, ModelingConfig, ValidationConfig, local_paths
 from core.config.config_schema import Section
@@ -45,15 +45,8 @@ class AdapterConfig(Section):
     alpha: int = Field(default=32, ge=1, description="Update scale; the effective factor is alpha / r")
     dropout: float = Field(default=0.0, ge=0, lt=1)
     targets: list[str] | None = Field(default=None, description="Layer names to adapt; default: the architecture's")
+    added_keys: ClassVar[frozenset[str]] = frozenset({"quantize"})
     quantize: Literal["nf4", "int8"] | None = Field(default=None, description="QLoRA: load the frozen base weights in 4 or 8 bits (bitsandbytes, CUDA only)")
-
-    @model_serializer(mode="wrap")
-    def _unset_quantize(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
-        """Left out while unset, so the fingerprint of every LoRA experiment from before this key stays the same."""
-        dumped: dict[str, Any] = handler(self)
-        if dumped.get("quantize") is None:
-            dumped.pop("quantize", None)
-        return dumped
 
 
 class TrainingConfig(Section):
@@ -71,6 +64,8 @@ class TrainingConfig(Section):
     eval_every: int | None = Field(default=None, ge=1, description="Steps between evaluations on the held-out rows while training; null: only validate at the end")
     eval_rows: int | None = Field(default=None, ge=1, description="How many held-out rows the in-training evaluation uses; null: all of them")
     adapter: AdapterConfig | None = Field(default=None, description="null trains every weight; set it to train LoRA")
+    gradient_checkpointing: bool = Field(default=False, description="Recompute activations in the backward pass: less memory, about a third more compute")
+    added_keys: ClassVar[frozenset[str]] = frozenset({"gradient_checkpointing"})
 
 
 class TuningValidationConfig(ValidationConfig):

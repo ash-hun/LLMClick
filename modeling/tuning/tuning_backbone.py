@@ -71,6 +71,11 @@ class Backbone:
             r=adapter.r, lora_alpha=adapter.alpha, lora_dropout=adapter.dropout,
             target_modules=list(adapter.targets or self.adapter_targets)))
 
+    def checkpoint_activations(self) -> None:
+        """Keep only each layer's inputs during the forward pass and recompute the rest in the backward pass. The
+        non-reentrant variant, so frozen inputs (LoRA, QLoRA) still pass gradients without `enable_input_require_grads`."""
+        self.model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+
     def exported(self) -> Any:
         """The model to save: adapter weights folded into the base, so a checkpoint loads like any other model."""
         return self.model.merge_and_unload() if hasattr(self.model, "merge_and_unload") else self.model

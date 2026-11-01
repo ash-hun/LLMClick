@@ -72,6 +72,8 @@ class TuneStage(TrainStage[TuningConfig]):
                 rows = fitting(backbone, method, read_jsonl(Path(inputs["data"]["train"])), training, self.progress, "training")
                 rows = method.prepare(backbone, rows, workdir, self.progress)
                 backbone.adapt(training.adapter)
+                if training.gradient_checkpointing:
+                    backbone.checkpoint_activations()
                 sample, batch_size = held_out[: training.eval_rows], self.config.validation.batch_size
 
                 def evaluation() -> dict[str, float]:  # the validate stage's measurement, on the weights as they are

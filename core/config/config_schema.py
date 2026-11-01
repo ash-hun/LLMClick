@@ -2,12 +2,25 @@
 
 from typing import Any, ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SerializerFunctionWrapHandler, model_serializer
 
 
 class Section(BaseModel):
     """A config section: an unknown key is an error, so a typo cannot silently fall back to a default."""
     model_config = ConfigDict(extra="forbid")
+    # Keys added after experiments already ran: left out of the dump (and so of every fingerprint) while they hold
+    # their default, so the experiments from before the key keep their directories and are not trained again.
+    added_keys: ClassVar[frozenset[str]] = frozenset()
+
+    @model_serializer(mode="wrap")
+    def _without_unset_added_keys(self, handler: SerializerFunctionWrapHandler) -> Any:
+        dumped = handler(self)
+        if self.added_keys and isinstance(dumped, dict):
+            fields = type(self).model_fields
+            for key in self.added_keys:
+                if key in dumped and getattr(self, key) == fields[key].get_default(call_default_factory=True):
+                    dumped.pop(key)
+        return dumped
 
 
 class BaseConfig(Section):

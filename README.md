@@ -169,7 +169,7 @@ the same job, and `docs/api_spec.md` describes every endpoint.
 | `RuntimeError: 0 active drivers ([]). There should only be one.` | a Qwen3.5 (`hybrid`) config on Linux without a GPU: use an NVIDIA GPU, or a `transformer` config |
 | `torch.cuda.is_available()` is `False` on a GPU server | NVIDIA driver older than 580, or (Docker) `compose.gpu.yaml` not added or nvidia-container-toolkit missing |
 | 401 or 403 from the Hub while loading a model | a gated model: accept its terms on the Hub and set `HF_TOKEN` in `environment/.env` |
-| out of memory | lower `training.batch_size` (raise `accumulation` to keep the effective batch), or add `training.adapter` (LoRA) |
+| out of memory | lower `training.batch_size` (raise `accumulation` to keep the effective batch), add `training.adapter` (LoRA, or QLoRA with `quantize: nf4` on CUDA), or set `training.gradient_checkpointing: true` |
 | `ValidationFailed: Validation failed for ...` | the model missed `validation.max`: train longer or change the data; no checkpoint is handed on |
 | 403 `outside API_PATHS` from the API | configs, rows and `output_dir` must sit under `API_PATHS` (default: the working directory) |
 
