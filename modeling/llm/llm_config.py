@@ -10,8 +10,11 @@ from modeling.llm.methods.instruction_method import InstructionTuning
 from modeling.llm.methods.decision.decision_sft_method import DecisionSFT
 from modeling.llm.methods.grpo_reward import REWARDS, reward_names
 from modeling.llm.methods.distill_method import Distill
+from modeling.llm.methods.reward_method import RewardModel
 from modeling.llm.methods.grpo_method import GRPO
 from modeling.tuning.tuning_config import TuningConfig
+from modeling.llm.models.llm_backbone import LLMBackbone
+from modeling.tuning.tuning_backbone import Backbone
 from modeling.llm.models.backbone_config import LLMBackboneConfig
 from modeling.llm.models.heads import HEADS
 from core.recipe_registry import Registry
@@ -72,9 +75,33 @@ class KTOConfig(LLMConfig):
     method: KTO.Config = Field(default_factory=KTO.Config)
 
 
+class RewardConfig(LLMConfig):
+    method_class: ClassVar = RewardModel
+    method: RewardModel.Config = Field(default_factory=RewardModel.Config)
+
+    def build_backbone(self) -> Backbone:
+        backbone = super().build_backbone()
+        assert isinstance(backbone, LLMBackbone)
+        backbone.scorer = True
+        return backbone
+
+
 class GRPOConfig(LLMConfig):
     method_class: ClassVar = GRPO
     method: GRPO.Config = Field(default_factory=GRPO.Config)
+
+    def reward_models(self) -> list[str]:
+        """The `reward_model` checkpoints the reward reads, also inside a weighted reward."""
+        reward = self.method.reward
+        entries = [{"name": reward.name, **reward.params}, *(reward.params.get("parts") or [] if reward.name == "weighted" else [])]
+        return [str(entry["path"]) for entry in entries if isinstance(entry, dict) and entry.get("name") == "reward_model"
+                and isinstance(entry.get("path"), str)]
+
+    def paths(self) -> list[str]:
+        return [*super().paths(), *self.reward_models()]
+
+    def local_models(self) -> list[str]:
+        return [*super().local_models(), *(path for path in self.reward_models() if Path(path).is_dir())]
 
     @model_validator(mode="after")
     def _reward_registered(self) -> "GRPOConfig":

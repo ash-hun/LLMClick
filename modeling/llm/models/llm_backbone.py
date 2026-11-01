@@ -76,6 +76,7 @@ class LLMBackbone(Backbone):
     markers: ClassVar[Markers | None] = None     # needed by decision recipes; set by architectures that support them
     config: LLMBackboneConfig
     head: "DecisionHead | None" = None           # set when `model.head` names one
+    scorer: bool = False                         # set by `llm_reward`: one score per sequence instead of next-token logits
 
     def __init__(self, config: LLMBackboneConfig) -> None:
         super().__init__(config)
@@ -90,13 +91,14 @@ class LLMBackbone(Backbone):
         self.tokenizer = AutoTokenizer.from_pretrained(origin, revision=revision)
         if self.tokenizer.pad_token_id is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
+        loader, options = self.model_class(), self.loader_options()
         if self.quantize is not None and checkpoint is None:
             self.model = self.quantized(origin, revision, device)
         elif (quantized := prequantized(Path(origin))) is not None:
             # weights `llm_quantize` wrote: they keep their own dtypes, and a quantized model is placed, never moved
-            self.model = self.loader.from_pretrained(origin, revision=revision, device_map={"": device}, **quantized)
+            self.model = loader.from_pretrained(origin, revision=revision, device_map={"": device}, **quantized, **options)
         else:
-            self.model = self.loader.from_pretrained(origin, revision=revision, dtype=self.dtype).to(device)
+            self.model = loader.from_pretrained(origin, revision=revision, dtype=self.dtype, **options).to(device)
         for name, parameter in self.model.named_parameters():
             if any(fragment in name for fragment in self.frozen):
                 parameter.requires_grad_(False)
@@ -110,8 +112,9 @@ class LLMBackbone(Backbone):
         if not device.startswith("cuda"):
             raise ValueError(f"training.adapter.quantize needs a CUDA device, not {device!r}")
         from peft import prepare_model_for_kbit_training
-        model = self.loader.from_pretrained(origin, revision=revision, dtype=self.dtype, device_map={"": device},
-                                            quantization_config=quantization_config(str(self.quantize)))
+        model = self.model_class().from_pretrained(origin, revision=revision, dtype=self.dtype, device_map={"": device},
+                                                   quantization_config=quantization_config(str(self.quantize)),
+                                                   **self.loader_options())
         return prepare_model_for_kbit_training(model, use_gradient_checkpointing=False)  # type: ignore[no-untyped-call]
 
     def exported(self) -> Any:
@@ -123,10 +126,23 @@ class LLMBackbone(Backbone):
         # ponytail: the full base is held in CPU memory at `dtype` while merging (about 4 bytes a weight); stream
         # the merge layer by layer if a model ever outgrows the host's memory
         origin, revision = self.origin(None)
-        base = self.loader.from_pretrained(origin, revision=revision, dtype=self.dtype)
+        base = self.model_class().from_pretrained(origin, revision=revision, dtype=self.dtype, **self.loader_options())
         merged = get_peft_model(base, self.model.peft_config["default"])
         set_peft_model_state_dict(merged, get_peft_model_state_dict(self.model))
         return merged.merge_and_unload()
+
+    def model_class(self) -> Any:
+        """The transformers Auto class to load: the architecture's own, or a sequence classifier for a reward model."""
+        if self.scorer:
+            from transformers import AutoModelForSequenceClassification
+            return AutoModelForSequenceClassification
+        return self.loader
+
+    def loader_options(self) -> dict[str, Any]:
+        return {"num_labels": 1} if self.scorer else {}
+
+    def saved_modules(self) -> list[str]:
+        return ["score"] if self.scorer else []  # the reward model's fresh score layer trains beside a LoRA adapter
 
     def load_head(self, origin: Path) -> None:
         """A fresh head on a base model; the saved head (weights, option codes, temperature) on a checkpoint."""
@@ -144,7 +160,10 @@ class LLMBackbone(Backbone):
         return {**super().modules(), **({"head": self.head} if self.head is not None else {})}
 
     def save(self, path: Path) -> None:
-        self.exported().save_pretrained(path)
+        model = self.exported()
+        if self.scorer:  # a sequence classifier finds each row's last token by the pad id; other tools read it from here
+            model.config.pad_token_id = self.tokenizer.pad_token_id
+        model.save_pretrained(path)
         self.tokenizer.save_pretrained(path)
         if self.head is not None:
             save_file({name: value.detach().cpu().contiguous() for name, value in self.head.state_dict().items()},
@@ -215,6 +234,15 @@ class LLMBackbone(Backbone):
                                                       **self.config.template)
             ids = self._tokens[key] = self.tokenizer(text, add_special_tokens=False)["input_ids"]
         return list(ids)
+
+    def sequence_scores(self, sequences: list[list[int]]) -> torch.Tensor:
+        """A reward model's score of each sequence, read at its last token; shape (sequences,)."""
+        hidden, _, mask = self.hidden(sequences)
+        last = mask.sum(dim=1) - 1
+        inner = self.model.get_base_model() if hasattr(self.model, "get_base_model") else self.model
+        picked = hidden[torch.arange(len(sequences), device=hidden.device), last]
+        scores: torch.Tensor = inner.score(picked).squeeze(-1).float()
+        return scores
 
     def padded(self, sequences: list[list[int]], left: bool = False) -> tuple[torch.Tensor, torch.Tensor]:
         width = max(len(sequence) for sequence in sequences)
