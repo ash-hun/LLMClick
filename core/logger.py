@@ -86,6 +86,8 @@ def configure_logging(level: str | None = None, fmt: str | None = None) -> None:
     root = logging.getLogger()
     root.handlers = [handler]
     root.setLevel((level or os.environ.get("LOG_LEVEL") or DEFAULT_LOG_LEVEL).upper())
+    # Library warnings (torch, fla, transformers) otherwise print raw to stderr and break the one-line-per-record format.
+    logging.captureWarnings(True)
     _configured = True
 
 
