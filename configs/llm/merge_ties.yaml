@@ -1,6 +1,7 @@
 # Merge two fine-tunes of Qwen3-0.6B into one model with TIES: each model's change from the base is trimmed to its
 # largest half, a sign is elected per weight, and the changes that agree are averaged. Nothing is trained.
-# The models are the checkpoints `configs/llm/sft_transformer.yaml` and `configs/llm/distill.yaml` write; run those first.
+# The models are the checkpoints `configs/llm/sft_transformer.yaml` and `configs/llm/on_policy_distillation.yaml` write;
+# run those first.
 pipeline:
   recipe: llm_merge
   name: merge-ties-qwen3-0.6b
@@ -18,7 +19,7 @@ merge:
   density: 0.5                      # ties and dare: the share of each change that is kept
   models:
     - {path: output/sft-qwen3-0.6b-e15695dc/validate/checkpoint, weight: 1.0}
-    - {path: output/distill-qwen3-0.6b-ccc16d73/validate/checkpoint, weight: 1.0}
+    - {path: output/on-policy-distillation-qwen3-0.6b-c53f94ed/validate/checkpoint, weight: 1.0}
     # a Hub model: {name: <org/model>, revision: <40-character commit>, weight: 0.5}
 
 data:

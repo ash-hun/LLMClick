@@ -1,8 +1,8 @@
 # On-policy distillation: Qwen3-0.6B answers the prompts itself and Qwen3-1.7B grades every token it chose.
 # Teacher and student must share one vocabulary; the teacher sits in memory beside the student while training.
 pipeline:
-  recipe: llm_distill
-  name: distill-qwen3-0.6b
+  recipe: llm_on_policy_distillation
+  name: on-policy-distillation-qwen3-0.6b
   seed: 20260920
   output_dir: ./output
 

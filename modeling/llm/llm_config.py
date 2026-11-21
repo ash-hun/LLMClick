@@ -5,28 +5,37 @@ from typing import ClassVar
 
 from pydantic import Field, model_validator
 
-from modeling.llm.methods.decision.cispo_method import DecisionCISPO
-from modeling.llm.methods.instruction_method import InstructionTuning
+from modeling.llm.methods.multi_teacher_on_policy_distillation_method import MultiTeacherOnPolicyDistillation
+from modeling.llm.methods.on_policy_distillation_method import OnPolicyDistillation
 from modeling.llm.methods.decision.decision_sft_method import DecisionSFT
+from modeling.llm.methods.instruction_method import InstructionTuning
+from modeling.llm.methods.decision.cispo_method import DecisionCISPO
 from modeling.llm.methods.grpo_reward import REWARDS, reward_names
-from modeling.llm.methods.distill_method import Distill
+from modeling.llm.models.backbone_config import LLMBackboneConfig
+from modeling.llm.agent.agent_environment import ENVIRONMENTS
 from modeling.llm.methods.reward_method import RewardModel
 from modeling.llm.methods.pretrain_method import Pretrain
-from modeling.llm.agent.agent_environment import ENVIRONMENTS
-from modeling.llm.methods.agent_method import AgentRL
-from modeling.llm.methods.grpo_method import GRPO
-from modeling.tuning.tuning_config import TuningConfig
 from modeling.llm.models.llm_backbone import LLMBackbone
+from modeling.tuning.tuning_config import TuningConfig
+from modeling.llm.methods.agent_method import AgentRL
 from modeling.tuning.tuning_backbone import Backbone
-from modeling.llm.models.backbone_config import LLMBackboneConfig
-from modeling.llm.models.heads import HEADS
-from core.recipe_registry import Registry
-from modeling.llm.models import LLM_BACKBONES
 from modeling.llm.methods.simpo_method import SimPO
+from modeling.llm.methods.grpo_method import GRPO
 from modeling.llm.methods.orpo_method import ORPO
 from modeling.llm.methods.dpo_method import DPO
 from modeling.llm.methods.kto_method import KTO
 from modeling.llm.methods.sft_method import SFT
+from modeling.llm.models import LLM_BACKBONES
+from modeling.llm.models.heads import HEADS
+from modeling.modeling_config import Keyed
+from core.recipe_registry import Registry
+
+
+def reward_models(reward: Keyed) -> list[str]:
+    """The `reward_model` checkpoints a reward reads, also inside a weighted reward."""
+    entries = [{"name": reward.name, **reward.params}, *(reward.params.get("parts") or [] if reward.name == "weighted" else [])]
+    return [str(entry["path"]) for entry in entries if isinstance(entry, dict) and entry.get("name") == "reward_model"
+            and isinstance(entry.get("path"), str)]
 
 
 class LLMConfig(TuningConfig):
@@ -104,18 +113,11 @@ class GRPOConfig(LLMConfig):
     method_class: ClassVar = GRPO
     method: GRPO.Config = Field(default_factory=GRPO.Config)
 
-    def reward_models(self) -> list[str]:
-        """The `reward_model` checkpoints the reward reads, also inside a weighted reward."""
-        reward = self.method.reward
-        entries = [{"name": reward.name, **reward.params}, *(reward.params.get("parts") or [] if reward.name == "weighted" else [])]
-        return [str(entry["path"]) for entry in entries if isinstance(entry, dict) and entry.get("name") == "reward_model"
-                and isinstance(entry.get("path"), str)]
-
     def paths(self) -> list[str]:
-        return [*super().paths(), *self.reward_models()]
+        return [*super().paths(), *reward_models(self.method.reward)]
 
     def local_models(self) -> list[str]:
-        return [*super().local_models(), *(path for path in self.reward_models() if Path(path).is_dir())]
+        return [*super().local_models(), *(path for path in reward_models(self.method.reward) if Path(path).is_dir())]
 
     @model_validator(mode="after")
     def _reward_registered(self) -> "GRPOConfig":
@@ -125,15 +127,37 @@ class GRPOConfig(LLMConfig):
         return self
 
 
-class DistillConfig(LLMConfig):
-    method_class: ClassVar = Distill
-    method: Distill.Config
+class OnPolicyDistillationConfig(LLMConfig):
+    method_class: ClassVar = OnPolicyDistillation
+    method: OnPolicyDistillation.Config
 
     def paths(self) -> list[str]:
         return [*super().paths(), self.method.teacher.name]
 
     def local_models(self) -> list[str]:
         return [*super().local_models(), *([self.method.teacher.name] if Path(self.method.teacher.name).is_dir() else [])]
+
+
+class MultiTeacherOnPolicyDistillationConfig(LLMConfig):
+    method_class: ClassVar = MultiTeacherOnPolicyDistillation
+    method: MultiTeacherOnPolicyDistillation.Config
+
+    def loaded_models(self) -> list[str]:
+        """The teachers' names, then the `reward_model` checkpoints the reward reads."""
+        teachers = [teacher.name for _, teacher in sorted(self.method.teachers.items())]
+        return [*teachers, *(reward_models(self.method.reward) if self.method.reward is not None else [])]
+
+    def paths(self) -> list[str]:
+        return [*super().paths(), *self.loaded_models()]
+
+    def local_models(self) -> list[str]:
+        return [*super().local_models(), *(name for name in self.loaded_models() if Path(name).is_dir())]
+
+    @model_validator(mode="after")
+    def _reward_registered(self) -> "MultiTeacherOnPolicyDistillationConfig":
+        if self.method.reward is not None:
+            REWARDS.check(*reward_names(self.method.reward.name, self.method.reward.params))
+        return self
 
 
 class DecisionConfig(LLMConfig):

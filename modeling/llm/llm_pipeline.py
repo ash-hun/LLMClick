@@ -2,9 +2,10 @@
 
 from typing import ClassVar
 
-from modeling.llm.llm_config import (AgentRLConfig, DecisionCISPOConfig, DecisionSFTConfig, DistillConfig, DPOConfig,
-                                     GRPOConfig, InstructionConfig, KTOConfig, ORPOConfig, PretrainConfig, RewardConfig,
-                                     SFTConfig, SimPOConfig)
+from modeling.llm.llm_config import (AgentRLConfig, DecisionCISPOConfig, DecisionSFTConfig, DPOConfig, GRPOConfig,
+                                     InstructionConfig, KTOConfig, MultiTeacherOnPolicyDistillationConfig,
+                                     OnPolicyDistillationConfig, ORPOConfig, PretrainConfig, RewardConfig, SFTConfig,
+                                     SimPOConfig)
 from modeling.tuning.tuning_pipeline import TuningPipeline
 from modeling.llm.agent.agent_environment import ENVIRONMENTS
 from modeling.llm.methods.grpo_reward import REWARDS
@@ -79,9 +80,19 @@ class GRPOPipeline(LLMPipeline):
 
 
 @recipe
-class DistillPipeline(LLMPipeline):
-    kind: ClassVar[str] = "llm_distill"
-    config_class = DistillConfig
+class OnPolicyDistillationPipeline(LLMPipeline):
+    kind: ClassVar[str] = "llm_on_policy_distillation"
+    config_class = OnPolicyDistillationConfig
+
+
+@recipe
+class MultiTeacherOnPolicyDistillationPipeline(LLMPipeline):
+    kind: ClassVar[str] = "llm_multi_teacher_on_policy_distillation"
+    config_class = MultiTeacherOnPolicyDistillationConfig
+
+    @classmethod
+    def catalogue(cls) -> dict[str, list[str]]:
+        return {**super().catalogue(), "reward": REWARDS.names()}
 
 
 @recipe
