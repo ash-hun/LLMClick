@@ -15,7 +15,10 @@ RECIPES = {  # recipe -> (sample file, method section, metric the validate stage
     "llm_kto": ("llm_kto", {"beta": 0.1}, "gap"),
     "llm_reward": ("llm_dpo", {}, "accuracy"),
     "llm_grpo": ("llm_grpo", {"group_size": 3, "max_new_tokens": 3, "reward": {"name": "contains"}}, "reward"),
-    "llm_distill": ("llm_grpo", {"max_new_tokens": 3, "teacher": {"architecture": "transformer"}}, "reverse_kl"),
+    "llm_on_policy_distillation": ("llm_grpo", {"max_new_tokens": 3, "teacher": {"architecture": "transformer"}}, "reverse_kl"),
+    "llm_multi_teacher_on_policy_distillation": ("llm_multi_teacher_on_policy_distillation", {
+        "max_new_tokens": 3, "samples": 2, "reward": {"name": "contains"},
+        "teachers": {"math": {"architecture": "transformer"}, "chat": {"architecture": "transformer"}}}, "reverse_kl"),
     "embedding_contrastive": ("embedding_contrastive", {"temperature": 0.1}, "mrr"),
 }
 SFT_ROWS = [json.loads(line) for line in Path("samples/llm_sft.jsonl").read_text().splitlines()][:12]
@@ -29,8 +32,8 @@ TEXTS = ["Good evening, sir.", "All systems are online.", "Shall I run the diagn
 def raw(recipe: str, model: Path, out: Path, **training: Any) -> dict[str, Any]:
     sample, shared, _ = RECIPES[recipe]
     method = json.loads(json.dumps(shared))  # a copy: tests change it, and RECIPES is shared
-    if "teacher" in method:
-        method["teacher"]["name"] = str(model)  # `llm_distill`: the tiny model teaches itself unless a test says otherwise
+    for teacher in [method["teacher"]] if "teacher" in method else method.get("teachers", {}).values():
+        teacher["name"] = str(model)  # distillation: the tiny model teaches itself unless a test says otherwise
     return {
         "pipeline": {"recipe": recipe, "name": "tiny", "seed": 3, "output_dir": str(out), "device": "cpu"},
         "model": {"architecture": "bi_encoder" if recipe.startswith("embedding") else "transformer", "name": str(model)},

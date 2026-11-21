@@ -1,4 +1,4 @@
-"""`llm_distill` end to end on tiny models: a trained teacher, its files in the fingerprint, the student moving towards it."""
+"""`llm_on_policy_distillation` end to end on tiny models: a trained teacher, its files in the fingerprint, the student moving towards it."""
 
 import json
 import shutil
@@ -10,7 +10,7 @@ from core import pipeline_runner
 
 
 def with_teacher(tiny_model: Path, out: Path, teacher: Path, **training: Any) -> dict[str, Any]:
-    config = raw("llm_distill", tiny_model, out, **training)
+    config = raw("llm_on_policy_distillation", tiny_model, out, **training)
     config["method"]["teacher"]["name"] = str(teacher)
     return config
 

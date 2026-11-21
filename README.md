@@ -17,7 +17,8 @@ what is already built, shows progress, and never hands on a trained model that h
 | LLM | `llm_reward` | the same pairs: a reward model, one score per answer (Bradley-Terry), saved as a sequence classifier | same |
 | LLM | `llm_agent_rl` | prompts answered over several turns with an environment's tools (calculator, document lookup); trajectories rewarded by the final answer (agentic GRPO) | same |
 | LLM | `llm_grpo` | prompts scored by a reward function (answer match, regex, length, a teacher judge, an `llm_reward` model, or a weighted sum) | same |
-| LLM | `llm_distill` | prompts the student answers itself, every token graded by a larger teacher with the same vocabulary (on-policy distillation) | same |
+| LLM | `llm_on_policy_distillation` | prompts the student answers itself, every token graded by a larger teacher with the same vocabulary (on-policy distillation) | same |
+| LLM | `llm_multi_teacher_on_policy_distillation` | prompts with a `domain`; the student answers itself and the domain's teacher grades every token, optionally plus an outcome reward (MOPD) | same |
 | LLM | `llm_pretrain` | plain text, documents packed into full-length blocks, loss on every token (continued pretraining) | same |
 | LLM | `llm_tokenizer` | nothing: the words of a corpus worth adding to a tokenizer, and the tokens they save; training recipes apply them with `model.tokenizer` (also special tokens and a chat template) | same |
 | LLM | `llm_quantize` | nothing: a trained checkpoint or Hub model quantized (AWQ, GPTQ, W8A8, FP8, bitsandbytes NF4/INT8) or exported to GGUF, its held-out loss against the base | same |
@@ -198,12 +199,13 @@ the same job, and `docs/api_spec.md` describes every endpoint.
 | `llm/grpo.yaml` | GRPO of Qwen3.5-0.8B with the `exact_match` reward |
 | `llm/grpo_gspo.yaml` | GRPO with GSPO's sequence-level clip on groups reused for two steps |
 | `llm/grpo_weighted.yaml` | GRPO with a weighted reward: answer match, a format regex and a length term; `loss_norm: token`, `reward_workers` for a judge |
-| `llm/distill.yaml` | on-policy distillation of Qwen3-0.6B from Qwen3-1.7B on the sample prompts |
+| `llm/on_policy_distillation.yaml` | on-policy distillation of Qwen3-0.6B from Qwen3-1.7B on the sample prompts |
+| `llm/multi_teacher_on_policy_distillation.yaml` | multi-teacher on-policy distillation of Qwen3-0.6B: Qwen3-4B grades the math rows, Qwen3-1.7B the chat rows, plus a `contains` reward |
 | `llm/pretrain_ko.yaml` | continued pretraining of Qwen3-0.6B on Korean text with the words `tokenizer_ko.yaml` picks, LoRA plus the new tokens' rows |
 | `llm/tokenizer_ko.yaml` | the Korean words worth adding to Qwen3's tokenizer, from the Korean sample rows |
 | `llm/quantize_awq.yaml` | 4-bit AWQ of Qwen3-0.6B with llm-compressor and the loss it costs (CUDA, `--extra quantize`) |
 | `llm/quantize_gguf.yaml` | Qwen3-0.6B as a q8_0 GGUF file for llama.cpp and Ollama (`--extra quantize`, then `environment/llama_cpp/setup.sh`) |
-| `llm/merge_ties.yaml` | TIES merge of the `sft_transformer.yaml` and `distill.yaml` checkpoints of Qwen3-0.6B (run those first) |
+| `llm/merge_ties.yaml` | TIES merge of the `sft_transformer.yaml` and `on_policy_distillation.yaml` checkpoints of Qwen3-0.6B (run those first) |
 | `llm/agent_rl.yaml` | agentic RL of Qwen3-0.6B: arithmetic with a calculator over up to three turns |
 | `llm/grpo_gsm8k.yaml` | GRPO on GSM8K word problems from the Hub with the `last_number` reward |
 | `llm/decision_readout.yaml` | one-pass decision model: full fine-tuning, readout head (Jev, jeff) |
@@ -433,7 +435,8 @@ pipeline:
 | `llm_merge` | `messages` | `loss`, `perplexity`, `base_loss`, `loss_delta` (merged minus base) |
 | `llm_agent_rl` | `prompt` + what the reward reads (`answer`) | `reward` (greedy trajectories), `turns`, `tool_calls`, `malformed`, `answered` |
 | `llm_grpo` | `prompt` + what the reward reads (`answer`) | `reward` (greedy completion) |
-| `llm_distill` | `prompt` | `teacher_logp` (teacher's mean token log-probability of the greedy answer), `reverse_kl` (student minus teacher on those tokens) |
+| `llm_on_policy_distillation` | `prompt` | `teacher_logp` (teacher's mean token log-probability of the greedy answer), `reverse_kl` (student minus teacher on those tokens) |
+| `llm_multi_teacher_on_policy_distillation` | `prompt`, `domain` (+ the reward's keys) | `teacher_logp`, `reverse_kl`, both also per domain (`reverse_kl/<domain>`), `reward` (mean reward of the greedy answers, with `method.reward`) |
 | `llm_decision_sft` | `state`, `questions` (Jev records) or `state`, `question`, `label` (one question per row) | `accuracy`, `nll`, `ece` |
 | `llm_decision_cispo` | same | `accuracy`, `nll`, `ece`, `think_accuracy` (after reasoning) |
 | `embedding_contrastive` | `query`, `positive`, `negative`? | `accuracy` (positive ranked first), `mrr` |

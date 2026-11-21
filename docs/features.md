@@ -2,7 +2,7 @@
 
 | 항목 | 값 |
 |---|---|
-| Last Updated | 2026-11-01 |
+| Last Updated | 2026-11-21 |
 
 > `Last Updated` 는 문서 내용이 실제로 바뀐 날만 적는다. 시각은 적지 않는다.
 
@@ -37,12 +37,13 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | `llm_agent_rl` | 여러 턴 동안 환경의 도구를 호출하며 답하는 agentic RL(궤적 단위 GRPO) | `llmclick run configs/llm/agent_rl.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_decision_cispo` | decision 헤드 LLM 의 추론 강화(CISPO) | `llmclick run configs/llm/decision_cispo.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_decision_sft` | decision 헤드 LLM 지도 학습 | `llmclick run configs/llm/decision_pointer.yaml`, `POST /api/jobs` | 구현됨 |
-| `llm_distill` | 큰 교사 모델이 학생의 답을 토큰마다 채점하는 on-policy distillation | `llmclick run configs/llm/distill.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_dpo` | LLM 선호 최적화(DPO) | `llmclick run configs/llm/dpo.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_grpo` | LLM 보상 기반 강화 학습(GRPO) | `llmclick run configs/llm/grpo.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_instruction` | instruction/input/output 레코드로 LLM 지시 튜닝 | `llmclick run configs/llm/instruction.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_kto` | 짝 없이 바람직함/아님 라벨만으로 하는 선호 최적화(KTO) | `llmclick run configs/llm/kto.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_merge` | 학습 없이 여러 체크포인트를 하나로 병합(linear, slerp, task_arithmetic, ties, dare_linear, dare_ties)과 기준 대비 손실 검증 | `llmclick run configs/llm/merge_ties.yaml`, `POST /api/jobs` | 구현됨 |
+| `llm_multi_teacher_on_policy_distillation` | 행의 `domain` 이 고른 교사가 학생의 답을 토큰마다 채점하는 다중 교사 on-policy distillation(MOPD), 정답 보상을 선택해 섞음 | `llmclick run configs/llm/multi_teacher_on_policy_distillation.yaml`, `POST /api/jobs` | 구현됨 |
+| `llm_on_policy_distillation` | 큰 교사 모델이 학생의 답을 토큰마다 채점하는 on-policy distillation(OPD) | `llmclick run configs/llm/on_policy_distillation.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_orpo` | 기준 모델 없는 선호 최적화(ORPO): chosen SFT 와 odds 비 항 | `llmclick run configs/llm/orpo.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_quantize` | 학습된 체크포인트나 Hub 모델 양자화(AWQ, GPTQ, W8A8, FP8, bitsandbytes NF4/INT8, GGUF)와 기준 대비 손실 검증 | `llmclick run configs/llm/quantize_awq.yaml`, `llmclick run configs/llm/quantize_gguf.yaml`, `POST /api/jobs` | 구현됨 |
 | `llm_reward` | chosen/rejected 짝으로 답마다 점수 하나를 내는 보상 모델(Bradley-Terry) 학습 | `llmclick run configs/llm/reward.yaml`, `POST /api/jobs` | 구현됨 |
@@ -524,38 +525,6 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 
 ---
 
-### llm_distill: on-policy distillation
-
-**설명**: 학생 모델이 프롬프트에 직접 답을 샘플링하고, 같은 어휘를 쓰는 큰 교사 모델이 그 답의 토큰마다 로그 확률을 매긴다. 토큰마다 학생과 교사의 로그 확률 차(reverse KL 추정)를 그 토큰의 손실 가중치로 써서, 학생이 쓰지 않을 텍스트를 흉내 내는 대신 자기 답이 교사와 갈라지는 자리를 고친다(Qwen3 보고서, Thinking Machines 의 on-policy distillation).
-
-**진입점**: `llmclick run configs/llm/distill.yaml`, `POST /api/jobs`.
-
-**입력과 결과**
-
-| 입력 | 결과 |
-|---|---|
-| 행 `{"prompt"}`(예: `samples/llm_grpo.jsonl`, 다른 키는 읽지 않음), `method.teacher`(`architecture`, `name`, `revision`), `method.samples`, `method.max_new_tokens`, `method.temperature` | `train` 체크포인트, `validation.json`(teacher_logp: 학생 greedy 답의 교사 토큰 평균 로그 확률, reverse_kl: 같은 토큰의 학생과 교사 로그 확률 차 평균) |
-
-**처리 흐름**: `DistillPipeline` 에서 `data`, `train`, `validate` 순. `train` 이 학습 전에 교사를 학생과 같은 장치에 올리고 학습이 끝나면 내린다. validate 단계는 교사를 다시 올려 채점한 뒤 내린다.
-
-**구현 파일**
-
-| 파일 | 층 | 역할 |
-|---|---|---|
-| `modeling/llm/methods/distill_method.py` | method | 교사 로드와 어휘 검사, 샘플링, reverse KL 손실, 평가 |
-
-**테스트**
-
-| 종류 | 파일 |
-|---|---|
-| 단위 | `tests/unit/test_llm_distill_distill_method.py` |
-| 통합 | `tests/integ/test_llm_distill.py` |
-| 통합 | `tests/integ/test_tuning.py` |
-
-**제약과 미구현**: 교사와 학생의 토크나이저 어휘가 다르면 로드할 때 거부한다(Qwen3-0.6B 와 Qwen3-1.7B 는 같고, Qwen3 와 Qwen3.5 는 다르다). 교사는 학생의 `model.template` 으로 같은 토큰을 읽는다. 교사는 학습 내내 학생 옆 메모리에 있다(Qwen3-1.7B FP32 약 7GB). 교사 `name` 이 로컬 디렉터리면 그 내용이 train 지문에 들어간다(`modeling/tuning/tuning_config.py` 의 `local_models`). 토큰마다 자기 차이만 가중치로 쓰고 뒤 토큰의 차이를 앞으로 할인해 더하지 않는다. MPS 에서 Qwen3-0.6B 를 Qwen3-1.7B 로 18 스텝(lr 5e-6, 샘플 프롬프트) 학습하자 held-out reverse_kl 이 1.65 에서 0.59 로, teacher_logp 가 -1.79 에서 -0.60 으로 움직였다.
-
----
-
 ### llm_dpo: 선호 최적화
 
 **설명**: 건드리지 않은 기준 모델보다 `chosen` 을 `rejected` 보다 더 선호하도록 학습한다. 기준 모델의 로그 확률은 캐시한다.
@@ -722,6 +691,72 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | 통합 | `tests/integ/test_tuning.py`(설정 검증) |
 
 **제약과 미구현**: 병합할 모델은 같은 아키텍처라 텐서 이름과 shape 가 같아야 하고, 다르면 첫 차이를 들어 거부한다. tie 된 출력층(`lm_head.weight`)은 원본 파일에 있어도 대조와 병합에서 빼고, 불러올 때 다시 묶인다. task 규칙의 기준 모델에만 있는 텐서는 병합 결과에서 빠진다. Qwen3.5 공개 파일의 multi-token prediction 층(`mtp.*`)이 그렇다: transformers 가 읽지 않아 학습 체크포인트에 없다. 양자화된 체크포인트와 decision 헤드가 있는 체크포인트는 거부한다. 메모리에는 모델마다 텐서 하나씩만 올라오고, 출력 파일 하나 분량의 병합 결과가 쌓였다가 쓰인다. 병합 텐서는 첫 모델의 dtype(학습 체크포인트는 FP32)을 따르고 config 의 dtype 도 그렇게 바꾼다. bf16 기준 모델의 dtype 으로 쓰면 작은 변화량이 반올림으로 사라진다. DARE 가 버리는 위치는 `pipeline.seed` 와 텐서 이름으로 정해져 다시 실행해도 같다. `path` 는 실행할 때 확인하므로 아직 돌지 않은 실험을 가리킬 수 있고, 로컬 디렉터리면 그 내용이 train 지문에 들어간다. 저장소 안의 구현이고 mergekit 은 쓰지 않는다. MPS 에서 Qwen3-0.6B 의 SFT 와 distill 파일럿 체크포인트를 `ties` 로 합치자 SFT 행 held-out loss 가 9.9e-6(SFT 체크포인트 1.06e-5, 기준 0.147)이었다. Qwen3.5-0.8B 에서는 같은 체크포인트끼리의 `linear` 와 모델 하나의 `task_arithmetic` 이 그 체크포인트의 loss(0.703)를 그대로 냈다.
+
+---
+
+### llm_multi_teacher_on_policy_distillation: 다중 교사 on-policy distillation(MOPD)
+
+**설명**: 행마다 `domain` 을 달고 도메인마다 교사를 하나씩 둔다. 학생이 직접 샘플링한 답을 그 행 도메인의 교사가 토큰마다 채점하고, [llm_on_policy_distillation](#llm_on_policy_distillation-on-policy-distillationopd) 과 같은 reverse KL 손실로 학습한다. 도메인별로 따로 학습한 전문 교사들의 능력을 학생 하나에 모은다(Xiaomi MiMo-V2-Flash 의 MOPD). `method.reward` 를 주면 답마다 정답 보상을 매기고, 같은 프롬프트의 답끼리 정규화한 값(평균을 빼고 표준편차로 나눔)에 `reward_weight` 를 곱해 그 답의 모든 토큰에 더한다. 보상이 정답을 아는 자리에서는 학생이 교사보다 나아질 수 있다.
+
+**진입점**: `llmclick run configs/llm/multi_teacher_on_policy_distillation.yaml`, `POST /api/jobs`.
+
+**입력과 결과**
+
+| 입력 | 결과 |
+|---|---|
+| 행 `{"prompt", "domain", ...보상이 읽는 키(예: "answer")}`(예: `samples/llm_multi_teacher_on_policy_distillation.jsonl`), `method.teachers`(도메인마다 `architecture`, `name`, `revision`), `method.samples`, `method.max_new_tokens`, `method.temperature`, 선택 `method.reward`(`llm_grpo` 의 보상 이름), `method.reward_weight` | `train` 체크포인트, `validation.json`(teacher_logp, reverse_kl 전체와 `teacher_logp/<domain>`, `reverse_kl/<domain>`, 보상이 있으면 reward: greedy 답의 평균 보상) |
+
+**처리 흐름**: `MultiTeacherOnPolicyDistillationPipeline` 에서 `data`, `train`, `validate` 순. `train` 이 학습 전에 교사를 전부 학생과 같은 장치에 올리고 학습이 끝나면 내린다. 한 배치의 답을 도메인별로 나눠 각 교사가 자기 도메인의 답만 채점한다.
+
+**구현 파일**
+
+| 파일 | 층 | 역할 |
+|---|---|---|
+| `modeling/llm/methods/multi_teacher_on_policy_distillation_method.py` | method | 도메인별 교사 지정, 행의 domain 검사, 그룹 정규화 보상 advantage, 보상 평가 |
+| `modeling/llm/methods/on_policy_distillation_method.py` | method | 교사 로드, 도메인별 채점, reverse KL 손실, 도메인별 평가(상속해 씀) |
+| `modeling/llm/methods/grpo_reward.py` | method | 보상 레지스트리 `REWARDS` |
+
+**테스트**
+
+| 종류 | 파일 |
+|---|---|
+| 단위 | `tests/unit/test_llm_multi_teacher_on_policy_distillation_multi_teacher_on_policy_distillation_method.py` |
+| 통합 | `tests/integ/test_llm_multi_teacher_on_policy_distillation.py` |
+| 통합 | `tests/integ/test_tuning.py` |
+
+**제약과 미구현**: `domain` 이 `method.teachers` 에 없는 행은 data 단계에서 거부한다. 모든 교사는 학생과 토크나이저 어휘가 같아야 하고, 하나라도 다르면 로드할 때 거부하며 이미 올린 교사를 내린다. 교사는 학습 내내 전부 장치에 있어 메모리가 교사들의 합이다(FP32 기준 Qwen3-4B 약 16GB, Qwen3-1.7B 약 7GB). 보상은 같은 프롬프트의 답끼리 비교하므로 `method.reward` 가 있으면 `method.samples` 가 2 이상이어야 하고, 한 그룹의 답이 모두 같은 보상을 받으면 보상 항은 0이다. validate 단계는 보상을 매기려고 greedy 답을 한 번 더 생성한다. 교사가 하나이고 보상이 없으면 `llm_on_policy_distillation` 과 같은 손실이다(통합 테스트가 학습 로그로 비교한다). 교사 `name` 이 로컬 디렉터리면(예: 이 저장소에서 도메인별로 학습한 체크포인트) 그 내용이 train 지문에 들어가고, `reward_model` 보상의 체크포인트도 마찬가지다. 어휘가 다른 교사, 원격 서빙 교사, 학생을 다시 교사로 쓰는 반복은 없다. Qwen3-0.6B, Qwen3-1.7B, Qwen3-4B 는 어휘가 같다. MPS 에서 Qwen3-1.7B 학생, Qwen3-4B(math)와 Qwen3-1.7B(chat) 교사, GPT-5.2 judge 보상으로 LoRA 20 스텝을 끝까지 돌렸고, 그 규모에서는 기준선 대비 성능 향상이 오차 안이었다.
+
+---
+
+### llm_on_policy_distillation: on-policy distillation(OPD)
+
+**설명**: 학생 모델이 프롬프트에 직접 답을 샘플링하고, 같은 어휘를 쓰는 큰 교사 모델이 그 답의 토큰마다 로그 확률을 매긴다. 토큰마다 학생과 교사의 로그 확률 차(reverse KL 추정)를 그 토큰의 손실 가중치로 써서, 학생이 쓰지 않을 텍스트를 흉내 내는 대신 자기 답이 교사와 갈라지는 자리를 고친다(Qwen3 보고서, Thinking Machines 의 on-policy distillation).
+
+**진입점**: `llmclick run configs/llm/on_policy_distillation.yaml`, `POST /api/jobs`.
+
+**입력과 결과**
+
+| 입력 | 결과 |
+|---|---|
+| 행 `{"prompt"}`(예: `samples/llm_grpo.jsonl`, 다른 키는 읽지 않음), `method.teacher`(`architecture`, `name`, `revision`), `method.samples`, `method.max_new_tokens`, `method.temperature` | `train` 체크포인트, `validation.json`(teacher_logp: 학생 greedy 답의 교사 토큰 평균 로그 확률, reverse_kl: 같은 토큰의 학생과 교사 로그 확률 차 평균) |
+
+**처리 흐름**: `OnPolicyDistillationPipeline` 에서 `data`, `train`, `validate` 순. `train` 이 학습 전에 교사를 학생과 같은 장치에 올리고 학습이 끝나면 내린다. validate 단계는 교사를 다시 올려 채점한 뒤 내린다.
+
+**구현 파일**
+
+| 파일 | 층 | 역할 |
+|---|---|---|
+| `modeling/llm/methods/on_policy_distillation_method.py` | method | 교사 로드와 어휘 검사, 샘플링, 도메인별 교사 채점, reverse KL 손실, 평가(`llm_multi_teacher_on_policy_distillation` 이 상속) |
+
+**테스트**
+
+| 종류 | 파일 |
+|---|---|
+| 단위 | `tests/unit/test_llm_on_policy_distillation_on_policy_distillation_method.py` |
+| 통합 | `tests/integ/test_llm_on_policy_distillation.py` |
+| 통합 | `tests/integ/test_tuning.py` |
+
+**제약과 미구현**: 교사와 학생의 토크나이저 어휘가 다르면 로드할 때 거부한다(Qwen3-0.6B 와 Qwen3-1.7B 는 같고, Qwen3 와 Qwen3.5 는 다르다). 교사는 학생의 `model.template` 으로 같은 토큰을 읽는다. 교사는 학습 내내 학생 옆 메모리에 있다(Qwen3-1.7B FP32 약 7GB). 교사 `name` 이 로컬 디렉터리면 그 내용이 train 지문에 들어간다(`modeling/tuning/tuning_config.py` 의 `local_models`). 토큰마다 자기 차이만 가중치로 쓰고 뒤 토큰의 차이를 앞으로 할인해 더하지 않는다. MPS 에서 Qwen3-0.6B 를 Qwen3-1.7B 로 18 스텝(lr 5e-6, 샘플 프롬프트) 학습하자 held-out reverse_kl 이 1.65 에서 0.59 로, teacher_logp 가 -1.79 에서 -0.60 으로 움직였다.
 
 ---
 
@@ -896,7 +931,7 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | 단위 | `tests/unit/test_llm_tokenizer_vocabulary_extender.py` |
 | 통합 | `tests/integ/test_llm_tokenizer.py` |
 
-**제약과 미구현**: byte-level BPE 토크나이저(Qwen, Llama 3, GPT-2 계열)만 확장한다. 다른 종류는 거부한다. 단어는 사전 토큰화(pre-tokenize)했을 때 한 조각이어야 하고, 안에 구두점이 있으면 건너뛴다. 후보는 공백으로 나뉜 단어 단위이고, 단어 안의 하위 조각(어미, 조사)은 따로 고르지 않는다. 새 merge 끼리 겹치면 나중 단어가 끝까지 합쳐지지 않을 수 있지만, 디코딩은 항상 원문과 같다. 같은 단어를 다시 적용하면 아무것도 바뀌지 않는다. `tokens_file` 과 `chat_template` 파일의 내용이 train 지문에 들어간다. 어휘가 바뀐 모델은 `llm_distill`(교사와 어휘가 같아야 함)과 `llm_merge`(텐서 shape 가 같아야 함)가 거부한다. MPS 에서 Qwen3-0.6B 와 `samples/llm_pretrain_ko.jsonl` 로 91 단어를 골랐더니 held-out 글자당 토큰이 1.40 에서 3.74 로, 토큰 수가 1412 에서 540 으로 줄었다. 학습 전 held-out 글자당 NLL 은 기준 2.02, 평균 초기화 1.97, 무작위 초기화 3.36 이었다(샘플 문장이 반복적이라 실제 코퍼스의 절감은 이보다 작다).
+**제약과 미구현**: byte-level BPE 토크나이저(Qwen, Llama 3, GPT-2 계열)만 확장한다. 다른 종류는 거부한다. 단어는 사전 토큰화(pre-tokenize)했을 때 한 조각이어야 하고, 안에 구두점이 있으면 건너뛴다. 후보는 공백으로 나뉜 단어 단위이고, 단어 안의 하위 조각(어미, 조사)은 따로 고르지 않는다. 새 merge 끼리 겹치면 나중 단어가 끝까지 합쳐지지 않을 수 있지만, 디코딩은 항상 원문과 같다. 같은 단어를 다시 적용하면 아무것도 바뀌지 않는다. `tokens_file` 과 `chat_template` 파일의 내용이 train 지문에 들어간다. 어휘가 바뀐 모델은 `llm_on_policy_distillation`, `llm_multi_teacher_on_policy_distillation`(교사와 어휘가 같아야 함)과 `llm_merge`(텐서 shape 가 같아야 함)가 거부한다. MPS 에서 Qwen3-0.6B 와 `samples/llm_pretrain_ko.jsonl` 로 91 단어를 골랐더니 held-out 글자당 토큰이 1.40 에서 3.74 로, 토큰 수가 1412 에서 540 으로 줄었다. 학습 전 held-out 글자당 NLL 은 기준 2.02, 평균 초기화 1.97, 무작위 초기화 3.36 이었다(샘플 문장이 반복적이라 실제 코퍼스의 절감은 이보다 작다).
 
 ---
 
@@ -1132,7 +1167,7 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | `modeling/llm/llm_pipeline.py` | LLM 학습 레시피 9종 등록 | `llm_*` |
 | `modeling/llm/llm_config.py` | 레시피별 config 와 head 검사 | `llm_*` |
 | `modeling/llm/methods/__init__.py` | LLM 학습 방법 패키지 | `llm_*` |
-| `modeling/llm/methods/llm_method.py` | 대화를 토큰 id 와 채점 위치로, 샘플링한 완성문의 채점 표시와 토큰별 로그 확률 | `llm_sft`, `llm_instruction`, `llm_dpo`, `llm_orpo`, `llm_simpo`, `llm_grpo`, `llm_distill`, `llm_decision_*`, `llm_quantize` |
+| `modeling/llm/methods/llm_method.py` | 대화를 토큰 id 와 채점 위치로, 샘플링한 완성문의 채점 표시와 토큰별 로그 확률 | `llm_sft`, `llm_instruction`, `llm_dpo`, `llm_orpo`, `llm_simpo`, `llm_grpo`, `llm_on_policy_distillation`, `llm_multi_teacher_on_policy_distillation`, `llm_decision_*`, `llm_quantize` |
 | `modeling/llm/models/__init__.py` | `LLM_BACKBONES` 카탈로그 | `llm_*`, `evaluation_*` |
 | `modeling/llm/models/llm_backbone.py` | LLM 백본 기반: 채팅 렌더링, 로짓, 생성, `model.tokenizer` 적용(어휘 확장, 임베딩 행 추가, template 교체), QLoRA 4/8bit 로드와 병합 저장, 양자화된 체크포인트 로드, 보상 모델(sequence classifier) 로드, 파일을 읽는 도구용 로컬 스냅숏(`local_snapshot`) | `llm_*`, `data_synthetic`, `evaluation_benchmark`, `evaluation_decision` |
 | `modeling/llm/models/backbone_config.py` | LLM `model:` 섹션 | `llm_*`, `evaluation_*` |
