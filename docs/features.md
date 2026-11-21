@@ -724,7 +724,7 @@ YAML 설정 하나를 모델 하나로 만드는 파이프라인 서비스. conf
 | 통합 | `tests/integ/test_llm_multi_teacher_on_policy_distillation.py` |
 | 통합 | `tests/integ/test_tuning.py` |
 
-**제약과 미구현**: `domain` 이 `method.teachers` 에 없는 행은 data 단계에서 거부한다. 모든 교사는 학생과 토크나이저 어휘가 같아야 하고, 하나라도 다르면 로드할 때 거부하며 이미 올린 교사를 내린다. 교사는 학습 내내 전부 장치에 있어 메모리가 교사들의 합이다(FP32 기준 Qwen3-4B 약 16GB, Qwen3-1.7B 약 7GB). 보상은 같은 프롬프트의 답끼리 비교하므로 `method.reward` 가 있으면 `method.samples` 가 2 이상이어야 하고, 한 그룹의 답이 모두 같은 보상을 받으면 보상 항은 0이다. validate 단계는 보상을 매기려고 greedy 답을 한 번 더 생성한다. 교사가 하나이고 보상이 없으면 `llm_on_policy_distillation` 과 같은 손실이다(통합 테스트가 학습 로그로 비교한다). 교사 `name` 이 로컬 디렉터리면(예: 이 저장소에서 도메인별로 학습한 체크포인트) 그 내용이 train 지문에 들어가고, `reward_model` 보상의 체크포인트도 마찬가지다. 어휘가 다른 교사, 원격 서빙 교사, 학생을 다시 교사로 쓰는 반복은 없다. 실제 Qwen3 모델로는 돌려보지 않았고, Qwen3-4B 와 Qwen3-0.6B 의 어휘가 같은지도 확인하지 않았다.
+**제약과 미구현**: `domain` 이 `method.teachers` 에 없는 행은 data 단계에서 거부한다. 모든 교사는 학생과 토크나이저 어휘가 같아야 하고, 하나라도 다르면 로드할 때 거부하며 이미 올린 교사를 내린다. 교사는 학습 내내 전부 장치에 있어 메모리가 교사들의 합이다(FP32 기준 Qwen3-4B 약 16GB, Qwen3-1.7B 약 7GB). 보상은 같은 프롬프트의 답끼리 비교하므로 `method.reward` 가 있으면 `method.samples` 가 2 이상이어야 하고, 한 그룹의 답이 모두 같은 보상을 받으면 보상 항은 0이다. validate 단계는 보상을 매기려고 greedy 답을 한 번 더 생성한다. 교사가 하나이고 보상이 없으면 `llm_on_policy_distillation` 과 같은 손실이다(통합 테스트가 학습 로그로 비교한다). 교사 `name` 이 로컬 디렉터리면(예: 이 저장소에서 도메인별로 학습한 체크포인트) 그 내용이 train 지문에 들어가고, `reward_model` 보상의 체크포인트도 마찬가지다. 어휘가 다른 교사, 원격 서빙 교사, 학생을 다시 교사로 쓰는 반복은 없다. Qwen3-0.6B, Qwen3-1.7B, Qwen3-4B 는 어휘가 같다. MPS 에서 Qwen3-1.7B 학생, Qwen3-4B(math)와 Qwen3-1.7B(chat) 교사, GPT-5.2 judge 보상으로 LoRA 20 스텝을 끝까지 돌렸고, 그 규모에서는 기준선 대비 성능 향상이 오차 안이었다.
 
 ---
 
